@@ -866,6 +866,34 @@ class AppLocalizationsZh extends AppLocalizations {
   String get localModelsDownloadPauseFailed => '暂停下载失败';
 
   @override
+  String localModelsDownloadStartedToast(String modelName) {
+    return '开始下载：$modelName';
+  }
+
+  @override
+  String localModelsDownloadPausedToast(String modelName) {
+    return '下载已暂停：$modelName';
+  }
+
+  @override
+  String localModelsDownloadCompletedToast(String modelName) {
+    return '下载完成：$modelName';
+  }
+
+  @override
+  String localModelsDownloadFailedToast(String modelName, String reason) {
+    return '下载失败：$modelName — $reason';
+  }
+
+  @override
+  String localModelsDownloadCancelledToast(String modelName, String reason) {
+    return '下载已取消：$modelName — $reason';
+  }
+
+  @override
+  String get localModelsDownloadErrorUnknown => '未知错误';
+
+  @override
   String get localModelsFilterAndSource => '筛选与来源';
 
   @override

@@ -1736,6 +1736,42 @@ abstract class AppLocalizations {
   /// **'暂停下载失败'**
   String get localModelsDownloadPauseFailed;
 
+  /// No description provided for @localModelsDownloadStartedToast.
+  ///
+  /// In zh, this message translates to:
+  /// **'开始下载：{modelName}'**
+  String localModelsDownloadStartedToast(String modelName);
+
+  /// No description provided for @localModelsDownloadPausedToast.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载已暂停：{modelName}'**
+  String localModelsDownloadPausedToast(String modelName);
+
+  /// No description provided for @localModelsDownloadCompletedToast.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载完成：{modelName}'**
+  String localModelsDownloadCompletedToast(String modelName);
+
+  /// No description provided for @localModelsDownloadFailedToast.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载失败：{modelName} — {reason}'**
+  String localModelsDownloadFailedToast(String modelName, String reason);
+
+  /// No description provided for @localModelsDownloadCancelledToast.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载已取消：{modelName} — {reason}'**
+  String localModelsDownloadCancelledToast(String modelName, String reason);
+
+  /// No description provided for @localModelsDownloadErrorUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'未知错误'**
+  String get localModelsDownloadErrorUnknown;
+
   /// No description provided for @localModelsFilterAndSource.
   ///
   /// In zh, this message translates to:

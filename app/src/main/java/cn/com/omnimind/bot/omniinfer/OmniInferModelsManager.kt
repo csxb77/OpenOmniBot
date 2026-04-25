@@ -325,17 +325,24 @@ object OmniInferModelsManager {
         val quants = model["quants"]?.jsonObject ?: return emptyList()
         val sources = model["sources"]?.jsonObject
 
-        return quants.entries.map { (quantName, quantObj) ->
+        val repo = sources?.get(source)?.jsonPrimitive?.contentOrNull.orEmpty()
+
+        return quants.entries.mapNotNull { (quantName, quantObj) ->
             val sizeBytes = quantObj.jsonObject["size_bytes"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
             val id = "$modelName-$quantName"
             val localFile = findModelFile(id)
             val activeDownload = activeDownloads[id]
+            val hasPausedPart = buildPausedMapFromPartFiles(id) != null
+            // Hide models that have no repo for the current source,
+            // unless already downloaded, actively downloading, or paused.
+            if (repo.isEmpty() && localFile == null && activeDownload == null && !hasPausedPart) {
+                return@mapNotNull null
+            }
             val downloadMap = when {
                 activeDownload != null -> activeDownload.toMap()
                 localFile != null -> completedDownloadMap(localFile.length())
-                else -> null
+                else -> buildPausedMapFromPartFiles(id)
             }
-            val repo = sources?.get(source)?.jsonPrimitive?.contentOrNull.orEmpty()
             mapOf(
                 "id" to id,
                 "name" to "$modelName $quantName",
@@ -379,10 +386,13 @@ object OmniInferModelsManager {
 
     fun startDownload(modelId: String) {
         if (activeDownloads.containsKey(modelId)) {
+            Log.d(TAG, "[Download] startDownload skipped, already active: $modelId")
             return
         }
+        Log.d(TAG, "[Download] startDownload: $modelId")
         val source = getDownloadProvider()
         val resolved = findRepoAndQuantForModel(modelId, source) ?: run {
+            Log.e(TAG, "[Download] startDownload failed, no download source: $modelId")
             emitEvent("download_error", mapOf("modelId" to modelId, "error" to "No download source"))
             return
         }
@@ -402,7 +412,17 @@ object OmniInferModelsManager {
     }
 
     fun pauseDownload(modelId: String) {
-        activeDownloads.remove(modelId)?.cancel()
+        Log.d(TAG, "[Download] pauseDownload: $modelId, hasActiveTask=${activeDownloads.containsKey(modelId)}")
+        val task = activeDownloads.remove(modelId)
+        task?.cancel()
+        val pausedMap = task?.toPausedMap() ?: buildPausedMapFromPartFiles(modelId)
+        Log.d(TAG, "[Download] pauseDownload: $modelId -> paused state=${pausedMap != null}, progress=${pausedMap?.get("progress")}, savedSize=${pausedMap?.get("savedSize")}")
+        if (pausedMap != null) {
+            emitEvent(
+                "download_update",
+                mapOf("modelId" to modelId, "download" to pausedMap),
+            )
+        }
         emitEvent("downloads_changed", mapOf("modelId" to modelId))
     }
 
@@ -551,6 +571,26 @@ object OmniInferModelsManager {
         eventDispatcher?.invoke(mapOf("type" to type) + payload)
     }
 
+    private fun buildPausedMapFromPartFiles(modelId: String): Map<String, Any?>? {
+        val modelSubDir = File(getModelDir(), modelId)
+        if (!modelSubDir.isDirectory) return null
+        val partFile = File(modelSubDir, "$modelId.gguf.part")
+        if (!partFile.exists()) return null
+        val savedSize = partFile.length()
+        return mapOf(
+            "state" to 4,
+            "stateLabel" to "paused",
+            "progress" to 0.0,
+            "savedSize" to savedSize,
+            "totalSize" to 0L,
+            "speedInfo" to "",
+            "errorMessage" to "",
+            "progressStage" to "",
+            "currentFile" to "$modelId.gguf",
+            "hasUpdate" to false,
+        )
+    }
+
     private fun completedDownloadMap(sizeBytes: Long): Map<String, Any?> {
         return mapOf(
             "state" to 0,
@@ -620,6 +660,21 @@ object OmniInferModelsManager {
             )
         }
 
+        fun toPausedMap(): Map<String, Any?> {
+            return mapOf(
+                "state" to 4,
+                "stateLabel" to "paused",
+                "progress" to progress,
+                "savedSize" to savedSize,
+                "totalSize" to totalSize,
+                "speedInfo" to "",
+                "errorMessage" to "",
+                "progressStage" to stage,
+                "currentFile" to destFile.name,
+                "hasUpdate" to false,
+            )
+        }
+
         private fun downloadFile(fileUrl: String, dest: File): Boolean {
             val tempFile = File(dest.parent, dest.name + ".part")
             val existingSize = if (tempFile.exists()) tempFile.length() else 0L
@@ -671,7 +726,11 @@ object OmniInferModelsManager {
             OmniInferModelsManager.scope.launch {
                 try {
                     stage = "downloading"
-                    if (!downloadFile(url, destFile)) return@launch
+                    Log.d(TAG, "[Download] task started: $modelId, url=$url")
+                    if (!downloadFile(url, destFile)) {
+                        Log.d(TAG, "[Download] task cancelled during main file: $modelId")
+                        return@launch
+                    }
 
                     // Download mmproj if needed
                     if (mmprojUrl != null && mmprojDest != null && !cancelled.get()) {
@@ -680,12 +739,17 @@ object OmniInferModelsManager {
                             progress = 0.0
                             savedSize = 0L
                             totalSize = 0L
+                            Log.d(TAG, "[Download] downloading mmproj: $modelId")
                             OmniInferModelsManager.emitEvent("downloads_changed", mapOf("modelId" to modelId))
-                            if (!downloadFile(mmprojUrl, mmprojDest)) return@launch
+                            if (!downloadFile(mmprojUrl, mmprojDest)) {
+                                Log.d(TAG, "[Download] task cancelled during mmproj: $modelId")
+                                return@launch
+                            }
                         }
                     }
 
                     if (!cancelled.get()) {
+                        Log.d(TAG, "[Download] task completed: $modelId")
                         OmniInferModelsManager.activeDownloads.remove(modelId)
                         OmniInferModelsManager.emitEvent("downloads_changed", mapOf("modelId" to modelId))
                         OmniInferModelsManager.appContext?.let {
@@ -696,6 +760,7 @@ object OmniInferModelsManager {
                         }
                     }
                 } catch (error: Exception) {
+                    Log.e(TAG, "[Download] task error: $modelId, cancelled=${cancelled.get()}, error=${error.message}")
                     if (!cancelled.get()) {
                         OmniInferModelsManager.activeDownloads.remove(modelId)
                         OmniInferModelsManager.emitEvent(

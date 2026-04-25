@@ -280,6 +280,39 @@
   "localModelsServiceStopped": "Local service stopped",
   "localModelsDownloadStartFailed": "Failed to start download",
   "localModelsDownloadPauseFailed": "Failed to pause download",
+  "localModelsDownloadStartedToast": "Download started: {modelName}",
+  "@localModelsDownloadStartedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadPausedToast": "Download paused: {modelName}",
+  "@localModelsDownloadPausedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadCompletedToast": "Download completed: {modelName}",
+  "@localModelsDownloadCompletedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadFailedToast": "Download failed: {modelName} — {reason}",
+  "@localModelsDownloadFailedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" },
+      "reason": { "type": "String" }
+    }
+  },
+  "localModelsDownloadCancelledToast": "Download cancelled: {modelName} — {reason}",
+  "@localModelsDownloadCancelledToast": {
+    "placeholders": {
+      "modelName": { "type": "String" },
+      "reason": { "type": "String" }
+    }
+  },
+  "localModelsDownloadErrorUnknown": "Unknown error",
   "localModelsFilterAndSource": "Filter & Source",
   "localModelsFilterAndSourceDesc": "Switch inference backend and download source; affects the current market list.",
   "localModelsDownloadSource": "Download Source",

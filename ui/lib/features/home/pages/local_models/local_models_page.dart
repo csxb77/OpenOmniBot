@@ -59,7 +59,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
   bool _loadingInstalled = true;
   bool _loadingMarket = true;
   bool _loadingConfig = true;
-  bool _togglingApiService = false;
 
   @override
   void initState() {
@@ -275,6 +274,7 @@ class _LocalModelsPageState extends State<LocalModelsPage>
 
   void _handleEvent(MnnLocalEvent event) {
     if (!mounted) return;
+    debugPrint('[LocalModels] event: ${event.type}, payload keys: ${event.payload.keys}');
     switch (event.type) {
       case 'download_update':
         final modelId = (event.payload['modelId'] ?? '').toString();
@@ -282,12 +282,39 @@ class _LocalModelsPageState extends State<LocalModelsPage>
         final download = rawDownload is Map
             ? MnnLocalDownloadInfo.fromMap(rawDownload)
             : null;
+        final prevState = _marketModels
+            .where((m) => m.id == modelId)
+            .firstOrNull
+            ?.download
+            ?.stateLabel ?? 'not_started';
+        debugPrint('[LocalModels] download_update: model=$modelId, '
+            'prevState=$prevState -> newState=${download?.stateLabel}, '
+            'progress=${download?.progress.toStringAsFixed(2)}, '
+            'error=${download?.errorMessage}');
+        _showDownloadStateToast(modelId, download);
         _updateMarketDownloadState(modelId, download);
         if (download?.isCompleted == true) {
           _refreshInstalled(silent: true);
         }
         break;
+      case 'download_error':
+        final errorModelId = (event.payload['modelId'] ?? '').toString();
+        final errorMsg = (event.payload['error'] ?? '').toString();
+        debugPrint('[LocalModels] download_error: model=$errorModelId, error=$errorMsg');
+        if (errorModelId.isNotEmpty) {
+          final name = _displayModelName(errorModelId);
+          final reason = errorMsg.trim().isNotEmpty
+              ? errorMsg.trim()
+              : context.l10n.localModelsDownloadErrorUnknown;
+          showToast(
+            context.l10n.localModelsDownloadFailedToast(name, reason),
+            type: ToastType.error,
+          );
+          _refreshMarket(silent: true);
+        }
+        break;
       case 'downloads_changed':
+        debugPrint('[LocalModels] downloads_changed: ${event.payload}');
         _refreshInstalled(silent: true);
         _refreshMarket(silent: true);
         break;
@@ -302,6 +329,43 @@ class _LocalModelsPageState extends State<LocalModelsPage>
         }
         break;
       default:
+        break;
+    }
+  }
+
+  void _showDownloadStateToast(String modelId, MnnLocalDownloadInfo? download) {
+    if (download == null || modelId.isEmpty) return;
+    final newState = download.stateLabel;
+    // Look up previous state from the current market model list.
+    final prevModel = _marketModels.where((m) => m.id == modelId).firstOrNull;
+    final prevState = prevModel?.download?.stateLabel ?? 'not_started';
+    if (newState == prevState) return;
+
+    final name = _displayModelName(modelId);
+    final l10n = context.l10n;
+    debugPrint('[LocalModels] state transition: model=$modelId ($name), '
+        '$prevState -> $newState');
+
+    // Toast for terminal/async state transitions only.
+    // User-initiated actions (start/pause) are toasted from button handlers.
+    switch (newState) {
+      case 'completed':
+        debugPrint('[LocalModels] toast: download completed -> $name');
+        showToast(l10n.localModelsDownloadCompletedToast(name), type: ToastType.success);
+        break;
+      case 'failed':
+        final reason = download.errorMessage.trim().isNotEmpty
+            ? download.errorMessage.trim()
+            : l10n.localModelsDownloadErrorUnknown;
+        debugPrint('[LocalModels] toast: download failed -> $name, reason=$reason');
+        showToast(l10n.localModelsDownloadFailedToast(name, reason), type: ToastType.error);
+        break;
+      case 'cancelled':
+        final reason = download.errorMessage.trim().isNotEmpty
+            ? download.errorMessage.trim()
+            : l10n.localModelsDownloadErrorUnknown;
+        debugPrint('[LocalModels] toast: download cancelled -> $name, reason=$reason');
+        showToast(l10n.localModelsDownloadCancelledToast(name, reason), type: ToastType.error);
         break;
     }
   }
@@ -394,45 +458,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
     }
   }
 
-  Future<void> _toggleApiService(bool enable) async {
-    final config = _config;
-    if (config == null || _togglingApiService) {
-      return;
-    }
-    setState(() => _togglingApiService = true);
-    try {
-      final nextConfig = enable
-          ? await MnnLocalModelsService.startApiService(
-              modelId: config.activeModelId.isEmpty
-                  ? null
-                  : config.activeModelId,
-            )
-          : await MnnLocalModelsService.stopApiService();
-      if (!mounted) return;
-      setState(() => _config = nextConfig);
-      _refreshInstalled(silent: true);
-      final apiRunning = nextConfig.apiRunning;
-      if (enable) {
-        showToast(
-          apiRunning ? context.l10n.localModelsServiceStarted : context.l10n.localModelsStartFailed,
-          type: apiRunning ? ToastType.success : ToastType.error,
-        );
-      } else {
-        showToast(
-          apiRunning ? context.l10n.localModelsStopFailed : context.l10n.localModelsServiceStopped,
-          type: apiRunning ? ToastType.error : ToastType.success,
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(enable ? context.l10n.localModelsStartFailed : context.l10n.localModelsStopFailed, type: ToastType.error);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _togglingApiService = false);
-      }
-    }
-  }
 
   void _updateMarketDownloadState(
     String modelId,
@@ -513,11 +538,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
       default:
         return l10n.localModelsNotDownloaded;
     }
-  }
-
-  bool _shouldEnableStart(MnnLocalConfig config) {
-    return !_togglingApiService &&
-        !(config.activeModelId.isEmpty && _serviceModels.isEmpty);
   }
 
   Color _blend(Color first, Color second, double t) {
@@ -1011,31 +1031,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
     );
   }
 
-  Widget _buildServiceActionButton(MnnLocalConfig config) {
-    final shouldStop = config.apiRunning;
-    final enabled = shouldStop
-        ? !_togglingApiService
-        : _shouldEnableStart(config);
-    final tone = shouldStop ? _AccentTone.danger : _AccentTone.accent;
-    final l10n = context.l10n;
-    final label = _togglingApiService
-        ? (shouldStop ? l10n.localModelsStopping : l10n.localModelsStarting)
-        : (shouldStop ? l10n.localModelsStopService : l10n.localModelsStartService);
-
-    return SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: enabled ? () => _toggleApiService(!shouldStop) : null,
-        style: _filledButtonStyle(tone: tone),
-        icon: Icon(
-          shouldStop ? Icons.stop_circle_outlined : Icons.play_arrow_rounded,
-          size: 18,
-        ),
-        label: Text(label),
-      ),
-    );
-  }
-
   Widget _buildServiceTab() {
     if (_loadingConfig && _config == null) {
       return const Center(child: CircularProgressIndicator());
@@ -1113,8 +1108,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
                   '${_backendLabel(config.loadedBackend)} / ${_displayModelName(config.loadedModelId)}',
             ),
           ],
-          const SizedBox(height: 12),
-          _buildServiceActionButton(config),
           const SizedBox(height: 24),
           SettingsSectionTitle(
             label: context.l10n.localModelsAutoPreheatSection,
@@ -1498,6 +1491,7 @@ class _LocalModelsPageState extends State<LocalModelsPage>
               if (!isCompleted && !isDownloading)
                 FilledButton.icon(
                   onPressed: () async {
+                    debugPrint('[LocalModels] button: startDownload model=${model.id} (${model.name}), isPaused=$isPaused, isFailed=$isFailed');
                     _updateMarketDownloadState(
                       model.id,
                       _downloadPlaceholder(
@@ -1508,8 +1502,16 @@ class _LocalModelsPageState extends State<LocalModelsPage>
                     );
                     try {
                       await MnnLocalModelsService.startDownload(model.id);
+                      debugPrint('[LocalModels] button: startDownload success model=${model.id}');
+                      if (mounted) {
+                        showToast(
+                          context.l10n.localModelsDownloadStartedToast(model.name),
+                          type: ToastType.success,
+                        );
+                      }
                       _refreshMarket(silent: true);
-                    } catch (_) {
+                    } catch (e) {
+                      debugPrint('[LocalModels] button: startDownload error model=${model.id}, error=$e');
                       _refreshMarket(silent: true);
                       showToast(context.l10n.localModelsDownloadStartFailed, type: ToastType.error);
                     }
@@ -1532,6 +1534,7 @@ class _LocalModelsPageState extends State<LocalModelsPage>
               if (isDownloading)
                 OutlinedButton.icon(
                   onPressed: () async {
+                    debugPrint('[LocalModels] button: pauseDownload model=${model.id} (${model.name})');
                     _updateMarketDownloadState(
                       model.id,
                       _downloadPlaceholder(
@@ -1542,8 +1545,16 @@ class _LocalModelsPageState extends State<LocalModelsPage>
                     );
                     try {
                       await MnnLocalModelsService.pauseDownload(model.id);
+                      debugPrint('[LocalModels] button: pauseDownload success model=${model.id}');
+                      if (mounted) {
+                        showToast(
+                          context.l10n.localModelsDownloadPausedToast(model.name),
+                          type: ToastType.warning,
+                        );
+                      }
                       _refreshMarket(silent: true);
-                    } catch (_) {
+                    } catch (e) {
+                      debugPrint('[LocalModels] button: pauseDownload error model=${model.id}, error=$e');
                       _refreshMarket(silent: true);
                       showToast(context.l10n.localModelsDownloadPauseFailed, type: ToastType.error);
                     }

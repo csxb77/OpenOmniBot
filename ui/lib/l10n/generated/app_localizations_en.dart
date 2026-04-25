@@ -921,6 +921,34 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localModelsDownloadPauseFailed => 'Failed to pause download';
 
   @override
+  String localModelsDownloadStartedToast(String modelName) {
+    return 'Download started: $modelName';
+  }
+
+  @override
+  String localModelsDownloadPausedToast(String modelName) {
+    return 'Download paused: $modelName';
+  }
+
+  @override
+  String localModelsDownloadCompletedToast(String modelName) {
+    return 'Download completed: $modelName';
+  }
+
+  @override
+  String localModelsDownloadFailedToast(String modelName, String reason) {
+    return 'Download failed: $modelName — $reason';
+  }
+
+  @override
+  String localModelsDownloadCancelledToast(String modelName, String reason) {
+    return 'Download cancelled: $modelName — $reason';
+  }
+
+  @override
+  String get localModelsDownloadErrorUnknown => 'Unknown error';
+
+  @override
   String get localModelsFilterAndSource => 'Filter & Source';
 
   @override

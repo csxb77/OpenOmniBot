@@ -280,6 +280,39 @@
   "localModelsServiceStopped": "本地服务已停止",
   "localModelsDownloadStartFailed": "启动下载失败",
   "localModelsDownloadPauseFailed": "暂停下载失败",
+  "localModelsDownloadStartedToast": "开始下载：{modelName}",
+  "@localModelsDownloadStartedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadPausedToast": "下载已暂停：{modelName}",
+  "@localModelsDownloadPausedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadCompletedToast": "下载完成：{modelName}",
+  "@localModelsDownloadCompletedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" }
+    }
+  },
+  "localModelsDownloadFailedToast": "下载失败：{modelName} — {reason}",
+  "@localModelsDownloadFailedToast": {
+    "placeholders": {
+      "modelName": { "type": "String" },
+      "reason": { "type": "String" }
+    }
+  },
+  "localModelsDownloadCancelledToast": "下载已取消：{modelName} — {reason}",
+  "@localModelsDownloadCancelledToast": {
+    "placeholders": {
+      "modelName": { "type": "String" },
+      "reason": { "type": "String" }
+    }
+  },
+  "localModelsDownloadErrorUnknown": "未知错误",
   "localModelsFilterAndSource": "筛选与来源",
   "localModelsFilterAndSourceDesc": "切换推理后端和下载源，影响当前市场列表。",
   "localModelsDownloadSource": "下载源",
