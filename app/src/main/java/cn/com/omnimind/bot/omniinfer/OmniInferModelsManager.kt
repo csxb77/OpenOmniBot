@@ -333,7 +333,7 @@ object OmniInferModelsManager {
             val downloadMap = when {
                 activeDownload != null -> activeDownload.toMap()
                 localFile != null -> completedDownloadMap(localFile.length())
-                else -> null
+                else -> buildPausedMapFromPartFiles(id)
             }
             val repo = sources?.get(source)?.jsonPrimitive?.contentOrNull.orEmpty()
             mapOf(
@@ -402,7 +402,15 @@ object OmniInferModelsManager {
     }
 
     fun pauseDownload(modelId: String) {
-        activeDownloads.remove(modelId)?.cancel()
+        val task = activeDownloads.remove(modelId)
+        task?.cancel()
+        val pausedMap = task?.toPausedMap() ?: buildPausedMapFromPartFiles(modelId)
+        if (pausedMap != null) {
+            emitEvent(
+                "download_update",
+                mapOf("modelId" to modelId, "download" to pausedMap),
+            )
+        }
         emitEvent("downloads_changed", mapOf("modelId" to modelId))
     }
 
@@ -551,6 +559,26 @@ object OmniInferModelsManager {
         eventDispatcher?.invoke(mapOf("type" to type) + payload)
     }
 
+    private fun buildPausedMapFromPartFiles(modelId: String): Map<String, Any?>? {
+        val modelSubDir = File(getModelDir(), modelId)
+        if (!modelSubDir.isDirectory) return null
+        val partFile = File(modelSubDir, "$modelId.gguf.part")
+        if (!partFile.exists()) return null
+        val savedSize = partFile.length()
+        return mapOf(
+            "state" to 4,
+            "stateLabel" to "paused",
+            "progress" to 0.0,
+            "savedSize" to savedSize,
+            "totalSize" to 0L,
+            "speedInfo" to "",
+            "errorMessage" to "",
+            "progressStage" to "",
+            "currentFile" to "$modelId.gguf",
+            "hasUpdate" to false,
+        )
+    }
+
     private fun completedDownloadMap(sizeBytes: Long): Map<String, Any?> {
         return mapOf(
             "state" to 0,
@@ -609,6 +637,21 @@ object OmniInferModelsManager {
             return mapOf(
                 "state" to 1,
                 "stateLabel" to "downloading",
+                "progress" to progress,
+                "savedSize" to savedSize,
+                "totalSize" to totalSize,
+                "speedInfo" to "",
+                "errorMessage" to "",
+                "progressStage" to stage,
+                "currentFile" to destFile.name,
+                "hasUpdate" to false,
+            )
+        }
+
+        fun toPausedMap(): Map<String, Any?> {
+            return mapOf(
+                "state" to 4,
+                "stateLabel" to "paused",
                 "progress" to progress,
                 "savedSize" to savedSize,
                 "totalSize" to totalSize,

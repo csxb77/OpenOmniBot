@@ -287,6 +287,21 @@ class _LocalModelsPageState extends State<LocalModelsPage>
           _refreshInstalled(silent: true);
         }
         break;
+      case 'download_error':
+        final errorModelId = (event.payload['modelId'] ?? '').toString();
+        final errorMsg = (event.payload['error'] ?? '').toString();
+        if (errorModelId.isNotEmpty) {
+          final name = _displayModelName(errorModelId);
+          final reason = errorMsg.trim().isNotEmpty
+              ? errorMsg.trim()
+              : context.l10n.localModelsDownloadErrorUnknown;
+          showToast(
+            context.l10n.localModelsDownloadFailedToast(name, reason),
+            type: ToastType.error,
+          );
+          _refreshMarket(silent: true);
+        }
+        break;
       case 'downloads_changed':
         _refreshInstalled(silent: true);
         _refreshMarket(silent: true);
