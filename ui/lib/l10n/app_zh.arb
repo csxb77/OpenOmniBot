@@ -349,8 +349,6 @@
   "localModelsDownloadCancelled": "已取消",
   "localModelsNotDownloaded": "未下载",
   "localModelsImportFromDevice": "从设备导入",
-  "localModelsImportNoFile": "未选择文件",
-  "localModelsImportSelectConfigJson": "请选择 MNN 模型目录中的 config.json 文件",
   "localModelsImportSuccess": "模型导入成功",
   "localModelsImportFailed": "导入失败：{reason}",
   "@localModelsImportFailed": {

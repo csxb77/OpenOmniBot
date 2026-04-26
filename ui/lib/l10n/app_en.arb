@@ -349,8 +349,6 @@
   "localModelsDownloadCancelled": "Cancelled",
   "localModelsNotDownloaded": "Not Downloaded",
   "localModelsImportFromDevice": "Import from Device",
-  "localModelsImportNoFile": "No file selected",
-  "localModelsImportSelectConfigJson": "Please select config.json from the MNN model directory",
   "localModelsImportSuccess": "Model imported successfully",
   "localModelsImportFailed": "Import failed: {reason}",
   "@localModelsImportFailed": {

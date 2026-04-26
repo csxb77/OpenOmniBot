@@ -55,6 +55,7 @@ accompanist-systemuicontroller = { module = "com.google.accompanist:accompanist-
 anrwatchdog = { module = "com.github.anrwatchdog:anrwatchdog", version.ref = "anrwatchdog" }
 appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.0.1" }
 androidx-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 androidx-palette = { module = "androidx.palette:palette", version.ref = "palette" }
 shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }

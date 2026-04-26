@@ -1988,18 +1988,6 @@ abstract class AppLocalizations {
   /// **'从设备导入'**
   String get localModelsImportFromDevice;
 
-  /// No description provided for @localModelsImportNoFile.
-  ///
-  /// In zh, this message translates to:
-  /// **'未选择文件'**
-  String get localModelsImportNoFile;
-
-  /// No description provided for @localModelsImportSelectConfigJson.
-  ///
-  /// In zh, this message translates to:
-  /// **'请选择 MNN 模型目录中的 config.json 文件'**
-  String get localModelsImportSelectConfigJson;
-
   /// No description provided for @localModelsImportSuccess.
   ///
   /// In zh, this message translates to:

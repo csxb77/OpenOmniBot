@@ -1002,13 +1002,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get localModelsImportFromDevice => '从设备导入';
 
   @override
-  String get localModelsImportNoFile => '未选择文件';
-
-  @override
-  String get localModelsImportSelectConfigJson =>
-      '请选择 MNN 模型目录中的 config.json 文件';
-
-  @override
   String get localModelsImportSuccess => '模型导入成功';
 
   @override

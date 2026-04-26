@@ -1063,13 +1063,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get localModelsImportFromDevice => 'Import from Device';
 
   @override
-  String get localModelsImportNoFile => 'No file selected';
-
-  @override
-  String get localModelsImportSelectConfigJson =>
-      'Please select config.json from the MNN model directory';
-
-  @override
   String get localModelsImportSuccess => 'Model imported successfully';
 
   @override

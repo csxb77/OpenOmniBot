@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/mnn_local_models_service.dart';
@@ -479,40 +478,6 @@ class _LocalModelsPageState extends State<LocalModelsPage>
   }
 
   Future<void> _importModel() async {
-    final backend = _config?.backend ?? _llamaCppBackend;
-    final isLlama = backend == _llamaCppBackend;
-
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
-      type: FileType.any,
-    );
-    if (result == null || result.files.isEmpty || !mounted) return;
-
-    final filePath = result.files.single.path;
-    if (filePath == null || filePath.isEmpty) {
-      showToast(context.l10n.localModelsImportNoFile, type: ToastType.error);
-      return;
-    }
-
-    final fileName = filePath.split('/').last;
-    if (isLlama) {
-      if (!fileName.endsWith('.gguf')) {
-        showToast(
-          context.l10n.localModelsImportFailed('Not a .gguf file'),
-          type: ToastType.error,
-        );
-        return;
-      }
-    } else {
-      if (fileName != 'config.json') {
-        showToast(
-          context.l10n.localModelsImportSelectConfigJson,
-          type: ToastType.error,
-        );
-        return;
-      }
-    }
-
     setState(() {
       _importing = true;
       _importProgress = 0.0;
@@ -520,20 +485,21 @@ class _LocalModelsPageState extends State<LocalModelsPage>
     });
 
     try {
-      final response = await MnnLocalModelsService.importModel(
-        filePath: filePath,
-      );
+      final response = await MnnLocalModelsService.importModel();
       if (!mounted) return;
 
       final success = response['success'] == true;
-      if (success) {
+      final error = (response['error'] ?? '').toString();
+
+      if (error == 'cancelled') {
+        // User cancelled the file picker, do nothing
+      } else if (success) {
         showToast(
           context.l10n.localModelsImportSuccess,
           type: ToastType.success,
         );
         _refreshInstalled(silent: true);
       } else {
-        final error = (response['error'] ?? '').toString();
         showToast(
           context.l10n.localModelsImportFailed(error),
           type: ToastType.error,
