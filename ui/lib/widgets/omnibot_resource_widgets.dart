@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -410,6 +411,18 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
     _initialize();
   }
 
+  @override
+  void didUpdateWidget(covariant _OmnibotInlineVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.metadata.path != widget.metadata.path) {
+      final previousController = _controller;
+      _controller = null;
+      _error = null;
+      previousController?.dispose();
+      _initialize();
+    }
+  }
+
   Future<void> _initialize() async {
     if (!widget.metadata.exists) return;
     final controller = VideoPlayerController.file(File(widget.metadata.path));
@@ -433,29 +446,28 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
     }
   }
 
+  Future<void> _openFullscreen() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _OmnibotFullscreenVideoPage(
+          controller: controller,
+          title: widget.metadata.title,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   @override
   void dispose() {
     _controller?.dispose();
     super.dispose();
-  }
-
-  Future<void> _togglePlayback() async {
-    final controller = _controller;
-    if (controller == null) return;
-    if (controller.value.isPlaying) {
-      await controller.pause();
-      if (mounted) {
-        setState(() {});
-      }
-      return;
-    }
-    if (controller.value.position >= controller.value.duration) {
-      await controller.seekTo(Duration.zero);
-    }
-    await controller.play();
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   @override
@@ -512,30 +524,390 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
           aspectRatio: controller.value.aspectRatio == 0
               ? 16 / 9
               : controller.value.aspectRatio,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              VideoPlayer(controller),
-              DecoratedBox(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x00000000), Color(0x55000000)],
+          child: _OmnibotVideoSurface(
+            controller: controller,
+            borderRadius: BorderRadius.circular(16),
+            fullscreenButtonIcon: Icons.fullscreen_rounded,
+            onFullscreenPressed: _openFullscreen,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OmnibotVideoSurface extends StatefulWidget {
+  final VideoPlayerController controller;
+  final BorderRadius borderRadius;
+  final IconData fullscreenButtonIcon;
+  final VoidCallback? onFullscreenPressed;
+  final bool showDismissButton;
+  final VoidCallback? onDismissPressed;
+
+  const _OmnibotVideoSurface({
+    required this.controller,
+    required this.borderRadius,
+    required this.fullscreenButtonIcon,
+    this.onFullscreenPressed,
+    this.showDismissButton = false,
+    this.onDismissPressed,
+  });
+
+  @override
+  State<_OmnibotVideoSurface> createState() => _OmnibotVideoSurfaceState();
+}
+
+class _OmnibotVideoSurfaceState extends State<_OmnibotVideoSurface> {
+  static const Duration _controlsAutoHideDelay = Duration(seconds: 2);
+  static const Duration _controlsFadeDuration = Duration(milliseconds: 180);
+
+  Timer? _controlsHideTimer;
+  bool _controlsVisible = true;
+  bool _wasPlaying = false;
+  double? _scrubPositionMs;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+    _wasPlaying = widget.controller.value.isPlaying;
+    if (_wasPlaying) {
+      _restartControlsHideTimer();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _OmnibotVideoSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      widget.controller.addListener(_handleControllerChanged);
+      _cancelControlsHideTimer();
+      _controlsVisible = true;
+      _scrubPositionMs = null;
+      _wasPlaying = widget.controller.value.isPlaying;
+      if (_wasPlaying) {
+        _restartControlsHideTimer();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    _cancelControlsHideTimer();
+    super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    final value = widget.controller.value;
+    final isPlaying = value.isPlaying;
+    final hasCompleted = _hasCompleted(value);
+    if (hasCompleted) {
+      _cancelControlsHideTimer();
+      if (!_controlsVisible && mounted) {
+        setState(() => _controlsVisible = true);
+      }
+    } else if (!_wasPlaying && isPlaying) {
+      _restartControlsHideTimer();
+    } else if (_wasPlaying && !isPlaying) {
+      _cancelControlsHideTimer();
+      if (!_controlsVisible && mounted) {
+        setState(() => _controlsVisible = true);
+      }
+    }
+    _wasPlaying = isPlaying;
+  }
+
+  void _restartControlsHideTimer() {
+    _cancelControlsHideTimer();
+    _controlsHideTimer = Timer(_controlsAutoHideDelay, () {
+      if (!mounted || !widget.controller.value.isPlaying) {
+        return;
+      }
+      setState(() => _controlsVisible = false);
+    });
+  }
+
+  void _cancelControlsHideTimer() {
+    _controlsHideTimer?.cancel();
+    _controlsHideTimer = null;
+  }
+
+  bool _hasCompleted(VideoPlayerValue value) {
+    final duration = value.duration;
+    if (!value.isInitialized || duration <= Duration.zero) {
+      return false;
+    }
+    return value.position >= duration;
+  }
+
+  Future<void> _togglePlayback() async {
+    final controller = widget.controller;
+    final value = controller.value;
+    if (value.isPlaying) {
+      await controller.pause();
+      _cancelControlsHideTimer();
+    } else {
+      if (_hasCompleted(value)) {
+        await controller.seekTo(Duration.zero);
+      }
+      await controller.play();
+      _restartControlsHideTimer();
+    }
+    if (!mounted) return;
+    setState(() => _controlsVisible = true);
+  }
+
+  void _handleSurfaceTap() {
+    final isPlaying = widget.controller.value.isPlaying;
+    if (!isPlaying) {
+      if (!_controlsVisible) {
+        setState(() => _controlsVisible = true);
+      }
+      return;
+    }
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) {
+      _restartControlsHideTimer();
+    } else {
+      _cancelControlsHideTimer();
+    }
+  }
+
+  void _handleScrubStart(double value) {
+    _cancelControlsHideTimer();
+    setState(() {
+      _controlsVisible = true;
+      _scrubPositionMs = value;
+    });
+  }
+
+  void _handleScrubUpdate(double value) {
+    setState(() {
+      _controlsVisible = true;
+      _scrubPositionMs = value;
+    });
+  }
+
+  Future<void> _handleScrubEnd(double value) async {
+    await widget.controller.seekTo(Duration(milliseconds: value.round()));
+    if (!mounted) return;
+    setState(() => _scrubPositionMs = null);
+    if (widget.controller.value.isPlaying) {
+      _restartControlsHideTimer();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = widget.controller.value;
+    final showControls = _controlsVisible || !value.isPlaying;
+    final durationMs = math.max(value.duration.inMilliseconds.toDouble(), 1.0);
+    final effectivePositionMs =
+        _scrubPositionMs ??
+        value.position.inMilliseconds.toDouble().clamp(0.0, durationMs);
+    final currentPosition = Duration(milliseconds: effectivePositionMs.round());
+    final centerIcon = _hasCompleted(value)
+        ? Icons.replay_rounded
+        : (value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded);
+
+    return ClipRRect(
+      borderRadius: widget.borderRadius,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _handleSurfaceTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(
+              color: Colors.black,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: SizedBox(
+                  width: value.size.width <= 0 ? 1 : value.size.width,
+                  height: value.size.height <= 0 ? 1 : value.size.height,
+                  child: VideoPlayer(widget.controller),
+                ),
+              ),
+            ),
+            IgnorePointer(
+              ignoring: !showControls,
+              child: AnimatedOpacity(
+                opacity: showControls ? 1 : 0,
+                duration: _controlsFadeDuration,
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x5A000000),
+                        Color(0x12000000),
+                        Color(0x7A000000),
+                      ],
+                      stops: [0.0, 0.45, 1.0],
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      if (widget.showDismissButton &&
+                          widget.onDismissPressed != null)
+                        Positioned(
+                          top: 12,
+                          left: 12,
+                          child: SafeArea(
+                            bottom: false,
+                            child: _VideoControlCircleButton(
+                              icon: Icons.arrow_back_rounded,
+                              onPressed: widget.onDismissPressed!,
+                            ),
+                          ),
+                        ),
+                      Center(
+                        child: _VideoControlCircleButton(
+                          icon: centerIcon,
+                          size: 56,
+                          iconSize: 30,
+                          onPressed: _togglePlayback,
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: SafeArea(
+                          top: false,
+                          minimum: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                          child: Row(
+                            children: [
+                              Text(
+                                _formatDuration(currentPosition),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              Expanded(
+                                child: SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 2.5,
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 5,
+                                    ),
+                                    overlayShape: const RoundSliderOverlayShape(
+                                      overlayRadius: 10,
+                                    ),
+                                    activeTrackColor: Colors.white,
+                                    inactiveTrackColor: const Color(0x55FFFFFF),
+                                    thumbColor: Colors.white,
+                                    overlayColor: const Color(0x33FFFFFF),
+                                  ),
+                                  child: Slider(
+                                    min: 0,
+                                    max: durationMs,
+                                    value: effectivePositionMs.clamp(
+                                      0.0,
+                                      durationMs,
+                                    ),
+                                    onChangeStart: _handleScrubStart,
+                                    onChanged: _handleScrubUpdate,
+                                    onChangeEnd: _handleScrubEnd,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                _formatDuration(value.duration),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              IconButton(
+                                onPressed: widget.onFullscreenPressed,
+                                icon: Icon(
+                                  widget.fullscreenButtonIcon,
+                                  color: Colors.white,
+                                ),
+                                iconSize: 22,
+                                splashRadius: 18,
+                                tooltip: LegacyTextLocalizer.isEnglish
+                                    ? 'Fullscreen'
+                                    : '全屏',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: const SizedBox.expand(),
               ),
-              IconButton.filled(
-                onPressed: _togglePlayback,
-                iconSize: 28,
-                icon: Icon(
-                  controller.value.isPlaying
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                ),
-              ),
-            ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoControlCircleButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+  final double size;
+  final double iconSize;
+
+  const _VideoControlCircleButton({
+    required this.icon,
+    required this.onPressed,
+    this.size = 48,
+    this.iconSize = 26,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0x66000000),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Icon(icon, color: Colors.white, size: iconSize),
+        ),
+      ),
+    );
+  }
+}
+
+class _OmnibotFullscreenVideoPage extends StatelessWidget {
+  final VideoPlayerController controller;
+  final String? title;
+
+  const _OmnibotFullscreenVideoPage({required this.controller, this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    final aspectRatio = controller.value.aspectRatio == 0
+        ? 16 / 9
+        : controller.value.aspectRatio;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: AspectRatio(
+          aspectRatio: aspectRatio,
+          child: _OmnibotVideoSurface(
+            controller: controller,
+            borderRadius: BorderRadius.zero,
+            fullscreenButtonIcon: Icons.fullscreen_exit_rounded,
+            onFullscreenPressed: () => Navigator.of(context).pop(),
+            showDismissButton: true,
+            onDismissPressed: () => Navigator.of(context).pop(),
           ),
         ),
       ),
