@@ -348,6 +348,16 @@
   "localModelsDownloadFailed": "Download Failed",
   "localModelsDownloadCancelled": "Cancelled",
   "localModelsNotDownloaded": "Not Downloaded",
+  "localModelsImportFromDevice": "Import from Device",
+  "localModelsImportSuccess": "Model imported successfully",
+  "localModelsImportFailed": "Import failed: {reason}",
+  "@localModelsImportFailed": {
+    "placeholders": { "reason": { "type": "String" } }
+  },
+  "localModelsImporting": "Importing {modelId}...",
+  "@localModelsImporting": {
+    "placeholders": { "modelId": { "type": "String" } }
+  },
 
   "alarmSaved": "Alarm settings saved",
   "alarmRingtoneSource": "Ringtone Source",

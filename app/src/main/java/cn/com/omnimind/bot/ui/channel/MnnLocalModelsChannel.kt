@@ -1,6 +1,8 @@
 package cn.com.omnimind.bot.ui.channel
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import cn.com.omnimind.bot.omniinfer.OmniInferLocalRuntime
@@ -23,17 +25,65 @@ class MnnLocalModelsChannel {
         private const val ERROR_CODE = "MNN_LOCAL_ERROR"
         private const val MMKV_BACKEND_KEY = "omniinfer_selected_backend"
         private const val DEFAULT_BACKEND = OmniInferLocalRuntime.BACKEND_LLAMA_CPP
+
+        private const val REQUEST_CODE_IMPORT_FILE = 39122
+        private const val REQUEST_CODE_IMPORT_TREE = 39123
+
+        private val importScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private val importHandler = Handler(Looper.getMainLooper())
+
+        @Volatile
+        private var pendingImportResult: MethodChannel.Result? = null
+
+        fun onActivityResult(
+            activity: Activity,
+            requestCode: Int,
+            resultCode: Int,
+            data: Intent?,
+        ): Boolean {
+            if (requestCode != REQUEST_CODE_IMPORT_FILE && requestCode != REQUEST_CODE_IMPORT_TREE) {
+                return false
+            }
+
+            val result = pendingImportResult
+            pendingImportResult = null
+            if (result == null) return true
+
+            if (resultCode != Activity.RESULT_OK || data?.data == null) {
+                result.success(mapOf("success" to false, "error" to "cancelled"))
+                return true
+            }
+
+            val uri = data.data!!
+            val isTree = requestCode == REQUEST_CODE_IMPORT_TREE
+
+            importScope.launch {
+                val importResult = runCatching {
+                    if (isTree) {
+                        OmniInferMnnModelsManager.importModelFromUri(activity, uri)
+                    } else {
+                        OmniInferModelsManager.importModelFromUri(activity, uri)
+                    }
+                }.getOrElse { e ->
+                    mapOf("success" to false, "error" to (e.message ?: "unknown_error"))
+                }
+                importHandler.post { result.success(importResult) }
+            }
+            return true
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private var context: Context? = null
     private var methodChannel: MethodChannel? = null
     private var eventChannel: EventChannel? = null
     private var eventSink: EventChannel.EventSink? = null
     private val backendMmkv: MMKV by lazy { MMKV.mmkvWithID("omniinfer_config") }
 
     fun onCreate(context: Context) {
+        this.context = context
         OmniInferModelsManager.setContext(context)
         OmniInferMnnModelsManager.setContext(context)
     }
@@ -88,6 +138,36 @@ class MnnLocalModelsChannel {
                 backendMmkv.encode(MMKV_BACKEND_KEY, backend)
                 OmniInferLocalRuntime.setSelectedBackend(backend)
                 result.success(backend)
+                return
+            }
+
+            "importModel" -> {
+                val activity = context as? Activity
+                if (activity == null) {
+                    result.error(ERROR_CODE, "Not attached to activity", null)
+                    return
+                }
+                if (pendingImportResult != null) {
+                    result.error(ERROR_CODE, "Another import is already in progress", null)
+                    return
+                }
+                pendingImportResult = result
+                try {
+                    val isMnn = getSelectedBackend() == OmniInferLocalRuntime.BACKEND_OMNIINFER_MNN
+                    if (isMnn) {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                        activity.startActivityForResult(intent, REQUEST_CODE_IMPORT_TREE)
+                    } else {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "*/*"
+                        }
+                        activity.startActivityForResult(intent, REQUEST_CODE_IMPORT_FILE)
+                    }
+                } catch (e: Exception) {
+                    pendingImportResult = null
+                    result.error(ERROR_CODE, e.message ?: "Failed to open file picker", null)
+                }
                 return
             }
         }

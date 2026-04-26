@@ -400,4 +400,11 @@ class MnnLocalModelsService {
     );
     return _normalizeInferenceBackend(result ?? backend);
   }
+
+  static Future<Map<String, dynamic>> importModel() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'importModel',
+    );
+    return (result ?? {}).cast<String, dynamic>();
+  }
 }

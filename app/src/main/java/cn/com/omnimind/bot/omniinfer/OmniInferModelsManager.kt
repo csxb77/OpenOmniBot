@@ -587,6 +587,163 @@ object OmniInferModelsManager {
         }
     }
 
+    suspend fun importModel(filePath: String): Map<String, Any?> {
+        val sourceFile = File(filePath)
+        if (!sourceFile.exists() || !sourceFile.isFile) {
+            return mapOf("success" to false, "error" to "File does not exist: $filePath")
+        }
+        if (!sourceFile.name.endsWith(".gguf", ignoreCase = true)) {
+            return mapOf("success" to false, "error" to "Not a .gguf file")
+        }
+
+        val modelId = sourceFile.nameWithoutExtension
+        val modelSubDir = File(getModelDir(), modelId)
+        val destFile = File(modelSubDir, "${modelId}.gguf")
+
+        if (destFile.exists()) {
+            return mapOf("success" to false, "error" to "Model already exists: $modelId")
+        }
+
+        val fileSize = sourceFile.length()
+        val usableSpace = modelSubDir.parentFile?.usableSpace ?: 0L
+        if (fileSize > usableSpace) {
+            return mapOf("success" to false, "error" to "Insufficient storage space")
+        }
+
+        modelSubDir.mkdirs()
+
+        try {
+            withContext(Dispatchers.IO) {
+                val buffer = ByteArray(8192)
+                var copiedSize = 0L
+                var lastEmitTime = 0L
+                sourceFile.inputStream().buffered().use { input ->
+                    destFile.outputStream().buffered().use { output ->
+                        while (true) {
+                            val bytesRead = input.read(buffer)
+                            if (bytesRead == -1) break
+                            output.write(buffer, 0, bytesRead)
+                            copiedSize += bytesRead
+                            val now = System.currentTimeMillis()
+                            if (now - lastEmitTime > 300) {
+                                lastEmitTime = now
+                                val progress = if (fileSize > 0) copiedSize.toDouble() / fileSize else 0.0
+                                emitEvent("import_progress", mapOf(
+                                    "modelId" to modelId,
+                                    "progress" to progress,
+                                    "copiedSize" to copiedSize,
+                                    "totalSize" to fileSize,
+                                ))
+                            }
+                        }
+                    }
+                }
+                emitEvent("import_progress", mapOf(
+                    "modelId" to modelId,
+                    "progress" to 1.0,
+                    "copiedSize" to fileSize,
+                    "totalSize" to fileSize,
+                ))
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Import failed for $modelId", e)
+            if (modelSubDir.exists()) modelSubDir.deleteRecursively()
+            return mapOf("success" to false, "error" to "Copy failed: ${e.message}")
+        }
+
+        emitConfigChanged()
+        emitEvent("downloads_changed", emptyMap())
+        appContext?.let {
+            OmniInferBuiltinProviderRefresher.refreshAsync(it, "llama_import:$modelId")
+        }
+        return mapOf("success" to true, "modelId" to modelId)
+    }
+
+    suspend fun importModelFromUri(context: Context, uri: android.net.Uri): Map<String, Any?> {
+        // Resolve display name from content URI
+        val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) cursor.getString(nameIndex) else null
+            } else null
+        } ?: uri.lastPathSegment ?: "unknown"
+
+        if (!displayName.endsWith(".gguf", ignoreCase = true)) {
+            return mapOf("success" to false, "error" to "Not a .gguf file: $displayName")
+        }
+
+        val modelId = displayName.removeSuffix(".gguf").removeSuffix(".GGUF")
+        val modelSubDir = File(getModelDir(), modelId)
+        val destFile = File(modelSubDir, "$modelId.gguf")
+
+        if (destFile.exists()) {
+            return mapOf("success" to false, "error" to "Model already exists: $modelId")
+        }
+
+        // Get file size from content URI
+        val fileSize = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (sizeIndex >= 0) cursor.getLong(sizeIndex) else 0L
+            } else 0L
+        } ?: 0L
+
+        val usableSpace = getModelDir().usableSpace
+        if (fileSize > 0 && fileSize > usableSpace) {
+            return mapOf("success" to false, "error" to "Insufficient storage space")
+        }
+
+        modelSubDir.mkdirs()
+
+        try {
+            withContext(Dispatchers.IO) {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                    ?: error("Cannot open input stream for URI")
+                val buffer = ByteArray(8192)
+                var copiedSize = 0L
+                var lastEmitTime = 0L
+                inputStream.buffered().use { input ->
+                    destFile.outputStream().buffered().use { output ->
+                        while (true) {
+                            val bytesRead = input.read(buffer)
+                            if (bytesRead == -1) break
+                            output.write(buffer, 0, bytesRead)
+                            copiedSize += bytesRead
+                            val now = System.currentTimeMillis()
+                            if (now - lastEmitTime > 300) {
+                                lastEmitTime = now
+                                val progress = if (fileSize > 0) copiedSize.toDouble() / fileSize else 0.0
+                                emitEvent("import_progress", mapOf(
+                                    "modelId" to modelId,
+                                    "progress" to progress,
+                                    "copiedSize" to copiedSize,
+                                    "totalSize" to fileSize,
+                                ))
+                            }
+                        }
+                    }
+                }
+                emitEvent("import_progress", mapOf(
+                    "modelId" to modelId,
+                    "progress" to 1.0,
+                    "copiedSize" to copiedSize,
+                    "totalSize" to copiedSize,
+                ))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Import from URI failed for $modelId", e)
+            if (modelSubDir.exists()) modelSubDir.deleteRecursively()
+            return mapOf("success" to false, "error" to "Copy failed: ${e.message}")
+        }
+
+        emitConfigChanged()
+        emitEvent("downloads_changed", emptyMap())
+        appContext?.let {
+            OmniInferBuiltinProviderRefresher.refreshAsync(it, "llama_import:$modelId")
+        }
+        return mapOf("success" to true, "modelId" to modelId)
+    }
+
     private fun emitConfigChanged() {
         emitEvent("config_changed", mapOf("config" to getConfig()))
     }

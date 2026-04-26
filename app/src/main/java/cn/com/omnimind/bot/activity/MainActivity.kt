@@ -14,6 +14,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.ui.channel.ChannelManager
 import cn.com.omnimind.bot.ui.channel.FileSaveChannel
+import cn.com.omnimind.bot.ui.channel.MnnLocalModelsChannel
 import cn.com.omnimind.bot.ui.halfScreen.HalfScreenListenerImpl
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
@@ -147,6 +148,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (FileSaveChannel.onActivityResult(this, requestCode, resultCode, data)) {
+            return
+        }
+        if (MnnLocalModelsChannel.onActivityResult(this, requestCode, resultCode, data)) {
             return
         }
         super.onActivityResult(requestCode, resultCode, data)

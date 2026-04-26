@@ -1,6 +1,8 @@
 package cn.com.omnimind.bot.omniinfer
 
 import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import com.tencent.mmkv.MMKV
 import cn.com.omnimind.baselib.util.OmniLog
@@ -8,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.util.Locale
@@ -742,6 +745,200 @@ object OmniInferMnnModelsManager {
                 }
             }
         }
+    }
+
+    // ---- Import from device -------------------------------------------------------------------
+
+    suspend fun importModel(filePath: String): Map<String, Any?> {
+        val sourceFile = File(filePath)
+        if (!sourceFile.exists() || !sourceFile.isFile) {
+            return mapOf("success" to false, "error" to "File does not exist: $filePath")
+        }
+
+        if (!sourceFile.name.equals("config.json", ignoreCase = true)) {
+            return mapOf("success" to false, "error" to "Please select config.json from the MNN model directory")
+        }
+
+        val sourceDir = sourceFile.parentFile
+            ?: return mapOf("success" to false, "error" to "Cannot resolve parent directory")
+
+        val context = ensureContext()
+        val mnnDir = AgentWorkspaceManager.modelsMnnDirectory(context)
+        val modelId = sourceDir.name
+        val destDir = File(mnnDir, modelId)
+
+        if (destDir.exists()) {
+            return mapOf("success" to false, "error" to "Model directory already exists: $modelId")
+        }
+
+        val totalSize = sourceDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        val usableSpace = mnnDir.usableSpace
+        if (totalSize > usableSpace) {
+            return mapOf("success" to false, "error" to "Insufficient storage space")
+        }
+
+        destDir.mkdirs()
+
+        try {
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                var copiedSize = 0L
+                var lastEmitTime = 0L
+                val buffer = ByteArray(8192)
+
+                sourceDir.walkTopDown().filter { it.isFile }.forEach { srcFile ->
+                    val relativePath = srcFile.relativeTo(sourceDir).path
+                    val destFile = File(destDir, relativePath)
+                    destFile.parentFile?.mkdirs()
+
+                    srcFile.inputStream().buffered().use { input ->
+                        destFile.outputStream().buffered().use { output ->
+                            while (true) {
+                                val bytesRead = input.read(buffer)
+                                if (bytesRead == -1) break
+                                output.write(buffer, 0, bytesRead)
+                                copiedSize += bytesRead
+                                val now = System.currentTimeMillis()
+                                if (now - lastEmitTime > 300) {
+                                    lastEmitTime = now
+                                    emitEvent("import_progress", mapOf(
+                                        "modelId" to modelId,
+                                        "progress" to if (totalSize > 0) copiedSize.toDouble() / totalSize else 0.0,
+                                        "copiedSize" to copiedSize,
+                                        "totalSize" to totalSize,
+                                        "currentFile" to relativePath,
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+                emitEvent("import_progress", mapOf(
+                    "modelId" to modelId,
+                    "progress" to 1.0,
+                    "copiedSize" to totalSize,
+                    "totalSize" to totalSize,
+                ))
+            }
+        } catch (e: java.io.IOException) {
+            OmniLog.e(TAG, "Import failed for $modelId", e)
+            if (destDir.exists()) destDir.deleteRecursively()
+            return mapOf("success" to false, "error" to "Copy failed: ${e.message}")
+        }
+
+        emitConfigChanged()
+        emitEvent("downloads_changed", emptyMap())
+        OmniInferBuiltinProviderRefresher.refreshAsync(context, "mnn_import:$modelId")
+        return mapOf("success" to true, "modelId" to modelId)
+    }
+
+    suspend fun importModelFromUri(context: Context, treeUri: Uri): Map<String, Any?> {
+        val docFile = DocumentFile.fromTreeUri(context, treeUri)
+            ?: return mapOf("success" to false, "error" to "Cannot open selected directory")
+
+        val modelId = docFile.name
+            ?: return mapOf("success" to false, "error" to "Cannot determine directory name")
+
+        // Verify it's an MNN model directory (has config.json)
+        val children = docFile.listFiles()
+        val hasConfig = children.any { child ->
+            child.name.equals("config.json", ignoreCase = true) && child.isFile
+        }
+        if (!hasConfig) {
+            return mapOf("success" to false, "error" to "Not an MNN model directory: missing config.json")
+        }
+
+        val mnnDir = AgentWorkspaceManager.modelsMnnDirectory(context)
+        val destDir = File(mnnDir, modelId)
+
+        if (destDir.exists()) {
+            return mapOf("success" to false, "error" to "Model directory already exists: $modelId")
+        }
+
+        // Calculate total size
+        val allFiles = collectDocumentFiles(docFile)
+        var totalSize = 0L
+        for (f in allFiles) { totalSize += f.length() }
+        val usableSpace = mnnDir.usableSpace
+        if (totalSize > 0L && totalSize > usableSpace) {
+            return mapOf("success" to false, "error" to "Insufficient storage space")
+        }
+
+        destDir.mkdirs()
+
+        try {
+            withContext(Dispatchers.IO) {
+                var copiedSize = 0L
+                var lastEmitTime = 0L
+                val buffer = ByteArray(8192)
+
+                for (srcDoc in allFiles) {
+                    val relativePath = getDocRelativePath(docFile, srcDoc)
+                    val destFile = File(destDir, relativePath)
+                    destFile.parentFile?.mkdirs()
+
+                    val inputStream = context.contentResolver.openInputStream(srcDoc.uri)
+                        ?: continue
+                    inputStream.buffered().use { input ->
+                        destFile.outputStream().buffered().use { output ->
+                            while (true) {
+                                val bytesRead = input.read(buffer)
+                                if (bytesRead == -1) break
+                                output.write(buffer, 0, bytesRead)
+                                copiedSize += bytesRead
+                                val now = System.currentTimeMillis()
+                                if (now - lastEmitTime > 300) {
+                                    lastEmitTime = now
+                                    emitEvent("import_progress", mapOf(
+                                        "modelId" to modelId,
+                                        "progress" to if (totalSize > 0) copiedSize.toDouble() / totalSize else 0.0,
+                                        "copiedSize" to copiedSize,
+                                        "totalSize" to totalSize,
+                                        "currentFile" to relativePath,
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+                emitEvent("import_progress", mapOf(
+                    "modelId" to modelId,
+                    "progress" to 1.0,
+                    "copiedSize" to copiedSize,
+                    "totalSize" to copiedSize,
+                ))
+            }
+        } catch (e: Exception) {
+            OmniLog.e(TAG, "Import from URI failed for $modelId", e)
+            if (destDir.exists()) destDir.deleteRecursively()
+            return mapOf("success" to false, "error" to "Copy failed: ${e.message}")
+        }
+
+        emitConfigChanged()
+        emitEvent("downloads_changed", emptyMap())
+        OmniInferBuiltinProviderRefresher.refreshAsync(context, "mnn_import:$modelId")
+        return mapOf("success" to true, "modelId" to modelId)
+    }
+
+    private fun collectDocumentFiles(dir: DocumentFile): List<DocumentFile> {
+        val result = mutableListOf<DocumentFile>()
+        for (child in dir.listFiles()) {
+            if (child.isFile) {
+                result.add(child)
+            } else if (child.isDirectory) {
+                result.addAll(collectDocumentFiles(child))
+            }
+        }
+        return result
+    }
+
+    private fun getDocRelativePath(root: DocumentFile, file: DocumentFile): String {
+        val rootPath = root.uri.path ?: ""
+        val filePath = file.uri.path ?: ""
+        if (filePath.startsWith(rootPath)) {
+            val relative = filePath.removePrefix(rootPath).trimStart('/')
+            if (relative.isNotEmpty()) return relative
+        }
+        return file.name ?: "unknown"
     }
 
     // ---- Event emission -----------------------------------------------------------------------

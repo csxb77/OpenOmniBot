@@ -1982,6 +1982,30 @@ abstract class AppLocalizations {
   /// **'未下载'**
   String get localModelsNotDownloaded;
 
+  /// No description provided for @localModelsImportFromDevice.
+  ///
+  /// In zh, this message translates to:
+  /// **'从设备导入'**
+  String get localModelsImportFromDevice;
+
+  /// No description provided for @localModelsImportSuccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'模型导入成功'**
+  String get localModelsImportSuccess;
+
+  /// No description provided for @localModelsImportFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'导入失败：{reason}'**
+  String localModelsImportFailed(String reason);
+
+  /// No description provided for @localModelsImporting.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在导入 {modelId}...'**
+  String localModelsImporting(String modelId);
+
   /// No description provided for @alarmSaved.
   ///
   /// In zh, this message translates to:
