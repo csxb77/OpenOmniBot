@@ -2,6 +2,8 @@
   pull_request:
     - &verify_pipeline
       name: verify
+      git:
+        submodules: false
       runner:
         cpus: 4
       docker:
@@ -53,6 +55,8 @@
               :app:lintDevelopDebug
   push:
     - name: sync-to-github
+      git:
+        submodules: false
       lock:
         key: github-sync
         wait: false
@@ -79,6 +83,8 @@ main:
 $:
   tag_push:
     - name: release-build
+      git:
+        submodules: false
       runner:
         cpus: 4
       docker:
