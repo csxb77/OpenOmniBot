@@ -1743,17 +1743,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           schedulePersistence: true,
         );
       } else {
-        final batch = _streamingTextBatchFor(
-          runtime,
-          taskId,
-          _StreamingTextStreamKind.agentReply,
-        );
+        // Non-chatOnly mode: render full markdown on every chunk
+        // (no split rendering optimization)
         _upsertAgentReplyMessage(
           runtime,
           aiTextMessageId,
           visibleText,
           renderMarkdown: true,
-          markdownRenderedLength: batch?.lastFlushedText.length,
         );
       }
     }
