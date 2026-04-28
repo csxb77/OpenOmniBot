@@ -100,12 +100,12 @@ object OmniInferQnnMarketRepository {
             fileSize = 3_328_599_040L, // ~3.1 GB
             sizeGb = 3.1,
         ),
-        // SM8850 (Snapdragon 8 Elite Gen 2)
+        // SM8850 (Snapdragon 8 Elite Gen 5)
         QnnModelEntry(
             modelId = "SM8850_qwen3-0_6b",
             modelName = "Qwen3-0.6B",
             soc = "SM8850",
-            socLabel = "8 Elite Gen 2",
+            socLabel = "8 Elite Gen 5",
             pteUrl = "$BASE_URL/SM8850_qwen3-0_6b/hybrid_llama_qnn.pte",
             tokenizerUrl = TOKENIZER_URL,
             fileSize = 715_128_832L, // ~682 MB
@@ -115,7 +115,7 @@ object OmniInferQnnMarketRepository {
             modelId = "SM8850_qwen3-1_7b",
             modelName = "Qwen3-1.7B",
             soc = "SM8850",
-            socLabel = "8 Elite Gen 2",
+            socLabel = "8 Elite Gen 5",
             pteUrl = "$BASE_URL/SM8850_qwen3-1_7b/hybrid_llama_qnn.pte",
             tokenizerUrl = TOKENIZER_URL,
             fileSize = 1_825_361_920L, // ~1.7 GB
@@ -125,7 +125,7 @@ object OmniInferQnnMarketRepository {
             modelId = "SM8850_qwen3-4b",
             modelName = "Qwen3-4B",
             soc = "SM8850",
-            socLabel = "8 Elite Gen 2",
+            socLabel = "8 Elite Gen 5",
             pteUrl = "$BASE_URL/SM8850_qwen3-4b/hybrid_llama_qnn.pte",
             tokenizerUrl = TOKENIZER_URL,
             fileSize = 3_328_599_040L, // ~3.1 GB
