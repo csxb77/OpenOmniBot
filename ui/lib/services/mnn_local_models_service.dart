@@ -368,10 +368,17 @@ class MnnLocalModelsService {
     return MnnLocalConfig.fromMap(result);
   }
 
-  /// Eagerly preload a model (backend-agnostic, fire-and-forget on native side).
+  /// Eagerly preload a model (backend-agnostic).
   /// Cancels any previous in-progress preload.
-  static Future<void> preloadModel({required String modelId}) {
-    return _channel.invokeMethod('preloadModel', {'modelId': modelId});
+  /// Returns a map with keys: success (bool), modelId (String),
+  /// cancelled (bool, optional), error (String, optional).
+  static Future<Map<dynamic, dynamic>?> preloadModel({
+    required String modelId,
+  }) {
+    return _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'preloadModel',
+      {'modelId': modelId},
+    );
   }
 
   static Future<MnnLocalConfig> stopApiService() async {

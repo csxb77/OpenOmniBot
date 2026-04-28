@@ -187,30 +187,57 @@ class MnnLocalModelsChannel {
             "preloadModel" -> {
                 val modelId = call.argument<String>("modelId")?.trim().orEmpty()
                 if (modelId.isEmpty()) {
-                    result.success(null)
+                    result.success(mapOf("success" to false, "error" to "empty modelId"))
                     return
                 }
                 preloadJob?.cancel()
                 preloadJob = scope.launch(Dispatchers.IO) {
-                    preloadMutex.withLock {
-                        ensureActive()
-                        OmniLog.i(TAG, "[preloadModel] loading modelId=$modelId")
-                        val ggufReady = runCatching {
-                            OmniInferModelsManager.ensureModelReady(modelId)
-                        }.getOrDefault(false)
-                        if (ggufReady) return@launch
-                        ensureActive()
-                        val mnnReady = runCatching {
-                            OmniInferMnnModelsManager.ensureModelReady(modelId)
-                        }.getOrDefault(false)
-                        if (mnnReady) return@launch
-                        ensureActive()
-                        runCatching {
-                            OmniInferQnnModelsManager.ensureModelReady(modelId)
+                    var success = false
+                    var error = ""
+                    try {
+                        preloadMutex.withLock {
+                            ensureActive()
+                            OmniLog.i(TAG, "[preloadModel] loading modelId=$modelId")
+                            success = runCatching {
+                                OmniInferModelsManager.ensureModelReady(modelId)
+                            }.getOrDefault(false)
+                            if (!success) {
+                                ensureActive()
+                                success = runCatching {
+                                    OmniInferMnnModelsManager.ensureModelReady(modelId)
+                                }.getOrDefault(false)
+                            }
+                            if (!success) {
+                                ensureActive()
+                                success = runCatching {
+                                    OmniInferQnnModelsManager.ensureModelReady(modelId)
+                                }.getOrDefault(false)
+                            }
+                            if (!success) error = "Model not found or load failed"
                         }
+                        ensureActive()
+                    } catch (_: kotlinx.coroutines.CancellationException) {
+                        OmniLog.i(TAG, "[preloadModel] cancelled modelId=$modelId")
+                        mainHandler.post {
+                            runCatching {
+                                result.success(mapOf(
+                                    "success" to false,
+                                    "cancelled" to true,
+                                    "modelId" to modelId,
+                                ))
+                            }
+                        }
+                        return@launch
+                    }
+                    OmniLog.i(TAG, "[preloadModel] done modelId=$modelId success=$success")
+                    mainHandler.post {
+                        result.success(mapOf(
+                            "success" to success,
+                            "modelId" to modelId,
+                            "error" to error,
+                        ))
                     }
                 }
-                result.success(null)
                 return
             }
         }
