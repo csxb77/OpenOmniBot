@@ -114,7 +114,12 @@ class _OnboardingChoicePageState extends ConsumerState<OnboardingChoicePage> {
                 title: context.trLegacy('云 AI 服务'),
                 subtitle: context.trLegacy('连接 OpenAI、Anthropic 或兼容的 API 服务'),
                 completed: state.cloudConfigured,
-                onTap: () => GoRouterManager.push('/home/vlm_model_setting'),
+                onTap: () async {
+                  await StorageService.setBool(
+                      StorageKeys.welcomeCompleted, true);
+                  GoRouterManager.clearAndNavigateTo('/home/chat');
+                  GoRouterManager.push('/home/vlm_model_setting');
+                },
               ),
               const SizedBox(height: 16),
               OnboardingChoiceCard(

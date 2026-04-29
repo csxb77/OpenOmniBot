@@ -207,13 +207,9 @@ class GoRouterManager {
                   false;
               final location = state.matchedLocation;
               final isWelcomeRoute = location.startsWith('/welcome');
-              // Allow these pages during onboarding (navigated from choice)
-              final isOnboardingAllowed =
-                  location.startsWith('/home/local_models') ||
-                  location.startsWith('/home/vlm_model_setting');
 
               // Not completed onboarding → redirect non-welcome routes
-              if (!completed && !isWelcomeRoute && !isOnboardingAllowed) {
+              if (!completed && !isWelcomeRoute) {
                 return '/welcome/choice';
               }
               // Already completed → redirect welcome routes to home

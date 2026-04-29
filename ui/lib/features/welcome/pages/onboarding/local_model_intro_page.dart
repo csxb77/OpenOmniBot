@@ -182,7 +182,9 @@ class LocalModelIntroPage extends StatelessWidget {
                   // Complete onboarding so user won't return to guide
                   await StorageService.setBool(
                       StorageKeys.welcomeCompleted, true);
-                  GoRouterManager.clearAndNavigateTo(
+                  // Navigate to home first, then push market page on top
+                  GoRouterManager.clearAndNavigateTo('/home/chat');
+                  GoRouterManager.push(
                     '/home/local_models?tab=market&pinned=$kOnboardingRecommendedModelId',
                   );
                 },
