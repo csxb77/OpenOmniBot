@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
+import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -266,8 +267,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
-    expect(find.text('Save & send'), findsOneWidget);
+    expect(find.text('取消'), findsOneWidget);
+    expect(find.text('保存并发送'), findsOneWidget);
     expect(find.byIcon(Icons.edit_outlined), findsNothing);
   });
 
@@ -350,6 +351,105 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
 
       expect(controller.positions.length, 2);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'streaming deep thinking updates keep the message list pinned to latest',
+    (tester) async {
+      final controller = ScrollController();
+      final messages = ObservableChatMessageList()
+        ..replaceAllMessages(_buildStreamingThinkingMessages(thinkingLines: 1));
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: messages,
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      expect(
+        controller.offset,
+        closeTo(controller.position.maxScrollExtent, 1),
+      );
+
+      messages[0] = ChatMessageModel.cardMessage(<String, dynamic>{
+        'type': 'deep_thinking',
+        'thinkingContent': List.generate(
+          40,
+          (index) => '第 ${index + 1} 行流式思考内容，验证列表持续跟随最新位置。',
+        ).join('\n'),
+        'stage': 1,
+        'isLoading': true,
+        'isCollapsible': true,
+        'taskID': 'streaming-thinking-card',
+      }, id: 'streaming-thinking-card');
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      expect(
+        controller.offset,
+        closeTo(controller.position.maxScrollExtent, 1),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'expanding an older thinking card does not snap the list back to latest',
+    (tester) async {
+      final controller = ScrollController();
+      final messages = _buildToggleRegressionThinkingMessages();
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: messages,
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        controller.offset,
+        closeTo(controller.position.maxScrollExtent, 1),
+      );
+
+      final inkWells = find.byType(InkWell);
+      expect(inkWells, findsNWidgets(2));
+
+      final offsetBefore = controller.offset;
+      final maxBefore = controller.position.maxScrollExtent;
+
+      await tester.tap(inkWells.first);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 220));
+      await tester.pumpAndSettle();
+
+      expect(controller.position.maxScrollExtent, greaterThan(maxBefore + 40));
+      expect(controller.offset, closeTo(offsetBefore, 8));
+      expect(
+        controller.offset,
+        lessThan(controller.position.maxScrollExtent - 40),
+      );
       expect(tester.takeException(), isNull);
     },
   );
@@ -493,4 +593,67 @@ List<ChatMessageModel> _buildSimpleAssistantMessages(
       id: '$idPrefix-$resolvedIndex',
     );
   });
+}
+
+List<ChatMessageModel> _buildStreamingThinkingMessages({
+  required int thinkingLines,
+}) {
+  return <ChatMessageModel>[
+    ChatMessageModel.cardMessage(<String, dynamic>{
+      'type': 'deep_thinking',
+      'thinkingContent': List.generate(
+        thinkingLines,
+        (index) => '第 ${index + 1} 行流式思考内容，验证列表持续跟随最新位置。',
+      ).join('\n'),
+      'stage': 1,
+      'isLoading': true,
+      'isCollapsible': true,
+      'taskID': 'streaming-thinking-card',
+    }, id: 'streaming-thinking-card'),
+    ...List.generate(18, (index) {
+      return ChatMessageModel.assistantMessage(
+        List.generate(
+          5,
+          (line) => '较早消息 ${index + 1} - 第 ${line + 1} 行',
+        ).join('\n'),
+        id: 'streaming-older-$index',
+      );
+    }),
+  ];
+}
+
+List<ChatMessageModel> _buildToggleRegressionThinkingMessages() {
+  return <ChatMessageModel>[
+    ChatMessageModel.cardMessage(<String, dynamic>{
+      'type': 'deep_thinking',
+      'thinkingContent': List.generate(
+        3,
+        (index) => '最新思考卡第 ${index + 1} 行，保持可见。',
+      ).join('\n'),
+      'stage': 4,
+      'isLoading': false,
+      'isCollapsible': true,
+      'taskID': 'latest-thinking-card',
+    }, id: 'latest-thinking-card'),
+    ChatMessageModel.cardMessage(<String, dynamic>{
+      'type': 'deep_thinking',
+      'thinkingContent': List.generate(
+        60,
+        (index) => '较早思考卡第 ${index + 1} 行，展开后高度明显增加。',
+      ).join('\n'),
+      'stage': 4,
+      'isLoading': false,
+      'isCollapsible': true,
+      'taskID': 'older-thinking-card',
+    }, id: 'older-thinking-card'),
+    ...List.generate(6, (index) {
+      return ChatMessageModel.assistantMessage(
+        List.generate(
+          3,
+          (line) => '普通消息 ${index + 1} - 第 ${line + 1} 行',
+        ).join('\n'),
+        id: 'toggle-regression-$index',
+      );
+    }),
+  ];
 }

@@ -27,6 +27,7 @@ class CardWidgetFactory {
     bool enableThinkingCollapse = false,
     ScrollController? parentScrollController,
     VoidCallback? onParentScrollHandoff,
+    VoidCallback? onStreamingTextLayoutChanged,
     AppBackgroundConfig appearanceConfig = AppBackgroundConfig.defaults,
     AppBackgroundVisualProfile visualProfile =
         AppBackgroundVisualProfile.defaultProfile,
@@ -73,6 +74,7 @@ class CardWidgetFactory {
           isCollapsible: isCollapsible,
           parentScrollController: parentScrollController,
           onParentScrollHandoff: onParentScrollHandoff,
+          onStreamingTextLayoutChanged: onStreamingTextLayoutChanged,
           textScale: resolvedChatTextScale(appearanceConfig),
           textColor: visualProfile.primaryTextColor,
           showStatusAvatar: _shouldShowDeepThinkingAvatar(

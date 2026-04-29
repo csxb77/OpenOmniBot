@@ -107,6 +107,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     if (!reduceResult.accepted) {
       return;
     }
+    final thinkingCardToFinalize = _resolveThinkingCardToFinalize(
+      reduceResult,
+      event,
+    );
     _agentStreamState = reduceResult.nextState;
     _lastAgentTaskId = event.taskId;
     _activeThinkingCardId = reduceResult.nextState.activeThinkingEntryId;
@@ -120,38 +124,62 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     switch (event.kind) {
       case AgentStreamEventKind.thinkingStarted:
       case AgentStreamEventKind.thinkingSnapshot:
-        _applyAgentThinkingStreamEvent(event);
+        _applyAgentThinkingStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.textSnapshot:
-        _applyAgentTextStreamEvent(event);
+        _applyAgentTextStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.toolStarted:
       case AgentStreamEventKind.toolProgress:
       case AgentStreamEventKind.toolCompleted:
-        _applyAgentToolStreamEvent(event);
+        _applyAgentToolStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.clarifyRequired:
-        _applyAgentClarifyStreamEvent(event);
+        _applyAgentClarifyStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.completed:
-        _applyAgentCompletedStreamEvent();
+        _applyAgentCompletedStreamEvent(
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.error:
-        _applyAgentErrorStreamEvent(event);
+        _applyAgentErrorStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
       case AgentStreamEventKind.permissionRequired:
-        _applyAgentPermissionStreamEvent(event);
+        _applyAgentPermissionStreamEvent(
+          event,
+          completedThinkingCardId: thinkingCardToFinalize,
+        );
         return;
     }
   }
 
-  void _applyAgentThinkingStreamEvent(AgentStreamEvent event) {
+  void _applyAgentThinkingStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final cardId = (event.entryId ?? '').trim();
     if (cardId.isEmpty) return;
     if (event.thinking.isNotEmpty) {
       deepThinkingContent = event.thinking;
     }
     setState(() {
+      _finalizeThinkingCardInMessages(event.taskId, completedThinkingCardId);
       final exists = messages.any((msg) => msg.id == cardId);
       if (exists) {
         updateThinkingCardForAgent(
@@ -176,12 +204,16 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentTextStreamEvent(AgentStreamEvent event) {
+  void _applyAgentTextStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final messageId = (event.entryId ?? '').trim();
     final text = event.text.trim();
     if (messageId.isEmpty || text.isEmpty) return;
 
     setState(() {
+      _finalizeThinkingCardInMessages(event.taskId, completedThinkingCardId);
       final index = messages.indexWhere((msg) => msg.id == messageId);
       if (index == -1) {
         messages.insert(
@@ -229,7 +261,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentToolStreamEvent(AgentStreamEvent event) {
+  void _applyAgentToolStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final taskId = event.taskId;
     final cardId = (event.entryId ?? '').trim();
     if (cardId.isEmpty) return;
@@ -240,16 +275,7 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
         : cardId;
     setState(() {
       isAiResponding = true;
-      final thinkingCardId = _activeThinkingCardId;
-      if (thinkingCardId != null) {
-        updateThinkingCardForAgent(
-          taskId,
-          cardId: thinkingCardId,
-          isLoading: isDeepThinking,
-          stage: ThinkingStage.toolCall.value,
-          lockCompleted: false,
-        );
-      }
+      _finalizeThinkingCardInMessages(taskId, completedThinkingCardId);
       _upsertToolCard(
         taskId: taskId,
         cardId: cardId,
@@ -268,7 +294,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentClarifyStreamEvent(AgentStreamEvent event) {
+  void _applyAgentClarifyStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final text = event.question.trim().isNotEmpty
         ? event.question.trim()
         : event.text.trim();
@@ -276,16 +305,7 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     setState(() {
       currentThinkingStage = ThinkingStage.complete.value;
       isDeepThinking = false;
-      final thinkingCardId = _activeThinkingCardId;
-      if (thinkingCardId != null) {
-        updateThinkingCardForAgent(
-          event.taskId,
-          cardId: thinkingCardId,
-          isLoading: false,
-          stage: ThinkingStage.complete.value,
-          lockCompleted: false,
-        );
-      }
+      _finalizeThinkingCardInMessages(event.taskId, completedThinkingCardId);
       if (messageId.isNotEmpty && text.isNotEmpty) {
         final index = messages.indexWhere((msg) => msg.id == messageId);
         if (index == -1) {
@@ -313,20 +333,14 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentCompletedStreamEvent() {
+  void _applyAgentCompletedStreamEvent({String? completedThinkingCardId}) {
     setState(() {
       currentThinkingStage = ThinkingStage.complete.value;
       isDeepThinking = false;
-      final thinkingCardId = _activeThinkingCardId;
-      if (thinkingCardId != null) {
-        updateThinkingCardForAgent(
-          _lastAgentTaskId ?? '',
-          cardId: thinkingCardId,
-          isLoading: false,
-          stage: ThinkingStage.complete.value,
-          lockCompleted: false,
-        );
-      }
+      _finalizeThinkingCardInMessages(
+        _lastAgentTaskId ?? '',
+        completedThinkingCardId,
+      );
       isAiResponding = false;
     });
     clearAgentStreamSessionState();
@@ -334,22 +348,16 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentErrorStreamEvent(AgentStreamEvent event) {
+  void _applyAgentErrorStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final entryId = (event.entryId ?? '').trim();
     final shouldMarkError = event.raw['persistAsError'] == true;
     setState(() {
       currentThinkingStage = ThinkingStage.complete.value;
       isDeepThinking = false;
-      final thinkingCardId = _activeThinkingCardId;
-      if (thinkingCardId != null) {
-        updateThinkingCardForAgent(
-          event.taskId,
-          cardId: thinkingCardId,
-          isLoading: false,
-          stage: ThinkingStage.complete.value,
-          lockCompleted: false,
-        );
-      }
+      _finalizeThinkingCardInMessages(event.taskId, completedThinkingCardId);
       if (shouldMarkError && entryId.isNotEmpty) {
         final index = messages.indexWhere((msg) => msg.id == entryId);
         if (index != -1) {
@@ -363,7 +371,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     _persistAgentConversationSafely();
   }
 
-  void _applyAgentPermissionStreamEvent(AgentStreamEvent event) {
+  void _applyAgentPermissionStreamEvent(
+    AgentStreamEvent event, {
+    String? completedThinkingCardId,
+  }) {
     final taskId = event.taskId;
     final messageId = (event.entryId ?? '').trim();
     final text = event.text.trim();
@@ -375,16 +386,7 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     setState(() {
       currentThinkingStage = ThinkingStage.complete.value;
       isDeepThinking = false;
-      final thinkingCardId = _activeThinkingCardId;
-      if (thinkingCardId != null) {
-        updateThinkingCardForAgent(
-          taskId,
-          cardId: thinkingCardId,
-          isLoading: false,
-          stage: ThinkingStage.complete.value,
-          lockCompleted: false,
-        );
-      }
+      _finalizeThinkingCardInMessages(taskId, completedThinkingCardId);
       if (messageId.isNotEmpty && text.isNotEmpty) {
         final index = messages.indexWhere((msg) => msg.id == messageId);
         if (index == -1) {
@@ -545,6 +547,61 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
 
   String _baseThinkingCardId(String taskId) => '$taskId-thinking';
   String _agentTextBaseId(String taskId) => '$taskId-text';
+
+  String? _resolveThinkingCardToFinalize(
+    AgentStreamReduceResult reduceResult,
+    AgentStreamEvent event,
+  ) {
+    switch (event.kind) {
+      case AgentStreamEventKind.thinkingStarted:
+      case AgentStreamEventKind.thinkingSnapshot:
+        return reduceResult.isNewThinkingEntry
+            ? reduceResult.previousThinkingEntryId
+            : null;
+      case AgentStreamEventKind.textSnapshot:
+      case AgentStreamEventKind.toolStarted:
+      case AgentStreamEventKind.toolProgress:
+      case AgentStreamEventKind.toolCompleted:
+      case AgentStreamEventKind.completed:
+      case AgentStreamEventKind.error:
+      case AgentStreamEventKind.permissionRequired:
+      case AgentStreamEventKind.clarifyRequired:
+        return reduceResult.previousThinkingEntryId;
+    }
+  }
+
+  void _finalizeThinkingCardInMessages(String taskId, String? cardId) {
+    final resolvedCardId = (cardId ?? '').trim();
+    if (taskId.trim().isEmpty || resolvedCardId.isEmpty) {
+      return;
+    }
+    final index = messages.indexWhere((msg) => msg.id == resolvedCardId);
+    if (index == -1) {
+      return;
+    }
+
+    final existing = messages[index];
+    final content = Map<String, dynamic>.from(existing.content ?? const {});
+    final cardData = Map<String, dynamic>.from(content['cardData'] ?? const {});
+    final currentStageRaw = cardData['stage'];
+    final currentStage = currentStageRaw is num
+        ? currentStageRaw.toInt()
+        : int.tryParse(currentStageRaw?.toString() ?? '');
+    final isLoading = cardData['isLoading'] == true;
+    if (!isLoading && currentStage == ThinkingStage.complete.value) {
+      return;
+    }
+
+    cardData['thinkingContent'] =
+        cardData['thinkingContent'] ?? deepThinkingContent;
+    cardData['isLoading'] = false;
+    cardData['stage'] = ThinkingStage.complete.value;
+    cardData['taskID'] = taskId;
+    cardData['cardId'] = resolvedCardId;
+    cardData['endTime'] ??= DateTime.now().millisecondsSinceEpoch;
+    content['cardData'] = cardData;
+    messages[index] = existing.copyWith(content: content);
+  }
 
   String? _resolveThinkingCardId(String taskId) {
     if (_activeThinkingCardId != null) {

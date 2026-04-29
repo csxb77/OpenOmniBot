@@ -1191,6 +1191,7 @@ class MessageBubble extends StatelessWidget {
         enableThinkingCollapse: enableThinkingCollapse,
         parentScrollController: parentScrollController,
         onParentScrollHandoff: onParentScrollHandoff,
+        onStreamingTextLayoutChanged: onStreamingTextLayoutChanged,
         appearanceConfig: appearanceConfig,
         visualProfile: visualProfile,
       ),

@@ -1462,6 +1462,75 @@ void main() {
     },
   );
 
+  test(
+    'finalizes each agent thinking card when the stream moves on to tool or text output',
+    () async {
+      const conversationId = 4602;
+      const taskId = 'agent-task-thinking-collapse';
+
+      final runtime = coordinator.ensureRuntime(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeNormal,
+      );
+      runtime.currentDispatchTaskId = taskId;
+      coordinator.registerTask(
+        taskId: taskId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeNormal,
+      );
+
+      await emitPlatformEvent('onAgentThinkingStart', <String, dynamic>{
+        'taskId': taskId,
+      });
+      await emitPlatformEvent('onAgentThinkingUpdate', <String, dynamic>{
+        'taskId': taskId,
+        'thinking': '第一轮先分析仓库状态。',
+      });
+      await emitPlatformEvent('onAgentToolCallStart', <String, dynamic>{
+        'taskId': taskId,
+        'toolName': 'terminal_execute',
+        'displayName': 'terminal_execute',
+        'toolType': 'terminal',
+        'summary': '检查 git 状态',
+      });
+
+      final firstThinkingCard = runtime.messages.firstWhere(
+        (message) => message.id == '$taskId-thinking',
+      );
+      expect(firstThinkingCard.cardData?['isLoading'], isFalse);
+      expect(firstThinkingCard.cardData?['stage'], 4);
+      expect(firstThinkingCard.cardData?['endTime'], isNotNull);
+
+      await emitPlatformEvent('onAgentThinkingStart', <String, dynamic>{
+        'taskId': taskId,
+      });
+      await emitPlatformEvent('onAgentThinkingUpdate', <String, dynamic>{
+        'taskId': taskId,
+        'thinking': '第二轮根据工具结果继续分析。',
+      });
+
+      final secondThinkingCard = runtime.messages.firstWhere(
+        (message) => message.id == '$taskId-thinking-2',
+      );
+      expect(secondThinkingCard.cardData?['isLoading'], isTrue);
+      expect(secondThinkingCard.cardData?['stage'], 1);
+
+      await emitPlatformEvent('onAgentChatMessage', <String, dynamic>{
+        'taskId': taskId,
+        'message': '第二轮给出最终结论。',
+        'isFinal': false,
+      });
+
+      final finalizedSecondThinkingCard = runtime.messages.firstWhere(
+        (message) => message.id == '$taskId-thinking-2',
+      );
+      expect(finalizedSecondThinkingCard.cardData?['isLoading'], isFalse);
+      expect(finalizedSecondThinkingCard.cardData?['stage'], 4);
+      expect(runtime.activeThinkingCardId, isNull);
+      expect(runtime.isDeepThinking, isFalse);
+    },
+  );
+
   test('forces tools layer when browser or terminal tools start', () async {
     const conversationId = 5001;
     const taskId = 'agent-tool-task';

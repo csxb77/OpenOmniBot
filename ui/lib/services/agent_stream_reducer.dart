@@ -117,6 +117,7 @@ class AgentStreamReducer {
     var browserSnapshot = previousState.browserSnapshot;
     var isNewThinkingEntry = false;
     var isNewAssistantEntry = false;
+    var clearActiveThinkingEntryId = false;
 
     switch (event.kind) {
       case AgentStreamEventKind.thinkingStarted:
@@ -135,6 +136,10 @@ class AgentStreamReducer {
         break;
       case AgentStreamEventKind.textSnapshot:
         phase = AgentStreamPhase.output;
+        thinkingStage = 4;
+        isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         if (event.entryId != null && event.entryId!.trim().isNotEmpty) {
           activeAssistantEntryId = event.entryId!.trim();
           final roundIndex = event.roundIndex <= 0 ? 1 : event.roundIndex;
@@ -149,6 +154,9 @@ class AgentStreamReducer {
       case AgentStreamEventKind.toolCompleted:
         phase = AgentStreamPhase.tool;
         thinkingStage = 2;
+        isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         if (event.entryId != null && event.entryId!.trim().isNotEmpty) {
           toolCards[event.entryId!.trim()] = event.roundIndex;
         }
@@ -158,21 +166,29 @@ class AgentStreamReducer {
         phase = AgentStreamPhase.completed;
         thinkingStage = 4;
         isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         break;
       case AgentStreamEventKind.error:
         phase = AgentStreamPhase.error;
         thinkingStage = 4;
         isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         break;
       case AgentStreamEventKind.clarifyRequired:
         phase = AgentStreamPhase.clarify;
         thinkingStage = 4;
         isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         break;
       case AgentStreamEventKind.permissionRequired:
         phase = AgentStreamPhase.permissionRequired;
         thinkingStage = 4;
         isDeepThinking = false;
+        clearActiveThinkingEntryId = true;
+        activeThinkingEntryId = null;
         break;
     }
 
@@ -182,6 +198,7 @@ class AgentStreamReducer {
       assistantSegments: assistantSegments,
       toolCards: toolCards,
       activeThinkingEntryId: activeThinkingEntryId,
+      clearActiveThinkingEntryId: clearActiveThinkingEntryId,
       activeAssistantEntryId: activeAssistantEntryId,
       phase: phase,
       thinkingStage: thinkingStage,
