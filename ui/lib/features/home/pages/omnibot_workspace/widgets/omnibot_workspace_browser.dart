@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
+import 'package:ui/services/workspace_mount_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
@@ -26,7 +27,7 @@ class _WorkspaceBreadcrumbSegment {
   final bool isFile;
 }
 
-enum _WorkspaceEntryAction { edit, rename, delete }
+enum _WorkspaceEntryAction { edit, rename, delete, unmount }
 
 class _WorkspaceDragPayload {
   const _WorkspaceDragPayload({
@@ -482,7 +483,8 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     if (!_isPathEffectivelySelected(path)) {
       return false;
     }
-    if (entry is! Directory || !_expandedDirectoryPaths.contains(path)) {
+    if (!_isDirectoryLikeEntry(entry) ||
+        !_expandedDirectoryPaths.contains(path)) {
       return true;
     }
 
@@ -736,11 +738,39 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   List<FileSystemEntity> _sortedEntriesFor(Directory directory) {
-    return directory.listSync().toList()..sort((a, b) {
-      if (a is Directory && b is! Directory) return -1;
-      if (a is! Directory && b is Directory) return 1;
+    return directory.listSync(followLinks: false).toList()..sort((a, b) {
+      final aIsDirectoryLike = _isDirectoryLikeEntry(a);
+      final bIsDirectoryLike = _isDirectoryLikeEntry(b);
+      if (aIsDirectoryLike && !bIsDirectoryLike) return -1;
+      if (!aIsDirectoryLike && bIsDirectoryLike) return 1;
       return a.path.toLowerCase().compareTo(b.path.toLowerCase());
     });
+  }
+
+  bool _isDirectoryLikeEntry(FileSystemEntity entry) {
+    if (entry is Directory) {
+      return true;
+    }
+    if (entry is! Link) {
+      return false;
+    }
+    return FileSystemEntity.typeSync(entry.path) ==
+        FileSystemEntityType.directory;
+  }
+
+  WorkspaceMountEntry? _workspaceMountEntryFor(FileSystemEntity entry) {
+    return WorkspaceMountService.describeMountEntrySync(
+      entry.path,
+      rootPath: _rootDirectory.path,
+    );
+  }
+
+  bool _isWorkspaceMountRootPath(String path) {
+    return WorkspaceMountService.describeMountEntrySync(
+          path,
+          rootPath: _rootDirectory.path,
+        ) !=
+        null;
   }
 
   bool _isDescendantOfCurrentDirectory(String path) {
@@ -877,7 +907,9 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     ),
   }) {
     final name = entry.path.split('/').last;
-    final isDirectory = entry is Directory;
+    final mountEntry = _workspaceMountEntryFor(entry);
+    final isWorkspaceMountEntry = mountEntry != null;
+    final isDirectory = _isDirectoryLikeEntry(entry);
     final selectionMode = _isBulkSelectionMode;
     final isSelected = _isEntrySelected(entry);
     final canExpandInline =
@@ -927,7 +959,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
           : _buildDraggableLeadingIcon(
               entry: entry,
               isExpanded: isExpanded,
-              enableDrag: true,
+              draggable: !isWorkspaceMountEntry,
             ),
       borderRadius: itemBorderRadius,
       trailing: trailing,
@@ -936,8 +968,8 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
           _toggleEntrySelection(entry);
           return;
         }
-        if (entry is Directory) {
-          final directory = entry;
+        if (isDirectory) {
+          final directory = Directory(entry.path);
           if (canExpandInline) {
             _toggleDirectoryExpansion(directory, depth: depth);
           } else {
@@ -982,7 +1014,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   Widget _buildDraggableLeadingIcon({
     required FileSystemEntity entry,
     required bool isExpanded,
-    required bool enableDrag,
+    required bool draggable,
   }) {
     Widget buildIcon({double size = 20}) {
       return SvgPicture.asset(
@@ -998,10 +1030,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
 
     final payload = _WorkspaceDragPayload(
       sourcePath: _normalizePath(entry.path),
-      isDirectory: entry is Directory,
+      isDirectory: _isDirectoryLikeEntry(entry),
     );
 
-    if (!enableDrag) {
+    if (!draggable) {
       return buildIcon();
     }
 
@@ -1113,6 +1145,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     final sourcePath = _normalizePath(payload.sourcePath);
     final targetPath = _normalizePath(targetDirectoryPath);
 
+    if (_isWorkspaceMountRootPath(sourcePath)) {
+      return false;
+    }
+
     if (!_isInsideWorkspace(sourcePath) || !_isInsideWorkspace(targetPath)) {
       return false;
     }
@@ -1196,6 +1232,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   Future<void> _showEntryActionSheet(FileSystemEntity entry) async {
     final palette = context.omniPalette;
     final name = _entryNameFromPath(entry.path);
+    final mountEntry = _workspaceMountEntryFor(entry);
     final editable = _canEditEntry(entry);
     final action = await showModalBottomSheet<_WorkspaceEntryAction>(
       context: context,
@@ -1232,7 +1269,11 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '长按左侧图标并拖动到目标文件夹可移动位置',
+                  mountEntry == null
+                      ? '长按左侧图标并拖动到目标文件夹可移动位置'
+                      : (Localizations.localeOf(context).languageCode == 'en'
+                            ? 'This entry is a mounted host directory'
+                            : '这是一个挂载进 /workspace 的宿主目录'),
                   style: TextStyle(
                     fontSize: 12,
                     color: palette.textSecondary,
@@ -1240,7 +1281,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                if (editable) ...[
+                if (mountEntry == null && editable) ...[
                   ListTile(
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -1264,48 +1305,54 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
                   ),
                   const SizedBox(height: 8),
                 ],
+                if (mountEntry == null) ...[
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    tileColor: _secondarySurfaceColor(),
+                    leading: Icon(
+                      Icons.drive_file_rename_outline_rounded,
+                      color: palette.textPrimary,
+                    ),
+                    title: Text(
+                      '重命名',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'PingFang SC',
+                      ),
+                    ),
+                    onTap: () => Navigator.of(
+                      sheetContext,
+                    ).pop(_WorkspaceEntryAction.rename),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 ListTile(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
                   tileColor: _secondarySurfaceColor(),
                   leading: Icon(
-                    Icons.drive_file_rename_outline_rounded,
-                    color: palette.textPrimary,
+                    mountEntry == null
+                        ? Icons.delete_outline_rounded
+                        : Icons.link_off_rounded,
+                    color: const Color(0xFFE53935),
                   ),
                   title: Text(
-                    '重命名',
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontFamily: 'PingFang SC',
-                    ),
-                  ),
-                  onTap: () => Navigator.of(
-                    sheetContext,
-                  ).pop(_WorkspaceEntryAction.rename),
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  tileColor: _secondarySurfaceColor(),
-                  leading: const Icon(
-                    Icons.delete_outline_rounded,
-                    color: Color(0xFFE53935),
-                  ),
-                  title: const Text(
-                    '删除',
-                    style: TextStyle(
+                    mountEntry == null ? '删除' : '卸载挂载',
+                    style: const TextStyle(
                       color: Color(0xFFE53935),
                       fontWeight: FontWeight.w600,
                       fontFamily: 'PingFang SC',
                     ),
                   ),
-                  onTap: () => Navigator.of(
-                    sheetContext,
-                  ).pop(_WorkspaceEntryAction.delete),
+                  onTap: () => Navigator.of(sheetContext).pop(
+                    mountEntry == null
+                        ? _WorkspaceEntryAction.delete
+                        : _WorkspaceEntryAction.unmount,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 ListTile(
@@ -1335,6 +1382,12 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     );
 
     if (!mounted || action == null) return;
+    if (action == _WorkspaceEntryAction.unmount) {
+      if (mountEntry != null) {
+        await _confirmAndUnmountWorkspaceMount(mountEntry);
+      }
+      return;
+    }
     if (action == _WorkspaceEntryAction.edit) {
       _openFileEntry(entry, startInEditMode: true);
       return;
@@ -1438,6 +1491,11 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   Future<void> _confirmAndDeleteEntry(FileSystemEntity entry) async {
+    final mountEntry = _workspaceMountEntryFor(entry);
+    if (mountEntry != null) {
+      await _confirmAndUnmountWorkspaceMount(mountEntry);
+      return;
+    }
     final path = _normalizePath(entry.path);
     final name = _entryNameFromPath(path);
     final sourceType = FileSystemEntity.typeSync(path);
@@ -1551,6 +1609,27 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     );
   }
 
+  Future<void> _confirmAndUnmountWorkspaceMount(
+    WorkspaceMountEntry mountEntry,
+  ) async {
+    final confirmed = await AppDialog.confirm(
+      context,
+      title: '卸载挂载',
+      content: '确认卸载 “${mountEntry.shellPath}” 吗？不会删除原始目录和其中的文件。',
+      cancelText: '取消',
+      confirmText: '卸载',
+      confirmButtonColor: const Color(0xFFE53935),
+    );
+    if (confirmed != true) return;
+    try {
+      WorkspaceMountService.unmountDirectorySync(mountEntry.linkPath);
+      showToast('已卸载 ${mountEntry.shellPath}', type: ToastType.success);
+      _refresh();
+    } catch (error) {
+      showToast('卸载失败：$error', type: ToastType.error);
+    }
+  }
+
   Future<void> _deleteSelectedPathRecursively(String path) async {
     final normalizedPath = _normalizePath(path);
     final sourceType = FileSystemEntity.typeSync(normalizedPath);
@@ -1567,6 +1646,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
       _excludedEntryPaths,
       normalizedPath,
     );
+    final mountEntry = WorkspaceMountService.describeMountEntrySync(
+      normalizedPath,
+      rootPath: _rootDirectory.path,
+    );
 
     if (sourceType != FileSystemEntityType.directory) {
       if (isSelected) {
@@ -1576,6 +1659,15 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     }
 
     final directory = Directory(normalizedPath);
+    if (mountEntry != null) {
+      if (isSelected && !hasExcludedDescendants) {
+        WorkspaceMountService.unmountDirectorySync(mountEntry.linkPath);
+        return;
+      }
+      if (!hasSelectedDescendants) {
+        return;
+      }
+    }
     if (isSelected && !hasExcludedDescendants) {
       await directory.delete(recursive: true);
       return;
@@ -1593,6 +1685,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     }
 
     if (!isSelected || !directory.existsSync()) {
+      return;
+    }
+
+    if (mountEntry != null) {
       return;
     }
 
@@ -1650,17 +1746,19 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
       final previousEntry = index > 0 ? entries[index - 1] : null;
       final isLast = index == entries.length - 1;
       final isExpandedDirectory =
-          entry is Directory && _expandedDirectoryPaths.contains(entry.path);
+          _isDirectoryLikeEntry(entry) &&
+          _expandedDirectoryPaths.contains(entry.path);
       final hasExpandedDirectoryAbove =
-          previousEntry is Directory &&
+          previousEntry != null &&
+          _isDirectoryLikeEntry(previousEntry) &&
           _expandedDirectoryPaths.contains(previousEntry.path);
       final shouldRoundTrailingCorners =
           depth <= 1 &&
           isLast &&
-          !(depth > 0 && entry is Directory && !isExpandedDirectory);
+          !(depth > 0 && _isDirectoryLikeEntry(entry) && !isExpandedDirectory);
       final shouldRoundTopLeft =
           depth > 0 &&
-          entry is Directory &&
+          _isDirectoryLikeEntry(entry) &&
           isExpandedDirectory &&
           hasExpandedDirectoryAbove;
       return _buildEntryNode(
@@ -1776,7 +1874,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   String _iconAssetForEntry(FileSystemEntity entry, {bool isExpanded = false}) {
-    if (entry is Directory) {
+    if (_isDirectoryLikeEntry(entry)) {
       return isExpanded ? _folderOpenIconAsset : _folderIconAsset;
     }
     final fileName = entry.path.split('/').last.toLowerCase();
