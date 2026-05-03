@@ -870,7 +870,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
             ChatAppBar(
               onMenuTap: onMenuTap,
               onPureChatToggleTap: () {
-                unawaited(_togglePureChatConversationMode());
+                unawaited(_handlePureChatModeShortcutTap());
               },
               onCodexTap: () {
                 unawaited(_handleCodexTap());
@@ -924,7 +924,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               visualProfile: visualProfile,
               showMenuButton: showMenuButton,
               showSurfaceSwitcher: showSurfaceSwitcher,
-              showPureChatToggle: _activeMode == ChatPageMode.normal,
+              showPureChatToggle:
+                  _activeMode == ChatPageMode.normal ||
+                  _activeMode == ChatPageMode.codex,
               isPureChatSelected: _isPureChatSelected,
               isPureChatToggleLocked: _isPureChatToggleLocked,
             ),
