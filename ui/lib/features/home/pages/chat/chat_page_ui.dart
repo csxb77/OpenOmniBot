@@ -869,6 +869,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           children: [
             ChatAppBar(
               onMenuTap: onMenuTap,
+              onAgentTap: () {
+                unawaited(_handleAgentModeShortcutTap());
+              },
               onPureChatToggleTap: () {
                 unawaited(_handlePureChatModeShortcutTap());
               },
@@ -913,6 +916,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               isCodexConnected: _codexStatus.connected,
               isCodexLoading: _isCodexStatusLoading,
               isCodexSelected: _activeMode == ChatPageMode.codex,
+              isAgentSelected:
+                  _activeMode == ChatPageMode.normal && !_isPureChatSelected,
               showAppUpdateIndicator: showAppUpdateIndicator,
               appUpdateTooltip: appUpdateTooltip,
               onAppUpdateTap: showAppUpdateIndicator

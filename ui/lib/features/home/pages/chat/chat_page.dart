@@ -597,6 +597,26 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   bool get _isPureChatToggleLocked => !_canTogglePureChatMode;
 
+  Future<void> _handleAgentModeShortcutTap() async {
+    if (_activeMode == ChatPageMode.normal && !_isPureChatSelected) {
+      return;
+    }
+    _storeDraftForActiveConversationMode();
+    await _persistVisibleThreadTargetIfNeeded();
+    final target = ConversationThreadTarget.newConversation(
+      mode: ConversationMode.normal,
+      requestKey: DateTime.now().millisecondsSinceEpoch.toString(),
+    );
+    if (!mounted) {
+      return;
+    }
+    await _applyConversationThreadTarget(target);
+    if (!mounted) {
+      return;
+    }
+    showToast(LegacyTextLocalizer.localize('已进入 Agent 模式'));
+  }
+
   Future<void> _handlePureChatModeShortcutTap() async {
     if (_activeMode == ChatPageMode.codex) {
       final target = ConversationThreadTarget.newConversation(

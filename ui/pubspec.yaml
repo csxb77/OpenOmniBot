@@ -98,6 +98,7 @@ flutter:
     - assets/images/
     - assets/avatar/
     - assets/home/
+    - assets/home/chat/
     - assets/home/spring_festival/
     - assets/welcome/
     - assets/common/

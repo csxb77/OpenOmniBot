@@ -96,11 +96,13 @@ class _PureChatToggleHarness extends StatefulWidget {
   const _PureChatToggleHarness({
     this.selected = false,
     this.locked = false,
+    this.showAgentTapCount = false,
     this.showCodexTapCount = false,
   });
 
   final bool selected;
   final bool locked;
+  final bool showAgentTapCount;
   final bool showCodexTapCount;
 
   @override
@@ -111,6 +113,7 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
   late bool _selected = widget.selected;
   late final bool _locked = widget.locked;
   int _toggleCount = 0;
+  int _agentTapCount = 0;
   int _codexTapCount = 0;
 
   @override
@@ -123,6 +126,11 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
             children: [
               ChatAppBar(
                 onMenuTap: () {},
+                onAgentTap: () {
+                  setState(() {
+                    _agentTapCount += 1;
+                  });
+                },
                 onPureChatToggleTap: () {
                   setState(() {
                     _selected = !_selected;
@@ -150,6 +158,7 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
               Text('selected:$_selected'),
               Text('locked:$_locked'),
               Text('toggles:$_toggleCount'),
+              if (widget.showAgentTapCount) Text('agentTaps:$_agentTapCount'),
               if (widget.showCodexTapCount) Text('codexTaps:$_codexTapCount'),
             ],
           ),
@@ -736,11 +745,14 @@ void main() {
     expect(find.text('toggles:0'), findsOneWidget);
   });
 
-  testWidgets('opens mode menu with codex and pure chat actions', (
+  testWidgets('opens mode menu with agent codex and pure chat actions', (
     tester,
   ) async {
     await tester.pumpWidget(
-      const _PureChatToggleHarness(showCodexTapCount: true),
+      const _PureChatToggleHarness(
+        showAgentTapCount: true,
+        showCodexTapCount: true,
+      ),
     );
 
     await tester.tap(
@@ -749,6 +761,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
+      find.byKey(const ValueKey('chat-app-bar-mode-menu-agent')),
+      findsOneWidget,
+    );
+    expect(
       find.byKey(const ValueKey('chat-app-bar-mode-menu-codex')),
       findsOneWidget,
     );
@@ -756,9 +772,21 @@ void main() {
       find.byKey(const ValueKey('chat-app-bar-mode-menu-pure-chat')),
       findsOneWidget,
     );
+    expect(find.text('Agent 模式'), findsNothing);
     expect(find.text('Codex 模式'), findsNothing);
     expect(find.text('纯聊天模式'), findsNothing);
 
+    await tester.tap(
+      find.byKey(const ValueKey('chat-app-bar-mode-menu-agent')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('agentTaps:1'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('chat-app-bar-pure-chat-button')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey('chat-app-bar-mode-menu-codex')),
     );
@@ -921,6 +949,56 @@ void main() {
     );
     expect(codexIcon.width, 22);
     expect(codexIcon.height, 22);
+  });
+
+  testWidgets('uses current chat mode icon in surface slider', (tester) async {
+    Future<void> pumpAppBar({
+      bool isAgentSelected = false,
+      bool isCodexSelected = false,
+      bool isPureChatSelected = false,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DefaultAssetBundle(
+            bundle: _SvgTestAssetBundle(),
+            child: Scaffold(
+              body: ChatAppBar(
+                onMenuTap: () {},
+                onCompanionTap: () {},
+                activeMode: ChatSurfaceMode.normal,
+                onModeChanged: (_) {},
+                activeModelId: 'gpt-5.4',
+                displayLayer: ChatIslandDisplayLayer.mode,
+                onDisplayLayerChanged: (_) {},
+                onTerminalEnvironmentTap: (_) {},
+                onTerminalTap: () {},
+                onBrowserTap: () {},
+                isAgentSelected: isAgentSelected,
+                isCodexSelected: isCodexSelected,
+                isPureChatSelected: isPureChatSelected,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    String primaryIconAsset() {
+      final icon = tester.widget<SvgPicture>(
+        find.byKey(const ValueKey('chat-mode-slider-primary-icon')),
+      );
+      return icon.bytesLoader.toString();
+    }
+
+    await pumpAppBar(isAgentSelected: true);
+    expect(primaryIconAsset(), contains('assets/home/chat/agent.svg'));
+
+    await pumpAppBar(isCodexSelected: true);
+    expect(primaryIconAsset(), contains('assets/home/chat/codex.svg'));
+
+    await pumpAppBar(isPureChatSelected: true);
+    expect(primaryIconAsset(), contains('assets/home/chat/pure_chat.svg'));
   });
 
   testWidgets('supports direct island swipe between model and tools layers', (
