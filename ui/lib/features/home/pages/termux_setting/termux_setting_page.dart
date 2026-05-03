@@ -78,6 +78,12 @@ const List<_EnvironmentDefinition> _environmentDefinitions =
         groupKey: 'alpineDevEnv',
       ),
       _EnvironmentDefinition(
+        id: 'codex',
+        title: 'codex',
+        descriptionKey: 'alpineCodex',
+        groupKey: 'alpineAiAgent',
+      ),
+      _EnvironmentDefinition(
         id: 'ssh_client',
         title: 'ssh',
         descriptionKey: 'alpineSshClient',
@@ -98,7 +104,9 @@ const List<_EnvironmentDefinition> _environmentDefinitions =
     ];
 
 class TermuxSettingPage extends StatefulWidget {
-  const TermuxSettingPage({super.key});
+  const TermuxSettingPage({super.key, this.focusPackageId});
+
+  final String? focusPackageId;
 
   @override
   State<TermuxSettingPage> createState() => _TermuxSettingPageState();
@@ -207,6 +215,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpinePip;
       case 'alpinePipInstall':
         return l10n.alpinePipInstall;
+      case 'alpineCodex':
+        return l10n.alpineCodex;
       case 'alpineSshClient':
         return l10n.alpineSshClient;
       case 'alpineSshpass':
@@ -215,6 +225,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpineOpenSshServer;
       case 'alpineDevEnv':
         return l10n.alpineDevEnv;
+      case 'alpineAiAgent':
+        return l10n.alpineAiAgent;
       case 'alpineSsh':
         return 'SSH';
       default:
@@ -256,6 +268,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     try {
       final inventory = await getEmbeddedTerminalSetupInventory();
       final nextSelected = <String>{};
+      final focusPackageId = widget.focusPackageId?.trim();
       final shouldSelectMissing =
           selectMissingByDefault || !_hasInitializedSelection;
       for (final definition in _environmentDefinitions) {
@@ -265,7 +278,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           continue;
         }
         if (_selectedPackageIds.contains(definition.id) ||
-            shouldSelectMissing) {
+            shouldSelectMissing ||
+            focusPackageId == definition.id) {
           nextSelected.add(definition.id);
         }
       }

@@ -1625,6 +1625,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get alpinePipInstall => 'Python 包安装器';
 
   @override
+  String get alpineCodex => 'OpenAI Codex CLI 与 app-server 桥接';
+
+  @override
   String get alpineSshClient => 'SSH 客户端';
 
   @override
@@ -1769,6 +1772,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get alpineDevEnv => '开发环境';
+
+  @override
+  String get alpineAiAgent => 'AI Agent';
 
   @override
   String get alpineEnvConfig => '环境配置';

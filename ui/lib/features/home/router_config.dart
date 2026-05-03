@@ -362,7 +362,9 @@ List<GoRoute> homeRoutes = [
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/termux_setting',
-      child: const TermuxSettingPage(),
+      child: TermuxSettingPage(
+        focusPackageId: state.uri.queryParameters['focus'],
+      ),
     ),
   ),
 

@@ -1,5 +1,12 @@
 part of 'chat_page.dart';
 
+ConversationThreadTarget _newCodexThreadTarget() {
+  return ConversationThreadTarget.newConversation(
+    mode: ConversationMode.codex,
+    requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+  );
+}
+
 mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   @override
   void initState() {
@@ -41,6 +48,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _browserSessionSnapshotChangedSubscription = AssistsMessageService
         .browserSessionSnapshotChangedStream
         .listen(_handleBrowserSessionSnapshotChanged);
+    _codexEventSubscription = CodexAppServerService.events.listen(
+      _handleCodexAppServerEvent,
+    );
+    unawaited(_refreshCodexStatus());
 
     _inputFocusNode.addListener(_onFocusChange);
     _messageController.addListener(_handleSlashCommandInput);
@@ -108,7 +119,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null) {
       final lastVisible =
           await ConversationHistoryService.getLastVisibleThreadTarget();
-      final normalizedLastVisible = _normalizeVisibleThreadTarget(lastVisible);
+      final normalizedLastVisible = _normalizeVisibleThreadTarget(
+        lastVisible,
+        freshCodexOnImplicitRestore: true,
+      );
       if (normalizedLastVisible != null) {
         return normalizedLastVisible;
       }
@@ -136,13 +150,17 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   }
 
   ConversationThreadTarget? _normalizeVisibleThreadTarget(
-    ConversationThreadTarget? target,
-  ) {
+    ConversationThreadTarget? target, {
+    bool freshCodexOnImplicitRestore = false,
+  }) {
     if (target == null) {
       return null;
     }
     if (target.mode == ConversationMode.openclaw) {
       return null;
+    }
+    if (freshCodexOnImplicitRestore && target.mode == ConversationMode.codex) {
+      return _newCodexThreadTarget();
     }
     return target;
   }
@@ -196,6 +214,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _vlmAnswerController.clear();
     _applyDraftForConversationMode(targetMode);
     await initializeConversation();
+    if (_activeConversationMode == ChatPageMode.codex) {
+      await _refreshCodexCommandPreferences();
+    }
     await _applyStagedSharedDraftIfNeeded(effectiveTarget);
     await _persistVisibleThreadTargetIfNeeded();
     if (syncPage) {
@@ -227,6 +248,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         _pendingAttachmentsByMode[mode]!.isNotEmpty;
   }
 
+  @override
   Future<void> _prepareConversationModeState(
     ChatPageMode mode,
     ConversationThreadTarget target,
@@ -480,14 +502,17 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _messageController.dispose();
     _normalMessageScrollController.dispose();
     _openClawMessageScrollController.dispose();
+    _codexMessageScrollController.dispose();
     _modePageController.dispose();
     _inputFocusNode.dispose();
     _vlmAnswerController.dispose();
     _normalUserMessageEditController.dispose();
     _openClawUserMessageEditController.dispose();
+    _codexUserMessageEditController.dispose();
     _openClawBaseUrlController.dispose();
     _openClawTokenController.dispose();
     _openClawUserIdController.dispose();
+    _codexEventSubscription?.cancel();
     super.dispose();
   }
 
@@ -599,6 +624,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   ScrollController _scrollControllerForMode(ChatPageMode mode) {
     return mode == ChatPageMode.openclaw
         ? _openClawMessageScrollController
+        : mode == ChatPageMode.codex
+        ? _codexMessageScrollController
         : _normalMessageScrollController;
   }
 
@@ -671,22 +698,27 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
 
-    await _ensureConversationModeReady(ChatPageMode.normal);
+    final targetConversationMode = _activeConversationMode == ChatPageMode.codex
+        ? ChatPageMode.codex
+        : ChatPageMode.normal;
+    await _ensureConversationModeReady(targetConversationMode);
     if (isStaleRequest()) return;
     setState(() {
       _activeSurfaceMode = ChatSurfaceMode.normal;
-      _activeConversationMode = ChatPageMode.normal;
+      _activeConversationMode = targetConversationMode;
       _resetNormalSurfaceModelRevealInterruption();
       _setChatIslandDisplayLayerForMode(
-        ChatPageMode.normal,
+        targetConversationMode,
         ChatIslandDisplayLayer.mode,
       );
     });
-    _applyDraftForConversationMode(ChatPageMode.normal);
+    _applyDraftForConversationMode(targetConversationMode);
     await _persistVisibleThreadTargetIfNeeded();
     if (isStaleRequest()) return;
     _hideSlashCommandPanel();
-    unawaited(_loadNormalChatModelContext());
+    if (targetConversationMode == ChatPageMode.normal) {
+      unawaited(_loadNormalChatModelContext());
+    }
     if (syncPage) _jumpToCurrentModePage();
     if (!_isSurfacePageScrolling &&
         (!syncPage || !_modePageController.hasClients)) {

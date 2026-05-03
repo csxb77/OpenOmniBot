@@ -602,6 +602,7 @@
   "alpinePython": "Python 解释器",
   "alpinePip": "Python 项目与包工具",
   "alpinePipInstall": "Python 包安装器",
+  "alpineCodex": "OpenAI Codex CLI 与 app-server 桥接",
   "alpineSshClient": "SSH 客户端",
   "alpineSshpass": "SSH 密码辅助工具",
   "alpineOpenSshServer": "OpenSSH 服务器",
@@ -648,6 +649,7 @@
   "alpineWorkDir": "工作目录",
   "alpineBootAutoStart": "打开小万时自动启动",
   "alpineDevEnv": "开发环境",
+  "alpineAiAgent": "AI Agent",
   "alpineEnvConfig": "环境配置",
   "alpineWorkDirValue": "工作目录：{dir}",
 

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 import '../../../../models/conversation_model.dart';
 import '../../../../models/conversation_thread_target.dart';
 import '../../../../models/chat_link_preview.dart';
@@ -30,6 +31,7 @@ import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/services/agent_browser_session_service.dart';
 import 'package:ui/services/chat_terminal_environment_service.dart';
+import 'package:ui/services/codex_app_server_service.dart';
 import 'package:ui/services/conversation_model_override_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
@@ -50,6 +52,7 @@ import 'package:ui/utils/ui.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_runtime_attachment_payload.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
+import 'package:ui/features/home/pages/chat/utils/codex_slash_commands.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
 import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
 
@@ -74,12 +77,13 @@ part 'chat_page_lifecycle.dart';
 part 'chat_page_model_context.dart';
 part 'chat_page_openclaw.dart';
 part 'chat_page_terminal_env.dart';
+part 'chat_page_codex.dart';
 part 'chat_page_conversation_flow.dart';
 part 'chat_page_ui.dart';
 
-enum ChatPageMode { normal, openclaw }
+enum ChatPageMode { normal, openclaw, codex }
 
-enum _SlashCommandPanelRoute { root, effort }
+enum _SlashCommandPanelRoute { root, effort, codexModel }
 
 class ChatPage extends StatefulWidget {
   final ConversationThreadTarget? threadTarget;
@@ -103,12 +107,15 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _normalMessageScrollController = ScrollController();
   final ScrollController _openClawMessageScrollController = ScrollController();
+  final ScrollController _codexMessageScrollController = ScrollController();
   final PageController _modePageController = PageController(initialPage: 0);
   final FocusNode _inputFocusNode = FocusNode();
   final TextEditingController _vlmAnswerController = TextEditingController();
   final TextEditingController _normalUserMessageEditController =
       TextEditingController();
   final TextEditingController _openClawUserMessageEditController =
+      TextEditingController();
+  final TextEditingController _codexUserMessageEditController =
       TextEditingController();
 
   // ===================== Keys =====================
@@ -160,139 +167,172 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       {
         ChatPageMode.normal: <ChatInputAttachment>[],
         ChatPageMode.openclaw: <ChatInputAttachment>[],
+        ChatPageMode.codex: <ChatInputAttachment>[],
       };
   final Map<ChatPageMode, String> _draftMessageByMode = {
     ChatPageMode.normal: '',
     ChatPageMode.openclaw: '',
+    ChatPageMode.codex: '',
   };
   final Map<ChatPageMode, ChatIslandDisplayLayer>
   _chatIslandDisplayLayerByMode = {
     ChatPageMode.normal: ChatIslandDisplayLayer.model,
     ChatPageMode.openclaw: ChatIslandDisplayLayer.mode,
+    ChatPageMode.codex: ChatIslandDisplayLayer.mode,
   };
   final Map<ChatPageMode, String?> _lastAgentToolTypeByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, String> _runtimeChromeSignatureByMode = {
     ChatPageMode.normal: '',
     ChatPageMode.openclaw: '',
+    ChatPageMode.codex: '',
   };
   final Map<ChatPageMode, int> _runtimeMessageMutationRevisionByMode = {
     ChatPageMode.normal: 0,
     ChatPageMode.openclaw: 0,
+    ChatPageMode.codex: 0,
   };
   final Map<ChatPageMode, ChatBrowserSessionSnapshot?>
   _browserSessionSnapshotByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
 
   // 输入框/任务执行状态
   final Map<ChatPageMode, bool> _isInputAreaVisibleByMode = {
     ChatPageMode.normal: true,
     ChatPageMode.openclaw: true,
+    ChatPageMode.codex: true,
   };
   final Map<ChatPageMode, bool> _isExecutingTaskByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
 
   final Map<ChatPageMode, List<ChatMessageModel>> _messagesByMode = {
     ChatPageMode.normal: <ChatMessageModel>[],
     ChatPageMode.openclaw: <ChatMessageModel>[],
+    ChatPageMode.codex: <ChatMessageModel>[],
   };
   final Map<ChatPageMode, String?> _editingUserMessageIdByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, double> _toolActivityOccupiedHeightByMode = {
     ChatPageMode.normal: 0,
     ChatPageMode.openclaw: 0,
+    ChatPageMode.codex: 0,
   };
   final Map<ChatPageMode, double> _slashCommandPanelOccupiedHeightByMode = {
     ChatPageMode.normal: 0,
     ChatPageMode.openclaw: 0,
+    ChatPageMode.codex: 0,
   };
   final Map<ChatPageMode, bool> _slashCommandExpandedByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, bool> _toolActivityExpandedByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, Set<String>> _expandedAgentRunTaskIdsByMode = {
     ChatPageMode.normal: <String>{},
     ChatPageMode.openclaw: <String>{},
+    ChatPageMode.codex: <String>{},
   };
   final Map<ChatPageMode, List<String>> _expandedAgentRunTaskOrderByMode = {
     ChatPageMode.normal: <String>[],
     ChatPageMode.openclaw: <String>[],
+    ChatPageMode.codex: <String>[],
   };
   final Map<ChatPageMode, double> _inputAreaHeightByMode = {
     ChatPageMode.normal: 0,
     ChatPageMode.openclaw: 0,
+    ChatPageMode.codex: 0,
   };
   final Map<ChatPageMode, bool> _isAiRespondingByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, bool> _isContextCompressingByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, bool> _isCheckingExecutableTaskByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, bool> _isSubmittingVlmReplyByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, String?> _vlmInfoQuestionByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, Map<String, String>> _currentAiMessagesByMode = {
     ChatPageMode.normal: <String, String>{},
     ChatPageMode.openclaw: <String, String>{},
+    ChatPageMode.codex: <String, String>{},
   };
   final Map<ChatPageMode, String> _deepThinkingContentByMode = {
     ChatPageMode.normal: '',
     ChatPageMode.openclaw: '',
+    ChatPageMode.codex: '',
   };
   final Map<ChatPageMode, bool> _isDeepThinkingByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, String?> _currentDispatchTaskIdByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, int> _currentThinkingStageByMode = {
     ChatPageMode.normal: 1,
     ChatPageMode.openclaw: 1,
+    ChatPageMode.codex: 1,
   };
   final Map<ChatPageMode, int?> _currentConversationIdByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, ConversationModel?> _currentConversationByMode = {
     ChatPageMode.normal: null,
     ChatPageMode.openclaw: null,
+    ChatPageMode.codex: null,
   };
   final Map<ChatPageMode, bool> _hasMoreMessagesByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   final Map<ChatPageMode, int> _messageOffsetByMode = {
     ChatPageMode.normal: 0,
     ChatPageMode.openclaw: 0,
+    ChatPageMode.codex: 0,
   };
   final Map<ChatPageMode, bool> _isLoadingMoreByMode = {
     ChatPageMode.normal: false,
     ChatPageMode.openclaw: false,
+    ChatPageMode.codex: false,
   };
   bool _isAwaitingAuthorizeResult = false;
   bool _isRetryingLatestInstructionAfterAuth = false;
@@ -321,6 +361,20 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   _conversationMessagesChangedSubscription;
   StreamSubscription<Map<String, dynamic>>?
   _browserSessionSnapshotChangedSubscription;
+  StreamSubscription<Map<String, dynamic>>? _codexEventSubscription;
+  CodexStatus _codexStatus = CodexStatus.disconnected;
+  bool _isCodexStatusLoading = false;
+  String? _activeCodexThreadId;
+  String? _activeCodexTurnId;
+  String? _activeCodexModelId;
+  String? _activeCodexCollaborationMode;
+  bool _isCodexModelListLoading = false;
+  bool _isCodexCollaborationModeListLoading = false;
+  String? _codexModelListError;
+  String? _codexCollaborationModeListError;
+  List<String> _codexModelOptions = const <String>[];
+  List<String> _codexCollaborationModes = const <String>[];
+  CodexPermissionMode _codexPermissionMode = CodexPermissionMode.fullAccess;
   ChatBrowserSessionSnapshot? _liveBrowserSessionSnapshot;
   bool _isBrowserOverlayVisible = false;
   bool _isBrowserOverlayInitialized = false;
@@ -346,6 +400,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   ChatPageMode get _activeMode => _activeConversationMode;
   ConversationMode _conversationModeForPageMode(ChatPageMode mode) {
+    if (mode == ChatPageMode.codex) {
+      return ConversationMode.codex;
+    }
     if (mode == ChatPageMode.openclaw) {
       return ConversationMode.openclaw;
     }
@@ -369,6 +426,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   ChatPageMode _pageModeForConversationMode(ConversationMode mode) =>
       mode == ConversationMode.openclaw
       ? ChatPageMode.openclaw
+      : mode == ConversationMode.codex
+      ? ChatPageMode.codex
       : ChatPageMode.normal;
   ChatSurfaceMode _surfaceForConversationMode(ConversationMode mode) =>
       mode == ConversationMode.openclaw
@@ -377,6 +436,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String _modeKey(ChatPageMode mode) => switch (mode) {
     ChatPageMode.normal => kChatRuntimeModeNormal,
     ChatPageMode.openclaw => kChatRuntimeModeOpenClaw,
+    ChatPageMode.codex => kChatRuntimeModeCodex,
   };
   ChatConversationRuntimeState? _runtimeForMode(ChatPageMode mode) {
     final conversationId = _currentConversationIdByMode[mode];
@@ -546,6 +606,39 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   bool get _isPureChatToggleLocked => !_canTogglePureChatMode;
 
+  Future<void> _handleAgentModeShortcutTap() async {
+    if (_activeMode == ChatPageMode.normal && !_isPureChatSelected) {
+      return;
+    }
+    _storeDraftForActiveConversationMode();
+    await _persistVisibleThreadTargetIfNeeded();
+    final target = ConversationThreadTarget.newConversation(
+      mode: ConversationMode.normal,
+      requestKey: DateTime.now().millisecondsSinceEpoch.toString(),
+    );
+    if (!mounted) {
+      return;
+    }
+    await _applyConversationThreadTarget(target);
+    if (!mounted) {
+      return;
+    }
+  }
+
+  Future<void> _handlePureChatModeShortcutTap() async {
+    if (_activeMode == ChatPageMode.codex) {
+      final target = ConversationThreadTarget.newConversation(
+        mode: ConversationMode.chatOnly,
+      );
+      await _applyConversationThreadTarget(target);
+      if (!mounted) {
+        return;
+      }
+      return;
+    }
+    await _togglePureChatConversationMode();
+  }
+
   Future<void> _togglePureChatConversationMode() async {
     if (!_canTogglePureChatMode) {
       return;
@@ -575,11 +668,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       mode: nextMode,
     );
     await ConversationService.setCurrentConversationTarget(nextTarget);
-    showToast(
-      LegacyTextLocalizer.localize(
-        nextMode == ConversationMode.chatOnly ? '已进入仅聊天模式' : '已退出仅聊天模式',
-      ),
-    );
+    if (nextMode != ConversationMode.chatOnly) {
+      showToast(LegacyTextLocalizer.localize('已退出仅聊天模式'));
+    }
   }
 
   String get _expectedBrowserWorkspaceId => chatConversationWorkspaceId(
@@ -939,6 +1030,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       return _SlashCommandPanelRoute.root;
     }
     final normalized = trimmed.toLowerCase();
+    if (_activeMode == ChatPageMode.codex &&
+        (normalized == '/model' || normalized.startsWith('/model '))) {
+      return _SlashCommandPanelRoute.codexModel;
+    }
     if (normalized == '/effort' || normalized.startsWith('/effort ')) {
       return _SlashCommandPanelRoute.effort;
     }
@@ -951,6 +1046,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }) {
     final source = (text ?? _messageController.text).trimLeft();
     return switch (route) {
+      _SlashCommandPanelRoute.codexModel =>
+        source.length <= 6 ? '' : source.substring(6).trimLeft(),
       _SlashCommandPanelRoute.effort =>
         source.length <= 7 ? '' : source.substring(7).trimLeft(),
       _SlashCommandPanelRoute.root => '',
@@ -1027,6 +1124,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   TextEditingController _userMessageEditControllerForMode(ChatPageMode mode) =>
       mode == ChatPageMode.openclaw
       ? _openClawUserMessageEditController
+      : mode == ChatPageMode.codex
+      ? _codexUserMessageEditController
       : _normalUserMessageEditController;
   TextEditingController get _editingUserMessageController =>
       _userMessageEditControllerForMode(_activeMode);
@@ -1478,6 +1577,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     _editingUserMessageIdByMode[mode] = null;
     _userMessageEditControllerForMode(mode).clear();
     _draftMessageByMode[mode] = '';
+    if (mode == ChatPageMode.codex) {
+      _activeCodexThreadId = null;
+      _activeCodexTurnId = null;
+    }
     if (mode == ChatPageMode.normal) {
       _conversationModelOverride = null;
       _pendingConversationModelOverride = null;
@@ -1576,6 +1679,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _ensureConversationModeReady(ChatPageMode mode);
 
+  Future<void> _prepareConversationModeState(
+    ChatPageMode mode,
+    ConversationThreadTarget target,
+  );
+
   Future<void> _persistVisibleThreadTargetIfNeeded();
 
   void _notifySummarySheetReadyIfNeeded();
@@ -1599,6 +1707,41 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   double _popupMenuBottomOffset();
 
   Future<void> _handleAppUpdateBannerTap();
+
+  Future<void> _refreshCodexStatus();
+
+  Future<void> _refreshCodexCommandPreferences();
+
+  Future<void> _loadCodexModelOptions({bool force = false});
+
+  Future<void> _loadCodexCollaborationModes({bool force = false});
+
+  Future<void> _selectCodexModel(String modelId);
+
+  Future<void> _activateCodexPlanMode({bool persistOnly = false});
+
+  Future<void> _handleCodexSlashCommandCardSelected(
+    Map<String, dynamic> cardData,
+  );
+
+  Future<bool> _tryHandleCodexSlashCommand(String messageText);
+
+  Future<void> _executeCodexInitCommand();
+
+  Future<void> _startCodexReviewCommand();
+
+  Future<void> _handleCodexTap();
+
+  void _handleCodexAppServerEvent(Map<String, dynamic> event);
+
+  Future<void> _sendCodexMessage(
+    String aiMessageId,
+    String messageText, {
+    String? modelOverride,
+    String? collaborationModeOverride,
+  });
+
+  Future<void> _interruptCodexTurn();
 
   Future<void> _loadOpenClawConfig();
 
@@ -1844,6 +1987,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 class _ChatPageState extends _ChatPageStateBase
     with
         _ChatPageBrowserMixin,
+        _ChatPageCodexMixin,
         _ChatPageLifecycleMixin,
         _ChatPageModelContextMixin,
         _ChatPageOpenClawMixin,

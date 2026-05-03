@@ -602,6 +602,7 @@
   "alpinePython": "Python Interpreter",
   "alpinePip": "Python Projects & Packages",
   "alpinePipInstall": "Python Package Installer",
+  "alpineCodex": "OpenAI Codex CLI and app-server bridge",
   "alpineSshClient": "SSH Client",
   "alpineSshpass": "SSH Password Helper",
   "alpineOpenSshServer": "OpenSSH Server",
@@ -648,6 +649,7 @@
   "alpineWorkDir": "Working Directory",
   "alpineBootAutoStart": "Auto-start when Omnibot opens",
   "alpineDevEnv": "Dev Environment",
+  "alpineAiAgent": "AI Agent",
   "alpineEnvConfig": "Environment Config",
   "alpineWorkDirValue": "Working directory: {dir}",
 

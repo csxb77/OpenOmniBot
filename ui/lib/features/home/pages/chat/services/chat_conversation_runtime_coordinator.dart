@@ -14,6 +14,7 @@ import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/agent_stream_reducer.dart';
 import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/codex_event_reducer.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/link_preview_service.dart';
@@ -23,6 +24,7 @@ import 'package:ui/utils/data_parser.dart';
 
 const String kChatRuntimeModeNormal = 'normal';
 const String kChatRuntimeModeOpenClaw = 'openclaw';
+const String kChatRuntimeModeCodex = 'codex';
 const int _kStreamingTextChunkFlushThreshold = 5;
 
 enum _StreamingTextStreamKind {
@@ -91,6 +93,9 @@ class ChatConversationRuntimeState {
       <String, AgentStreamTaskState>{};
   final Map<String, _StreamingTextBatchState> streamingTextBatches =
       <String, _StreamingTextBatchState>{};
+  final Map<String, int> codexEntrySequences = <String, int>{};
+  final Map<String, int> codexEntryStartTimes = <String, int>{};
+  int codexNextEntrySequence = 0;
   bool isAiResponding = false;
   bool isContextCompressing = false;
   bool isCheckingExecutableTask = false;
@@ -147,6 +152,8 @@ class ChatConversationRuntimeState {
   void dispose() {
     agentStreamStates.clear();
     streamingTextBatches.clear();
+    codexEntrySequences.clear();
+    codexEntryStartTimes.clear();
     messages.dispose();
   }
 }
@@ -165,6 +172,7 @@ class _PendingPersistenceRequest {
     required this.timer,
     this.generateSummary = false,
     this.markComplete = false,
+    this.persistMessages = false,
   });
 
   final int conversationId;
@@ -172,6 +180,7 @@ class _PendingPersistenceRequest {
   final Timer timer;
   final bool generateSummary;
   final bool markComplete;
+  final bool persistMessages;
 }
 
 class ChatConversationRuntimeCoordinator extends ChangeNotifier {
@@ -199,6 +208,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   String _agentTextBaseId(String taskId) => '$taskId-text';
 
   final AgentStreamReducer _agentStreamReducer = const AgentStreamReducer();
+  final CodexEventReducer _codexEventReducer = const CodexEventReducer();
   final Map<String, ChatConversationRuntimeState> _runtimes =
       <String, ChatConversationRuntimeState>{};
   final Map<String, _TaskBinding> _taskBindings = <String, _TaskBinding>{};
@@ -340,6 +350,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.browserSessionSnapshot = browserSessionSnapshot;
     runtime.agentStreamStates.clear();
     runtime.streamingTextBatches.clear();
+    runtime.codexEntrySequences.clear();
+    runtime.codexEntryStartTimes.clear();
+    runtime.codexNextEntrySequence = 0;
     notifyListeners();
   }
 
@@ -426,6 +439,30 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     _taskBindings.remove(taskId);
   }
 
+  CodexReduceResult applyCodexEvent({
+    required int conversationId,
+    required Map<String, dynamic> event,
+    ConversationModel? conversation,
+  }) {
+    ensureInitialized();
+    final runtime = ensureRuntime(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeCodex,
+      conversation: conversation,
+      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+    );
+    final result = _codexEventReducer.reduce(runtime: runtime, event: event);
+    if (result.handled) {
+      notifyListeners();
+      schedulePersistRuntimeConversation(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeCodex,
+        persistMessages: true,
+      );
+    }
+    return result;
+  }
+
   void clearPureChatThinking({
     required String taskId,
     required int conversationId,
@@ -497,6 +534,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.toolCardSequence = 0;
     runtime.thinkingRound = 0;
     runtime.streamingTextBatches.clear();
+    runtime.codexEntrySequences.clear();
+    runtime.codexEntryStartTimes.clear();
+    runtime.codexNextEntrySequence = 0;
     notifyListeners();
   }
 
@@ -559,6 +599,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     bool generateSummary = false,
     bool markComplete = false,
+    bool persistMessages = false,
   }) async {
     _cancelPendingPersistence(conversationId: conversationId, mode: mode);
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
@@ -621,6 +662,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     );
 
     await ConversationService.updateConversation(updatedConversation);
+    if (persistMessages) {
+      await ConversationHistoryService.saveConversationMessages(
+        conversationId,
+        snapshotMessages,
+        mode: conversationMode,
+      );
+    }
     runtime.conversation = updatedConversation;
     if (markComplete) {
       await ConversationService.completeConversation(
@@ -635,18 +683,26 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     bool generateSummary = false,
     bool markComplete = false,
+    bool persistMessages = false,
     Duration delay = const Duration(milliseconds: 350),
   }) {
     final key = _runtimeKey(conversationId: conversationId, mode: mode);
-    _pendingPersistence[key]?.timer.cancel();
+    final previous = _pendingPersistence[key];
+    previous?.timer.cancel();
+    final nextGenerateSummary =
+        generateSummary || (previous?.generateSummary ?? false);
+    final nextMarkComplete = markComplete || (previous?.markComplete ?? false);
+    final nextPersistMessages =
+        persistMessages || (previous?.persistMessages ?? false);
     final timer = Timer(delay, () {
       _pendingPersistence.remove(key);
       unawaited(
         persistRuntimeConversation(
           conversationId: conversationId,
           mode: mode,
-          generateSummary: generateSummary,
-          markComplete: markComplete,
+          generateSummary: nextGenerateSummary,
+          markComplete: nextMarkComplete,
+          persistMessages: nextPersistMessages,
         ),
       );
     });
@@ -654,8 +710,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       conversationId: conversationId,
       mode: mode,
       timer: timer,
-      generateSummary: generateSummary,
-      markComplete: markComplete,
+      generateSummary: nextGenerateSummary,
+      markComplete: nextMarkComplete,
+      persistMessages: nextPersistMessages,
     );
   }
 
@@ -674,6 +731,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       mode: request.mode,
       generateSummary: request.generateSummary,
       markComplete: request.markComplete,
+      persistMessages: request.persistMessages,
     );
   }
 
@@ -687,6 +745,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         mode: request.mode,
         generateSummary: request.generateSummary,
         markComplete: request.markComplete,
+        persistMessages: request.persistMessages,
       );
     }
   }
@@ -3092,6 +3151,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) {
     return mode == kChatRuntimeModeOpenClaw
         ? ConversationMode.openclaw
+        : mode == kChatRuntimeModeCodex
+        ? ConversationMode.codex
         : switch (conversation?.mode) {
             ConversationMode.chatOnly => ConversationMode.chatOnly,
             ConversationMode.subagent => ConversationMode.subagent,

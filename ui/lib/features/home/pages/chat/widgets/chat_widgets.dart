@@ -14,55 +14,15 @@ import '../../command_overlay/widgets/message_bubble.dart';
 import '../../command_overlay/widgets/chat_input_area.dart';
 import 'agent_run_group_message.dart';
 
-const String _chatAppBarUpdateSparklesSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 '
-    '1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 '
-    '1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-'
-    '1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-'
-    '1.594z"/>'
-    '<path d="M20 2v4"/>'
-    '<path d="M22 4h-4"/>'
-    '<circle cx="4" cy="20" r="2"/>'
-    '</svg>';
-
-const String _chatAppBarAgentIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M12 8V4H8"/>'
-    '<rect width="16" height="12" x="4" y="8" rx="2"/>'
-    '<path d="M2 14h2"/>'
-    '<path d="M20 14h2"/>'
-    '<path d="M15 13v2"/>'
-    '<path d="M9 13v2"/>'
-    '</svg>';
-
-const String _chatAppBarPureChatIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M14 3h2"/>'
-    '<path d="M16 19h-2"/>'
-    '<path d="M2 12v-2"/>'
-    '<path d="M2 16v5.286a.71.71 0 0 0 1.212.502l1.149-1.149"/>'
-    '<path d="M20 19a2 2 0 0 0 2-2v-1"/>'
-    '<path d="M22 10v2"/>'
-    '<path d="M22 6V5a2 2 0 0 0-2-2"/>'
-    '<path d="M4 3a2 2 0 0 0-2 2v1"/>'
-    '<path d="M8 19h2"/>'
-    '<path d="M8 3h2"/>'
-    '</svg>';
-
-const String _chatAppBarPureChatSelectedIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202'
-    'A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/>'
-    '</svg>';
+const String _kChatAppBarUpdateSparklesAsset =
+    'assets/home/chat/update_sparkles.svg';
+const String _kChatAppBarAgentIconAsset = 'assets/home/chat/agent.svg';
+const String _kChatAppBarCodexIconAsset = 'assets/home/chat/codex.svg';
+const String _kChatAppBarModeMenuClosedIconAsset =
+    'assets/home/chat/mode_menu_closed.svg';
+const String _kChatAppBarModeMenuOpenIconAsset =
+    'assets/home/chat/mode_menu_open.svg';
+const String _kChatAppBarPureChatIconAsset = 'assets/home/chat/pure_chat.svg';
 
 const List<Color> _kDarkChatAccentGradient = <Color>[
   Color(0xFFAA9774),
@@ -85,7 +45,9 @@ const List<ChatSurfaceMode> kVisibleChatSurfaceModes = <ChatSurfaceMode>[
 /// 聊天页面 AppBar
 class ChatAppBar extends StatelessWidget {
   final VoidCallback onMenuTap;
+  final VoidCallback? onAgentTap;
   final VoidCallback? onPureChatToggleTap;
+  final VoidCallback? onCodexTap;
   final VoidCallback onCompanionTap;
   final ChatSurfaceMode activeMode;
   final ValueChanged<ChatSurfaceMode> onModeChanged;
@@ -102,6 +64,11 @@ class ChatAppBar extends StatelessWidget {
   final String? activeToolType;
   final bool isCompanionModeEnabled;
   final bool isCompanionToggleLoading;
+  final bool isCodexReady;
+  final bool isCodexConnected;
+  final bool isCodexLoading;
+  final bool isCodexSelected;
+  final bool isAgentSelected;
   final bool showAppUpdateIndicator;
   final VoidCallback? onAppUpdateTap;
   final String? appUpdateTooltip;
@@ -116,7 +83,9 @@ class ChatAppBar extends StatelessWidget {
   const ChatAppBar({
     super.key,
     required this.onMenuTap,
+    this.onAgentTap,
     this.onPureChatToggleTap,
+    this.onCodexTap,
     required this.onCompanionTap,
     required this.activeMode,
     required this.onModeChanged,
@@ -133,6 +102,11 @@ class ChatAppBar extends StatelessWidget {
     this.activeToolType,
     this.isCompanionModeEnabled = false,
     this.isCompanionToggleLoading = false,
+    this.isCodexReady = false,
+    this.isCodexConnected = false,
+    this.isCodexLoading = false,
+    this.isCodexSelected = false,
+    this.isAgentSelected = true,
     this.showAppUpdateIndicator = false,
     this.onAppUpdateTap,
     this.appUpdateTooltip,
@@ -153,6 +127,11 @@ class ChatAppBar extends StatelessWidget {
         : context.isDarkTheme
         ? palette.textPrimary
         : Colors.grey[800]!;
+    final primaryModeIconAsset = isCodexSelected
+        ? _kChatAppBarCodexIconAsset
+        : isPureChatSelected
+        ? _kChatAppBarPureChatIconAsset
+        : _kChatAppBarAgentIconAsset;
     const updateTint = Color(0xFFD4A017);
     return ColoredBox(
       color: translucent ? Colors.transparent : palette.pageBackground,
@@ -164,13 +143,13 @@ class ChatAppBar extends StatelessWidget {
             builder: (context, constraints) {
               final leftReservedSpace =
                   (showMenuButton ? _kChatAppBarMenuButtonSize : 0) +
-                  (showPureChatToggle
-                      ? _kChatAppBarAccessoryButtonSize +
-                            _kChatAppBarAccessoryGap * 2
-                      : 0);
+                  _kChatAppBarAccessoryButtonSize +
+                  _kChatAppBarAccessoryGap * 2;
+              final rightActionCount =
+                  (showAppUpdateIndicator ? 1 : 0) +
+                  (showPureChatToggle ? 1 : 0);
               final rightReservedSpace =
-                  ((showAppUpdateIndicator ? 2 : 1) *
-                      _kChatAppBarRightActionSlotWidth) +
+                  rightActionCount * _kChatAppBarRightActionSlotWidth +
                   _kChatAppBarAccessoryGap;
               final symmetricReservedSpace = math.max(
                 leftReservedSpace,
@@ -191,9 +170,9 @@ class ChatAppBar extends StatelessWidget {
                   ? _kChatAppBarMenuButtonSize + _kChatAppBarAccessoryGap
                   : _kChatAppBarAccessoryGap;
               final accessoryRightEdge = islandLeft - _kChatAppBarAccessoryGap;
-              final maxPureLeft =
+              final maxCompanionLeft =
                   accessoryRightEdge - _kChatAppBarAccessoryButtonSize;
-              final centeredPureLeft =
+              final centeredCompanionLeft =
                   accessoryLeftEdge +
                   ((accessoryRightEdge -
                               accessoryLeftEdge -
@@ -201,9 +180,9 @@ class ChatAppBar extends StatelessWidget {
                           2)
                       .clamp(0, double.infinity)
                       .toDouble();
-              final pureChatLeft = maxPureLeft >= accessoryLeftEdge
-                  ? centeredPureLeft
-                        .clamp(accessoryLeftEdge, maxPureLeft)
+              final companionLeft = maxCompanionLeft >= accessoryLeftEdge
+                  ? centeredCompanionLeft
+                        .clamp(accessoryLeftEdge, maxCompanionLeft)
                         .toDouble()
                   : accessoryLeftEdge;
 
@@ -236,54 +215,23 @@ class ChatAppBar extends StatelessWidget {
                         ),
                       ),
                     ),
-                  if (showPureChatToggle)
-                    Positioned(
-                      left: pureChatLeft,
-                      top: 0,
-                      bottom: 0,
-                      width: _kChatAppBarAccessoryButtonSize,
-                      child: Center(
-                        child: _ChatAppBarAccessoryButton(
-                          key: const ValueKey('chat-app-bar-pure-chat-button'),
-                          iconSvg: isPureChatSelected
-                              ? _chatAppBarPureChatSelectedIconSvg
-                              : _chatAppBarPureChatIconSvg,
-                          tooltip: isPureChatToggleLocked
-                              ? (isPureChatSelected
-                                    ? (Localizations.localeOf(
-                                                context,
-                                              ).languageCode ==
-                                              'en'
-                                          ? 'Current thread is locked to pure chat'
-                                          : '当前线程已锁定为纯聊天')
-                                    : (Localizations.localeOf(
-                                                context,
-                                              ).languageCode ==
-                                              'en'
-                                          ? 'Current thread mode is locked'
-                                          : '当前线程模式已锁定'))
-                              : (isPureChatSelected
-                                    ? (Localizations.localeOf(
-                                                context,
-                                              ).languageCode ==
-                                              'en'
-                                          ? 'Disable pure chat'
-                                          : '关闭纯聊天')
-                                    : (Localizations.localeOf(
-                                                context,
-                                              ).languageCode ==
-                                              'en'
-                                          ? 'Enable pure chat'
-                                          : '开启纯聊天')),
-                          selected: isPureChatSelected,
-                          disabled: isPureChatToggleLocked,
-                          onTap: isPureChatToggleLocked
-                              ? null
-                              : onPureChatToggleTap,
-                          iconTint: iconTint,
-                        ),
+                  Positioned(
+                    left: companionLeft,
+                    top: 0,
+                    bottom: 0,
+                    width: _kChatAppBarAccessoryButtonSize,
+                    child: Center(
+                      child: _ChatAppBarCompanionButton(
+                        isEnabled: isCompanionModeEnabled,
+                        isLoading: isCompanionToggleLoading,
+                        iconTint: iconTint,
+                        selectedColor: context.isDarkTheme
+                            ? palette.accentPrimary
+                            : const Color(0xFF1930D9),
+                        onTap: onCompanionTap,
                       ),
                     ),
+                  ),
                   Center(
                     child: SizedBox(
                       key: const ValueKey('chat-app-bar-island'),
@@ -305,6 +253,7 @@ class ChatAppBar extends StatelessWidget {
                         translucent: translucent,
                         visualProfile: visualProfile,
                         showSurfaceLayer: showSurfaceSwitcher,
+                        primaryModeIconAsset: primaryModeIconAsset,
                       ),
                     ),
                   ),
@@ -322,8 +271,8 @@ class ChatAppBar extends StatelessWidget {
                               child: Container(
                                 color: Colors.transparent,
                                 padding: const EdgeInsets.all(15),
-                                child: SvgPicture.string(
-                                  _chatAppBarUpdateSparklesSvg,
+                                child: SvgPicture.asset(
+                                  _kChatAppBarUpdateSparklesAsset,
                                   width: 18,
                                   height: 18,
                                   colorFilter: const ColorFilter.mode(
@@ -334,43 +283,27 @@ class ChatAppBar extends StatelessWidget {
                               ),
                             ),
                           ),
-                        GestureDetector(
-                          onTap: isCompanionToggleLoading
-                              ? null
-                              : onCompanionTap,
-                          child: Container(
-                            color: Colors.transparent,
-                            padding: const EdgeInsets.all(15),
-                            child: isCompanionToggleLoading
-                                ? SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        isCompanionModeEnabled
-                                            ? (context.isDarkTheme
-                                                  ? palette.accentPrimary
-                                                  : const Color(0xFF1930D9))
-                                            : iconTint,
-                                      ),
-                                    ),
-                                  )
-                                : SvgPicture.asset(
-                                    'assets/home/avatar.svg',
-                                    width: 20,
-                                    height: 20,
-                                    colorFilter: ColorFilter.mode(
-                                      isCompanionModeEnabled
-                                          ? (context.isDarkTheme
-                                                ? palette.accentPrimary
-                                                : const Color(0xFF1930D9))
-                                          : iconTint,
-                                      BlendMode.srcIn,
-                                    ),
-                                  ),
+                        if (showPureChatToggle)
+                          SizedBox(
+                            width: _kChatAppBarRightActionSlotWidth,
+                            height: _kChatAppBarRightActionSlotWidth,
+                            child: Center(
+                              child: _ChatAppBarModeShortcutButton(
+                                key: const ValueKey(
+                                  'chat-app-bar-pure-chat-button',
+                                ),
+                                iconTint: iconTint,
+                                isCodexLoading: isCodexLoading,
+                                isCodexSelected: isCodexSelected,
+                                isAgentSelected: isAgentSelected,
+                                isPureChatSelected: isPureChatSelected,
+                                isPureChatToggleLocked: isPureChatToggleLocked,
+                                onAgentTap: onAgentTap,
+                                onCodexTap: onCodexTap,
+                                onPureChatToggleTap: onPureChatToggleTap,
+                              ),
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -384,51 +317,306 @@ class ChatAppBar extends StatelessWidget {
   }
 }
 
-class _ChatAppBarAccessoryButton extends StatelessWidget {
-  const _ChatAppBarAccessoryButton({
-    super.key,
-    required this.iconSvg,
-    required this.tooltip,
-    required this.selected,
-    required this.disabled,
-    required this.onTap,
+enum _ChatAppBarModeShortcutAction { agent, codex, pureChat }
+
+class _ChatAppBarCompanionButton extends StatelessWidget {
+  const _ChatAppBarCompanionButton({
+    required this.isEnabled,
+    required this.isLoading,
     required this.iconTint,
+    required this.selectedColor,
+    required this.onTap,
   });
 
-  final String iconSvg;
-  final String tooltip;
-  final bool selected;
-  final bool disabled;
-  final VoidCallback? onTap;
+  final bool isEnabled;
+  final bool isLoading;
   final Color iconTint;
+  final Color selectedColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isEnabled ? selectedColor : iconTint;
+    return GestureDetector(
+      key: const ValueKey('chat-app-companion-button'),
+      onTap: isLoading ? null : onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: _kChatAppBarAccessoryButtonSize,
+        height: _kChatAppBarAccessoryButtonSize,
+        child: Center(
+          child: isLoading
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                )
+              : SvgPicture.asset(
+                  'assets/home/avatar.svg',
+                  width: 20,
+                  height: 20,
+                  colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatAppBarModeShortcutButton extends StatefulWidget {
+  const _ChatAppBarModeShortcutButton({
+    super.key,
+    required this.iconTint,
+    required this.isCodexLoading,
+    required this.isCodexSelected,
+    required this.isAgentSelected,
+    required this.isPureChatSelected,
+    required this.isPureChatToggleLocked,
+    required this.onAgentTap,
+    required this.onCodexTap,
+    required this.onPureChatToggleTap,
+  });
+
+  final Color iconTint;
+  final bool isCodexLoading;
+  final bool isCodexSelected;
+  final bool isAgentSelected;
+  final bool isPureChatSelected;
+  final bool isPureChatToggleLocked;
+  final VoidCallback? onAgentTap;
+  final VoidCallback? onCodexTap;
+  final VoidCallback? onPureChatToggleTap;
+
+  @override
+  State<_ChatAppBarModeShortcutButton> createState() =>
+      _ChatAppBarModeShortcutButtonState();
+}
+
+class _ChatAppBarModeShortcutButtonState
+    extends State<_ChatAppBarModeShortcutButton> {
+  bool _isOpen = false;
+
+  Future<void> _openMenu() async {
+    if (_isOpen) {
+      return;
+    }
+    final buttonBox = context.findRenderObject() as RenderBox?;
+    final overlayBox =
+        Navigator.of(context).overlay?.context.findRenderObject() as RenderBox?;
+    if (buttonBox == null || overlayBox == null) {
+      return;
+    }
+
+    setState(() => _isOpen = true);
+    final buttonOffset = buttonBox.localToGlobal(
+      Offset.zero,
+      ancestor: overlayBox,
+    );
+    final buttonRect = buttonOffset & buttonBox.size;
+    final menuAnchorRect = Rect.fromLTWH(
+      buttonRect.left,
+      buttonRect.bottom + 4,
+      buttonRect.width,
+      buttonRect.height,
+    );
+    final action = await showMenu<_ChatAppBarModeShortcutAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        menuAnchorRect,
+        Offset.zero & overlayBox.size,
+      ),
+      color: Colors.transparent,
+      shadowColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      constraints: const BoxConstraints(minWidth: 40, maxWidth: 40),
+      items: _buildMenuItems(context),
+    );
+    if (mounted) {
+      setState(() => _isOpen = false);
+    }
+    switch (action) {
+      case _ChatAppBarModeShortcutAction.agent:
+        widget.onAgentTap?.call();
+        break;
+      case _ChatAppBarModeShortcutAction.codex:
+        widget.onCodexTap?.call();
+        break;
+      case _ChatAppBarModeShortcutAction.pureChat:
+        widget.onPureChatToggleTap?.call();
+        break;
+      case null:
+        break;
+    }
+  }
+
+  List<PopupMenuEntry<_ChatAppBarModeShortcutAction>> _buildMenuItems(
+    BuildContext context,
+  ) {
+    final palette = context.omniPalette;
+    final selectedColor = palette.accentPrimary;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final canSelectPureChat =
+        widget.isCodexSelected ||
+        (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
+    return <PopupMenuEntry<_ChatAppBarModeShortcutAction>>[
+      PopupMenuItem<_ChatAppBarModeShortcutAction>(
+        key: const ValueKey('chat-app-bar-mode-menu-agent'),
+        value: _ChatAppBarModeShortcutAction.agent,
+        enabled: widget.onAgentTap != null,
+        height: 40,
+        padding: EdgeInsets.zero,
+        child: _ChatAppBarModeShortcutMenuIcon(
+          iconAsset: _kChatAppBarAgentIconAsset,
+          tooltip: isEnglish ? 'Agent mode' : 'Agent 模式',
+          selected: widget.isAgentSelected,
+          selectedColor: selectedColor,
+          iconTint: widget.iconTint,
+        ),
+      ),
+      PopupMenuItem<_ChatAppBarModeShortcutAction>(
+        key: const ValueKey('chat-app-bar-mode-menu-codex'),
+        value: _ChatAppBarModeShortcutAction.codex,
+        enabled: !widget.isCodexLoading && widget.onCodexTap != null,
+        height: 40,
+        padding: EdgeInsets.zero,
+        child: _ChatAppBarModeShortcutMenuIcon(
+          iconAsset: _kChatAppBarCodexIconAsset,
+          tooltip: isEnglish ? 'Codex mode' : 'Codex 模式',
+          selected: widget.isCodexSelected,
+          selectedColor: selectedColor,
+          iconTint: widget.iconTint,
+        ),
+      ),
+      PopupMenuItem<_ChatAppBarModeShortcutAction>(
+        key: const ValueKey('chat-app-bar-mode-menu-pure-chat'),
+        value: _ChatAppBarModeShortcutAction.pureChat,
+        enabled: canSelectPureChat,
+        height: 40,
+        padding: EdgeInsets.zero,
+        child: _ChatAppBarModeShortcutMenuIcon(
+          iconAsset: _kChatAppBarPureChatIconAsset,
+          tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
+          selected: widget.isPureChatSelected,
+          selectedColor: selectedColor,
+          iconSize: 18,
+          iconTint: canSelectPureChat
+              ? widget.iconTint
+              : widget.iconTint.withValues(alpha: 0.42),
+        ),
+      ),
+    ];
+  }
+
+  String _closedIconAsset() {
+    if (widget.isCodexSelected) {
+      return _kChatAppBarCodexIconAsset;
+    }
+    if (widget.isPureChatSelected) {
+      return _kChatAppBarPureChatIconAsset;
+    }
+    if (widget.isAgentSelected) {
+      return _kChatAppBarAgentIconAsset;
+    }
+    return _kChatAppBarModeMenuClosedIconAsset;
+  }
+
+  Widget _buildClosedIcon(Color color) {
+    if (widget.isCodexLoading && !widget.isCodexSelected) {
+      return SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(color),
+        ),
+      );
+    }
+    final iconSize = widget.isCodexSelected ? 22.0 : 20.0;
+    return SvgPicture.asset(
+      _closedIconAsset(),
+      width: iconSize,
+      height: iconSize,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
+  }
+
+  Widget _buildOpenIcon(Color color) {
+    return SvgPicture.asset(
+      _kChatAppBarModeMenuOpenIconAsset,
+      width: 20,
+      height: 20,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final selectedColor = palette.accentPrimary;
-    final effectiveIconColor = selected
+    final hasSelectedMode =
+        widget.isAgentSelected ||
+        widget.isCodexSelected ||
+        widget.isPureChatSelected;
+    final effectiveIconColor = _isOpen || hasSelectedMode
         ? selectedColor
-        : disabled
-        ? iconTint.withValues(alpha: 0.42)
-        : iconTint;
+        : widget.iconTint;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
     return Tooltip(
-      message: tooltip,
+      message: _isOpen
+          ? (isEnglish ? 'Close mode menu' : '收起模式菜单')
+          : (isEnglish ? 'Switch chat mode' : '切换聊天模式'),
       child: GestureDetector(
-        onTap: onTap,
+        onTap: _openMenu,
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
           width: _kChatAppBarAccessoryButtonSize,
           height: _kChatAppBarAccessoryButtonSize,
           child: Center(
-            child: SvgPicture.string(
-              iconSvg,
-              width: 20,
-              height: 20,
-              colorFilter: ColorFilter.mode(
-                effectiveIconColor,
-                BlendMode.srcIn,
-              ),
-            ),
+            child: _isOpen
+                ? _buildOpenIcon(effectiveIconColor)
+                : _buildClosedIcon(effectiveIconColor),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatAppBarModeShortcutMenuIcon extends StatelessWidget {
+  const _ChatAppBarModeShortcutMenuIcon({
+    required this.iconAsset,
+    required this.tooltip,
+    required this.selected,
+    required this.selectedColor,
+    required this.iconTint,
+    this.iconSize = 20,
+  });
+
+  final String iconAsset;
+  final String tooltip;
+  final bool selected;
+  final Color selectedColor;
+  final Color iconTint;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? selectedColor : iconTint;
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: Center(
+          child: SvgPicture.asset(
+            iconAsset,
+            width: iconSize,
+            height: iconSize,
+            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
           ),
         ),
       ),
@@ -454,6 +642,7 @@ class _ChatModeModelSwitcher extends StatefulWidget {
     this.translucent = false,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.showSurfaceLayer = true,
+    required this.primaryModeIconAsset,
   });
 
   final ChatSurfaceMode activeMode;
@@ -472,41 +661,17 @@ class _ChatModeModelSwitcher extends StatefulWidget {
   final bool translucent;
   final AppBackgroundVisualProfile visualProfile;
   final bool showSurfaceLayer;
+  final String primaryModeIconAsset;
 
   @override
   State<_ChatModeModelSwitcher> createState() => _ChatModeModelSwitcherState();
 }
 
 class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
-  static const String _terminalIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round">'
-      '<path d="m7 11 2-2-2-2"/>'
-      '<path d="M11 13h4"/>'
-      '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>'
-      '</svg>';
-  static const String _browserIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'fill="none" viewBox="0 0 24 24">'
-      '<path stroke="currentColor" stroke-linecap="round" '
-      'stroke-linejoin="round" '
-      'd="M12 8C9.79086 8 8 9.79086 8 12C8 12.7286 8.19479 13.4117 8.53513 14'
-      'M12 8C14.2091 8 16 9.79086 16 12C16 13.0144 15.6224 13.9407 15 14.6458'
-      'M12 8H20.0645M15 14.6458C14.2671 15.4762 13.1947 16 12 16C10.5194 16 '
-      '9.22675 15.1956 8.53513 14M15 14.6458L10.7394 20.9124'
-      'M8.53513 14L4.36907 7.22607M4.36907 7.22607C3.50156 8.60982 3 10.2463 '
-      '3 12C3 16.5427 6.36566 20.2994 10.7394 20.9124M4.36907 7.22607'
-      'C5.9604 4.68775 8.7831 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 '
-      '16.9706 21 12 21C11.5722 21 11.1513 20.9702 10.7394 20.9124"/>'
-      '</svg>';
-  static const String _environmentIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round">'
-      '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/>'
-      '<path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>'
-      '</svg>';
+  static const String _terminalIconAsset = 'assets/home/chat/terminal.svg';
+  static const String _browserIconAsset = 'assets/home/chat/browser.svg';
+  static const String _environmentIconAsset =
+      'assets/home/chat/environment.svg';
   static const Duration _switchDuration = Duration(milliseconds: 460);
   static const double _verticalSwitchThreshold = 10;
   static const double _verticalVelocityThreshold = 240;
@@ -666,9 +831,9 @@ class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
       },
     );
     final toolLayerWidget = _ChatToolSlider(
-      environmentIconSvg: _environmentIconSvg,
-      terminalIconSvg: _terminalIconSvg,
-      browserIconSvg: _browserIconSvg,
+      environmentIconAsset: _environmentIconAsset,
+      terminalIconAsset: _terminalIconAsset,
+      browserIconAsset: _browserIconAsset,
       activeToolType: widget.activeToolType,
       hasTerminalEnvironment: widget.hasTerminalEnvironment,
       onTerminalEnvironmentTap: (anchorContext) {
@@ -741,6 +906,7 @@ class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
                             onChanged: widget.onModeChanged,
                             onInteracted: _handleSliderInteraction,
                             visualProfile: widget.visualProfile,
+                            primaryIconAsset: widget.primaryModeIconAsset,
                           ),
                         )
                       : const SizedBox.shrink(),
@@ -773,9 +939,9 @@ class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
 }
 
 class _ChatToolSlider extends StatelessWidget {
-  final String environmentIconSvg;
-  final String terminalIconSvg;
-  final String browserIconSvg;
+  final String environmentIconAsset;
+  final String terminalIconAsset;
+  final String browserIconAsset;
   final String? activeToolType;
   final bool hasTerminalEnvironment;
   final ValueChanged<BuildContext> onTerminalEnvironmentTap;
@@ -786,9 +952,9 @@ class _ChatToolSlider extends StatelessWidget {
   final AppBackgroundVisualProfile visualProfile;
 
   const _ChatToolSlider({
-    required this.environmentIconSvg,
-    required this.terminalIconSvg,
-    required this.browserIconSvg,
+    required this.environmentIconAsset,
+    required this.terminalIconAsset,
+    required this.browserIconAsset,
     this.activeToolType,
     required this.hasTerminalEnvironment,
     required this.onTerminalEnvironmentTap,
@@ -853,8 +1019,8 @@ class _ChatToolSlider extends StatelessWidget {
                         ? 'Open terminal'
                         : '打开终端',
                     onTap: onTerminalTap,
-                    child: SvgPicture.string(
-                      terminalIconSvg,
+                    child: SvgPicture.asset(
+                      terminalIconAsset,
                       width: 16,
                       height: 16,
                     ),
@@ -874,8 +1040,8 @@ class _ChatToolSlider extends StatelessWidget {
                               ? 'No browser session available'
                               : '当前会话还没有可用的浏览器会话'),
                     onTap: onBrowserTap,
-                    child: SvgPicture.string(
-                      browserIconSvg,
+                    child: SvgPicture.asset(
+                      browserIconAsset,
                       width: 16,
                       height: 16,
                     ),
@@ -918,8 +1084,8 @@ class _ChatToolSlider extends StatelessWidget {
                 alignment: Alignment.center,
                 child: ColorFiltered(
                   colorFilter: ColorFilter.mode(inactiveColor, BlendMode.srcIn),
-                  child: SvgPicture.string(
-                    environmentIconSvg,
+                  child: SvgPicture.asset(
+                    environmentIconAsset,
                     width: 15,
                     height: 15,
                   ),
@@ -981,6 +1147,7 @@ class ChatModeSlider extends StatefulWidget {
   final ValueChanged<ChatSurfaceMode> onChanged;
   final VoidCallback? onInteracted;
   final AppBackgroundVisualProfile visualProfile;
+  final String primaryIconAsset;
 
   const ChatModeSlider({
     super.key,
@@ -988,6 +1155,7 @@ class ChatModeSlider extends StatefulWidget {
     required this.onChanged,
     this.onInteracted,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
+    this.primaryIconAsset = _kChatAppBarAgentIconAsset,
   });
 
   @override
@@ -995,15 +1163,7 @@ class ChatModeSlider extends StatefulWidget {
 }
 
 class _ChatModeSliderState extends State<ChatModeSlider> {
-  static const String _workspaceIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folders-icon lucide-folders">'
-      '<path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"/>'
-      '<path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"/>'
-      '</svg>';
-
-  static const String _normalChatIconSvg = _chatAppBarAgentIconSvg;
+  static const String _workspaceIconAsset = 'assets/home/chat/workspace.svg';
 
   double _dragDelta = 0;
 
@@ -1093,8 +1253,9 @@ class _ChatModeSliderState extends State<ChatModeSlider> {
                 Expanded(
                   child: _buildModeIcon(
                     isSelected: widget.activeMode == ChatSurfaceMode.normal,
-                    child: SvgPicture.string(
-                      _normalChatIconSvg,
+                    child: SvgPicture.asset(
+                      widget.primaryIconAsset,
+                      key: const ValueKey('chat-mode-slider-primary-icon'),
                       width: 16,
                       height: 16,
                     ),
@@ -1103,8 +1264,9 @@ class _ChatModeSliderState extends State<ChatModeSlider> {
                 Expanded(
                   child: _buildModeIcon(
                     isSelected: widget.activeMode == ChatSurfaceMode.workspace,
-                    child: SvgPicture.string(
-                      _workspaceIconSvg,
+                    child: SvgPicture.asset(
+                      _workspaceIconAsset,
+                      key: const ValueKey('chat-mode-slider-workspace-icon'),
                       width: 16,
                       height: 16,
                     ),
@@ -1845,6 +2007,8 @@ class ChatInputWrapper extends StatelessWidget {
   final String? contextUsageTooltipMessage;
   final VoidCallback? onLongPressContextUsageRing;
   final ValueChanged<double>? onInputHeightChanged;
+  final CodexPermissionMode? codexPermissionMode;
+  final ValueChanged<CodexPermissionMode>? onCodexPermissionModeChanged;
   final bool translucent;
 
   const ChatInputWrapper({
@@ -1872,6 +2036,8 @@ class ChatInputWrapper extends StatelessWidget {
     this.contextUsageTooltipMessage,
     this.onLongPressContextUsageRing,
     this.onInputHeightChanged,
+    this.codexPermissionMode,
+    this.onCodexPermissionModeChanged,
     this.translucent = false,
   });
 
@@ -1907,6 +2073,8 @@ class ChatInputWrapper extends StatelessWidget {
             contextUsageRatio: contextUsageRatio,
             contextUsageTooltipMessage: contextUsageTooltipMessage,
             onLongPressContextUsageRing: onLongPressContextUsageRing,
+            codexPermissionMode: codexPermissionMode,
+            onCodexPermissionModeChanged: onCodexPermissionModeChanged,
             onInputHeightChanged: onInputHeightChanged,
           ),
         ],

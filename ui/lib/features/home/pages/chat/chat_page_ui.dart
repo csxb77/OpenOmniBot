@@ -15,6 +15,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   static const double _kChatInputWrapperTopPadding = 8.0;
   static const double _kChatInputFallbackHeight = 80.0;
 
+  ChatPageMode get _primaryChatMessagePageMode =>
+      _activeMode == ChatPageMode.codex
+      ? ChatPageMode.codex
+      : ChatPageMode.normal;
+
   double _resolveNormalSurfaceComposerInset({
     required double inputBottomPadding,
     required double keyboardSpacer,
@@ -71,6 +76,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
 
   List<Map<String, dynamic>> _buildSlashCommandCards() {
     final route = _resolveSlashCommandPanelRoute(_messageController.text);
+    if (_activeMode == ChatPageMode.codex) {
+      return _buildCodexSlashCommandCards(route);
+    }
     if (route == _SlashCommandPanelRoute.effort &&
         _supportsReasoningEffortCommand) {
       final activeEffort = _activeConversationReasoningEffort;
@@ -187,7 +195,217 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     return commands;
   }
 
+  List<Map<String, dynamic>> _buildCodexSlashCommandCards(
+    _SlashCommandPanelRoute route,
+  ) {
+    if (route == _SlashCommandPanelRoute.codexModel) {
+      return _buildCodexModelCards();
+    }
+    return _buildCodexRootCommandCards();
+  }
+
+  List<Map<String, dynamic>> _buildCodexRootCommandCards() {
+    final query = _messageController.text.trimLeft().toLowerCase();
+    final commands = <Map<String, dynamic>>[
+      _buildCodexCommandCard(
+        cardId: 'slash-command-codex-model',
+        toolTitle: '/model',
+        displayName: '/model',
+        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
+        status: _activeCodexModelId == null ? 'running' : 'success',
+        statusLabel: _activeCodexModelId == null
+            ? (LegacyTextLocalizer.isEnglish ? 'Select' : '选择')
+            : (_activeCodexModelId!),
+        summary: _activeCodexModelId == null
+            ? (LegacyTextLocalizer.isEnglish
+                  ? 'Choose a Codex model'
+                  : '选择 Codex 模型')
+            : (LegacyTextLocalizer.isEnglish
+                  ? 'Current model: $_activeCodexModelId'
+                  : '当前模型：$_activeCodexModelId'),
+        progress: _codexModelListError != null
+            ? _codexModelListError!
+            : _isCodexModelListLoading
+            ? (LegacyTextLocalizer.isEnglish ? 'Loading models' : '加载模型中')
+            : (_codexModelOptions.isEmpty
+                  ? (LegacyTextLocalizer.isEnglish
+                        ? 'Tap to load models'
+                        : '点击加载模型')
+                  : (_codexModelOptions.length == 1
+                        ? '1 model'
+                        : '${_codexModelOptions.length} models')),
+      ),
+      _buildCodexCommandCard(
+        cardId: 'slash-command-codex-review',
+        toolTitle: '/review',
+        displayName: '/review',
+        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Review' : '审查',
+        status: 'running',
+        statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
+        summary: LegacyTextLocalizer.isEnglish
+            ? 'Review changes in the current workspace'
+            : '审查当前工作区改动',
+        progress: LegacyTextLocalizer.isEnglish
+            ? 'Runs Codex review on the active thread'
+            : '在当前线程中启动 Codex review',
+      ),
+      _buildCodexCommandCard(
+        cardId: 'slash-command-codex-init',
+        toolTitle: '/init',
+        displayName: '/init',
+        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Init' : '初始化',
+        status: 'running',
+        statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
+        summary: LegacyTextLocalizer.isEnglish
+            ? 'Generate or update AGENTS.md'
+            : '生成或更新 AGENTS.md',
+        progress: LegacyTextLocalizer.isEnglish
+            ? 'Creates Codex initialization guidance'
+            : '生成 Codex 初始化指引',
+      ),
+      _buildCodexCommandCard(
+        cardId: 'slash-command-codex-plan',
+        toolTitle: '/plan',
+        displayName: '/plan',
+        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Plan' : '计划',
+        status: _isCodexPlanMode(_activeCodexCollaborationMode)
+            ? 'success'
+            : 'running',
+        statusLabel: _isCodexPlanMode(_activeCodexCollaborationMode)
+            ? (LegacyTextLocalizer.isEnglish ? 'Selected' : '已选')
+            : (LegacyTextLocalizer.isEnglish ? 'Command' : '命令'),
+        summary: _isCodexPlanMode(_activeCodexCollaborationMode)
+            ? (LegacyTextLocalizer.isEnglish
+                  ? 'Plan mode is active'
+                  : '当前已启用 Plan 模式')
+            : (LegacyTextLocalizer.isEnglish
+                  ? 'Switch Codex to plan mode'
+                  : '切换 Codex 到 Plan 模式'),
+        progress: _codexCollaborationModeListError != null
+            ? _codexCollaborationModeListError!
+            : _isCodexCollaborationModeListLoading
+            ? (LegacyTextLocalizer.isEnglish ? 'Loading modes' : '加载模式中')
+            : (_codexCollaborationModes.isEmpty
+                  ? (LegacyTextLocalizer.isEnglish
+                        ? 'Tap to load modes'
+                        : '点击加载模式')
+                  : (_codexCollaborationModes.length == 1
+                        ? '1 mode'
+                        : '${_codexCollaborationModes.length} modes')),
+      ),
+    ];
+    if (query.isEmpty) {
+      return commands;
+    }
+    return commands
+        .where((card) {
+          final title = (card['toolTitle'] ?? '').toString().toLowerCase();
+          return title.startsWith(query);
+        })
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _buildCodexModelCards() {
+    if (_codexModelOptions.isEmpty &&
+        !_isCodexModelListLoading &&
+        _codexModelListError == null) {
+      unawaited(_loadCodexModelOptions());
+    }
+    final query = _slashCommandRouteQuery(
+      _SlashCommandPanelRoute.codexModel,
+    ).toLowerCase();
+    final availableModels = _codexModelOptions.isEmpty
+        ? <String>[]
+        : _codexModelOptions;
+    final filteredModels = availableModels
+        .where(
+          (modelId) => query.isEmpty || modelId.toLowerCase().contains(query),
+        )
+        .toList(growable: false);
+    final selectedModel = _activeCodexModelId;
+    final orderedModels = <String>[
+      if (selectedModel != null && filteredModels.contains(selectedModel))
+        selectedModel,
+      ...filteredModels.where((modelId) => modelId != selectedModel),
+    ];
+    if (orderedModels.isEmpty) {
+      final statusLabel = _codexModelListError != null
+          ? (LegacyTextLocalizer.isEnglish ? 'Error' : '错误')
+          : _isCodexModelListLoading
+          ? (LegacyTextLocalizer.isEnglish ? 'Loading' : '加载中')
+          : (LegacyTextLocalizer.isEnglish ? 'No models' : '暂无模型');
+      return <Map<String, dynamic>>[
+        _buildCodexCommandCard(
+          cardId: 'slash-command-codex-model-placeholder',
+          toolTitle: '/model',
+          displayName: '/model',
+          toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
+          status: _codexModelListError != null ? 'failed' : 'running',
+          statusLabel: statusLabel,
+          summary:
+              _codexModelListError ??
+              (_isCodexModelListLoading
+                  ? (LegacyTextLocalizer.isEnglish
+                        ? 'Loading available models'
+                        : '正在加载可用模型')
+                  : (LegacyTextLocalizer.isEnglish
+                        ? 'Open /model to load Codex models'
+                        : '输入 /model 加载 Codex 模型')),
+          progress: query.isEmpty ? '/model' : query,
+        ),
+      ];
+    }
+    return orderedModels
+        .map(
+          (modelId) => _buildCodexCommandCard(
+            cardId: 'slash-command-codex-model-$modelId',
+            toolTitle: modelId,
+            displayName: modelId,
+            toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
+            status: modelId == selectedModel ? 'success' : 'running',
+            statusLabel: modelId == selectedModel
+                ? (LegacyTextLocalizer.isEnglish ? 'Selected' : '已选')
+                : (LegacyTextLocalizer.isEnglish ? 'Available' : '可选'),
+            summary: modelId == selectedModel
+                ? (LegacyTextLocalizer.isEnglish ? 'Current model' : '当前模型')
+                : (LegacyTextLocalizer.isEnglish
+                      ? 'Switch to $modelId'
+                      : '切换到 $modelId'),
+            progress: modelId,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Map<String, dynamic> _buildCodexCommandCard({
+    required String cardId,
+    required String toolTitle,
+    required String displayName,
+    required String toolTypeLabel,
+    required String status,
+    required String statusLabel,
+    required String summary,
+    required String progress,
+  }) {
+    return <String, dynamic>{
+      'cardId': cardId,
+      'toolName': toolTitle,
+      'toolTitle': toolTitle,
+      'displayName': displayName,
+      'toolType': 'command',
+      'toolTypeLabel': toolTypeLabel,
+      'status': status,
+      'statusLabel': statusLabel,
+      'summary': summary,
+      'progress': progress,
+    };
+  }
+
   void _handleSlashCommandCardSelected(Map<String, dynamic> cardData) {
+    if (_activeMode == ChatPageMode.codex) {
+      unawaited(_handleCodexSlashCommandCardSelected(cardData));
+      return;
+    }
     final command = (cardData['toolTitle'] ?? cardData['displayName'] ?? '')
         .toString()
         .trim();
@@ -431,66 +649,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     setState(() {
       _inputAreaHeightByMode[_activeMode] = normalized;
     });
-  }
-
-  Widget _buildContextCompressingHint() {
-    return IgnorePointer(
-      child: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xE61C2430),
-                borderRadius: BorderRadius.circular(999),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x26000000),
-                    blurRadius: 12,
-                    offset: Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Color(0xFFF6FAFF),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      LegacyTextLocalizer.isEnglish
-                          ? 'Compressing context'
-                          : '正在压缩上下文',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFFF6FAFF),
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.1,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildNormalSurfaceTransition({
@@ -864,8 +1022,14 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           children: [
             ChatAppBar(
               onMenuTap: onMenuTap,
+              onAgentTap: () {
+                unawaited(_handleAgentModeShortcutTap());
+              },
               onPureChatToggleTap: () {
-                unawaited(_togglePureChatConversationMode());
+                unawaited(_handlePureChatModeShortcutTap());
+              },
+              onCodexTap: () {
+                unawaited(_handleCodexTap());
               },
               onCompanionTap: () {
                 unawaited(_toggleCompanionMode());
@@ -874,10 +1038,14 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               onModeChanged: (value) {
                 unawaited(_switchChatMode(value, syncPage: true));
               },
-              activeModelId: appBarMode == ChatSurfaceMode.normal
+              activeModelId:
+                  appBarMode == ChatSurfaceMode.normal &&
+                      _activeMode == ChatPageMode.normal
                   ? _activeNormalChatModelId
                   : null,
-              onModelTap: appBarMode == ChatSurfaceMode.normal
+              onModelTap:
+                  appBarMode == ChatSurfaceMode.normal &&
+                      _activeMode == ChatPageMode.normal
                   ? (anchorContext) {
                       unawaited(_openConversationModelSelector(anchorContext));
                     }
@@ -897,6 +1065,12 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               activeToolType: _lastAgentToolType,
               isCompanionModeEnabled: _isCompanionModeEnabled,
               isCompanionToggleLoading: _isCompanionToggleLoading,
+              isCodexReady: _codexStatus.ready,
+              isCodexConnected: _codexStatus.connected,
+              isCodexLoading: _isCodexStatusLoading,
+              isCodexSelected: _activeMode == ChatPageMode.codex,
+              isAgentSelected:
+                  _activeMode == ChatPageMode.normal && !_isPureChatSelected,
               showAppUpdateIndicator: showAppUpdateIndicator,
               appUpdateTooltip: appUpdateTooltip,
               onAppUpdateTap: showAppUpdateIndicator
@@ -908,7 +1082,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               visualProfile: visualProfile,
               showMenuButton: showMenuButton,
               showSurfaceSwitcher: showSurfaceSwitcher,
-              showPureChatToggle: _activeMode == ChatPageMode.normal,
+              showPureChatToggle:
+                  _activeMode == ChatPageMode.normal ||
+                  _activeMode == ChatPageMode.codex,
               isPureChatSelected: _isPureChatSelected,
               isPureChatToggleLocked: _isPureChatToggleLocked,
             ),
@@ -973,6 +1149,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       onLongPressContextUsageRing:
                           _activeMode == ChatPageMode.normal
                           ? _handleContextUsageRingLongPress
+                          : null,
+                      codexPermissionMode: _activeMode == ChatPageMode.codex
+                          ? _codexPermissionMode
+                          : null,
+                      onCodexPermissionModeChanged:
+                          _activeMode == ChatPageMode.codex
+                          ? (mode) {
+                              setState(() {
+                                _codexPermissionMode = mode;
+                              });
+                            }
                           : null,
                       onInputHeightChanged: _handleInputAreaHeightChanged,
                       onClearSelectedModelOverride:
@@ -1234,7 +1421,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           keyboardSpacer: keyboardSpacer,
                           commandPanelBottomOffset: commandPanelBottomOffset,
                           conversationBody: _buildModeMessagePage(
-                            ChatPageMode.normal,
+                            _primaryChatMessagePageMode,
                             backgroundConfig,
                             visualProfile,
                             bottomOverlayInset:
@@ -1423,7 +1610,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                                                 _handleModePageChanged,
                                             children: [
                                               _buildModeMessagePage(
-                                                ChatPageMode.normal,
+                                                _primaryChatMessagePageMode,
                                                 backgroundConfig,
                                                 visualProfile,
                                                 bottomOverlayInset:
@@ -1804,17 +1991,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         .whereType<Map>()
         .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
         .toList();
-  }
-
-  String _formatThresholdLabel(int threshold) {
-    if (threshold >= 1000) {
-      final kilo = threshold / 1000;
-      final normalized = kilo % 1 == 0
-          ? kilo.toStringAsFixed(0)
-          : kilo.toStringAsFixed(1);
-      return '${normalized}k';
-    }
-    return threshold.toString();
   }
 
   String _formatTokenCount(int value) {
@@ -2232,9 +2408,20 @@ class _ContextThresholdSheetState extends State<_ContextThresholdSheet> {
         : _isSaving || pendingAutoSave
         ? accentColor
         : palette.textSecondary;
+    final navigator = Navigator.of(context);
 
-    return WillPopScope(
-      onWillPop: _handleWillPop,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(
+          _handleWillPop().then((shouldPop) {
+            if (shouldPop && mounted) {
+              navigator.pop();
+            }
+          }),
+        );
+      },
       child: SafeArea(
         top: false,
         child: Padding(

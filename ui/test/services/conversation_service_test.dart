@@ -10,25 +10,31 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
+  const codexChannel = MethodChannel('cn.com.omnimind.bot/CodexAppServer');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late List<Map<String, dynamic>> nativeConversations;
+  late List<MethodCall> codexCalls;
+  late bool codexArchiveShouldThrow;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     nativeConversations = <Map<String, dynamic>>[];
+    codexCalls = <MethodCall>[];
+    codexArchiveShouldThrow = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
-      final args =
-          Map<String, dynamic>.from((call.arguments as Map?) ?? const {});
+      final args = Map<String, dynamic>.from(
+        (call.arguments as Map?) ?? const {},
+      );
       switch (call.method) {
         case 'getConversations':
           return nativeConversations;
         case 'createConversation':
-          final nextId = nativeConversations.fold<int>(
+          final nextId =
+              nativeConversations.fold<int>(
                 0,
-                (maxId, item) => item['id'] as int > maxId
-                    ? item['id'] as int
-                    : maxId,
+                (maxId, item) =>
+                    item['id'] as int > maxId ? item['id'] as int : maxId,
               ) +
               1;
           nativeConversations.add({
@@ -44,6 +50,20 @@ void main() {
           });
           return nextId;
         case 'updateConversation':
+          final conversation = Map<String, dynamic>.from(
+            (args['conversation'] as Map).cast<String, dynamic>(),
+          );
+          final conversationId = (conversation['id'] as num?)?.toInt();
+          final index = nativeConversations.indexWhere(
+            (item) => item['id'] == conversationId,
+          );
+          if (index >= 0) {
+            nativeConversations[index] = <String, dynamic>{
+              ...nativeConversations[index],
+              ...conversation,
+            };
+          }
+          return 'SUCCESS';
         case 'updateConversationTitle':
         case 'completeConversation':
         case 'setCurrentConversationId':
@@ -58,10 +78,23 @@ void main() {
           return null;
       }
     });
+    messenger.setMockMethodCallHandler(codexChannel, (call) async {
+      codexCalls.add(call);
+      if (codexArchiveShouldThrow &&
+          (call.method == 'thread/archive' ||
+              call.method == 'thread/unarchive')) {
+        throw PlatformException(
+          code: 'CODEX_THREAD_NOT_FOUND',
+          message: 'thread not found',
+        );
+      }
+      return <String, dynamic>{'ok': true};
+    });
   });
 
   tearDown(() async {
     messenger.setMockMethodCallHandler(channel, null);
+    messenger.setMockMethodCallHandler(codexChannel, null);
   });
 
   test('loads conversations from native source', () async {
@@ -107,7 +140,9 @@ void main() {
     expect(conversations, hasLength(1));
     expect(conversations.single.mode, ConversationMode.chatOnly);
     expect(
-      await ConversationService.getLatestConversation(mode: ConversationMode.chatOnly),
+      await ConversationService.getLatestConversation(
+        mode: ConversationMode.chatOnly,
+      ),
       isNotNull,
     );
   });
@@ -230,4 +265,63 @@ void main() {
     );
     expect(created['mode'], ConversationMode.chatOnly.storageValue);
   });
+
+  test(
+    'archives codex conversation locally when app-server archive fails',
+    () async {
+      nativeConversations = <Map<String, dynamic>>[
+        {
+          'id': 9,
+          'title': 'Codex thread',
+          'mode': ConversationMode.codex.storageValue,
+          'summary': null,
+          'isArchived': false,
+          'status': 0,
+          'lastMessage': 'hello',
+          'messageCount': 2,
+          'createdAt': 1,
+          'updatedAt': 2,
+        },
+      ];
+      codexArchiveShouldThrow = true;
+
+      final archived = await ConversationService.archiveConversation(
+        ConversationModel.fromJson(nativeConversations.single),
+      );
+
+      expect(archived, isTrue);
+      expect(codexCalls.single.method, 'thread/archive');
+      expect(nativeConversations.single['isArchived'], isTrue);
+    },
+  );
+
+  test(
+    'delete codex conversation soft-archives locally when binding is stale',
+    () async {
+      nativeConversations = <Map<String, dynamic>>[
+        {
+          'id': 10,
+          'title': 'Codex stale binding',
+          'mode': ConversationMode.codex.storageValue,
+          'summary': null,
+          'isArchived': false,
+          'status': 0,
+          'lastMessage': 'hello',
+          'messageCount': 2,
+          'createdAt': 1,
+          'updatedAt': 2,
+        },
+      ];
+      codexArchiveShouldThrow = true;
+
+      final deleted = await ConversationService.deleteConversation(
+        10,
+        mode: ConversationMode.codex,
+      );
+
+      expect(deleted, isTrue);
+      expect(codexCalls.single.method, 'thread/archive');
+      expect(nativeConversations.single['isArchived'], isTrue);
+    },
+  );
 }

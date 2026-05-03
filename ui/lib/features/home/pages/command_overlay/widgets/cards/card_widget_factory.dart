@@ -3,6 +3,7 @@ import 'package:ui/services/app_background_service.dart';
 import 'artifact_card.dart';
 import 'agent_tool_summary_card.dart';
 import 'context_compaction_marker_card.dart';
+import 'codex_request_card.dart';
 import 'deep_thinking_card.dart';
 import 'executable_task_card.dart';
 import 'permission_button_card.dart';
@@ -110,6 +111,8 @@ class CardWidgetFactory {
         );
       case 'context_compaction_marker':
         return ContextCompactionMarkerCard(cardData: cardData);
+      case 'codex_request':
+        return CodexRequestCard(cardData: cardData);
       case 'artifact_card':
         final artifact = cardData['artifact'] as Map<String, dynamic>? ?? {};
         return ArtifactCard(artifact: artifact);
