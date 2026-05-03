@@ -705,7 +705,8 @@ mixin _ChatInputAreaComposerMixin
       widget.onCodexPermissionModeChanged != null;
 
   Widget _buildCodexPermissionButton({required double iconSize}) {
-    final selected = widget.codexPermissionMode ?? CodexPermissionMode.fullAccess;
+    final selected =
+        widget.codexPermissionMode ?? CodexPermissionMode.fullAccess;
     final palette = context.omniPalette;
     final selectedColor = context.isDarkTheme
         ? palette.accentPrimary
@@ -726,48 +727,56 @@ mixin _ChatInputAreaComposerMixin
       constraints: const BoxConstraints(minWidth: 184),
       onSelected: widget.onCodexPermissionModeChanged,
       itemBuilder: (context) {
-        return CodexPermissionMode.values.map((mode) {
-          final isSelected = mode == selected;
-          return PopupMenuItem<CodexPermissionMode>(
-            key: ValueKey('chat-input-codex-permission-option-${mode.name}'),
-            value: mode,
-            height: 42,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _codexPermissionIcon(mode),
-                  size: 18,
-                  color: isSelected ? selectedColor : inactiveColor,
+        return CodexPermissionMode.values
+            .map((mode) {
+              final isSelected = mode == selected;
+              return PopupMenuItem<CodexPermissionMode>(
+                key: ValueKey(
+                  'chat-input-codex-permission-option-${mode.name}',
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _codexPermissionLabel(mode),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.2,
-                      color: context.isDarkTheme
-                          ? palette.textPrimary
-                          : const Color(0xFF232D3D),
-                      fontWeight: isSelected
-                          ? FontWeight.w600
-                          : FontWeight.w500,
+                value: mode,
+                height: 42,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _codexPermissionIcon(mode),
+                      size: 18,
+                      color: isSelected ? selectedColor : inactiveColor,
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _codexPermissionLabel(mode),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.2,
+                          color: context.isDarkTheme
+                              ? palette.textPrimary
+                              : const Color(0xFF232D3D),
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    AnimatedOpacity(
+                      duration: _buttonAnimationDuration,
+                      opacity: isSelected ? 1 : 0,
+                      child: Icon(
+                        Icons.check_rounded,
+                        size: 18,
+                        color: selectedColor,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                AnimatedOpacity(
-                  duration: _buttonAnimationDuration,
-                  opacity: isSelected ? 1 : 0,
-                  child: Icon(Icons.check_rounded, size: 18, color: selectedColor),
-                ),
-              ],
-            ),
-          );
-        }).toList(growable: false);
+              );
+            })
+            .toList(growable: false);
       },
       child: AnimatedContainer(
         duration: _buttonAnimationDuration,
@@ -798,7 +807,8 @@ mixin _ChatInputAreaComposerMixin
   String _codexPermissionLabel(CodexPermissionMode mode) {
     final english = Localizations.localeOf(context).languageCode == 'en';
     return switch (mode) {
-      CodexPermissionMode.defaultMode => english ? 'Default permissions' : '默认权限',
+      CodexPermissionMode.defaultMode =>
+        english ? 'Default permissions' : '默认权限',
       CodexPermissionMode.autoReview => english ? 'Auto review' : '自动审查',
       CodexPermissionMode.fullAccess => english ? 'Full access' : '完全访问权限',
     };

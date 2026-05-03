@@ -1531,6 +1531,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     _editingUserMessageIdByMode[mode] = null;
     _userMessageEditControllerForMode(mode).clear();
     _draftMessageByMode[mode] = '';
+    if (mode == ChatPageMode.codex) {
+      _activeCodexThreadId = null;
+      _activeCodexTurnId = null;
+    }
     if (mode == ChatPageMode.normal) {
       _conversationModelOverride = null;
       _pendingConversationModelOverride = null;

@@ -1,5 +1,12 @@
 part of 'chat_page.dart';
 
+ConversationThreadTarget _newCodexThreadTarget() {
+  return ConversationThreadTarget.newConversation(
+    mode: ConversationMode.codex,
+    requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+  );
+}
+
 mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   @override
   void initState() {
@@ -112,7 +119,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null) {
       final lastVisible =
           await ConversationHistoryService.getLastVisibleThreadTarget();
-      final normalizedLastVisible = _normalizeVisibleThreadTarget(lastVisible);
+      final normalizedLastVisible = _normalizeVisibleThreadTarget(
+        lastVisible,
+        freshCodexOnImplicitRestore: true,
+      );
       if (normalizedLastVisible != null) {
         return normalizedLastVisible;
       }
@@ -140,13 +150,17 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   }
 
   ConversationThreadTarget? _normalizeVisibleThreadTarget(
-    ConversationThreadTarget? target,
-  ) {
+    ConversationThreadTarget? target, {
+    bool freshCodexOnImplicitRestore = false,
+  }) {
     if (target == null) {
       return null;
     }
     if (target.mode == ConversationMode.openclaw) {
       return null;
+    }
+    if (freshCodexOnImplicitRestore && target.mode == ConversationMode.codex) {
+      return _newCodexThreadTarget();
     }
     return target;
   }

@@ -113,8 +113,12 @@ class CodexAppServerManager private constructor(
         val conversationId = args.longValue("conversationId")
         val params = linkedMapOf<String, Any?>(
             "cwd" to cwd,
-            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request")
+            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
+            "sandboxPolicy" to (args["sandboxPolicy"] ?: buildDefaultCodexSandboxPolicy(cwd))
         )
+        args.stringValue("approvalsReviewer")?.let {
+            params["approvalsReviewer"] = it
+        }
         if (conversationId != null) {
             pendingThreadStartConversationIds.add(conversationId)
         }
@@ -198,19 +202,24 @@ class CodexAppServerManager private constructor(
 
     private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> {
         val cwd = sanitizeCodexAbsolutePath(args.stringValue("cwd")) ?: resolveDefaultCwd()
-        val threadId = ensureThreadForTurn(args, cwd)
-        val params = linkedMapOf<String, Any?>(
-            "threadId" to threadId,
-            "input" to resolveInput(args),
-            "cwd" to cwd,
-            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
-            "sandboxPolicy" to (args["sandboxPolicy"] ?: buildDefaultCodexSandboxPolicy(cwd))
+        var threadId = ensureThreadForTurn(args, cwd)
+        val params = buildTurnStartParams(
+            args = args,
+            cwd = cwd,
+            threadId = threadId
         )
-        args["model"]?.let { params["model"] = it }
-        args["effort"]?.let { params["effort"] = it }
-        args["collaborationMode"]?.let { params["collaborationMode"] = it }
-        args["serviceTier"]?.let { params["serviceTier"] = it }
-        val response = request("turn/start", params) as Map<String, Any?>
+        val response = try {
+            request("turn/start", params) as Map<String, Any?>
+        } catch (error: Throwable) {
+            if (!shouldRecoverMissingThread(error)) {
+                throw error
+            }
+            val retryResponse = startThread(args + mapOf("cwd" to cwd))
+            threadId = retryResponse["threadId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                ?: throw error
+            params["threadId"] = threadId
+            request("turn/start", params) as Map<String, Any?>
+        }
         val turnId = extractTurnId(response)
         if (!turnId.isNullOrBlank()) {
             activeTurnsByThreadId[threadId] = turnId
@@ -267,6 +276,33 @@ class CodexAppServerManager private constructor(
             ?: throw IllegalArgumentException("response is required")
         ensureConnectedSession().sendResponse(requestId, result)
         return mapOf("ok" to true)
+    }
+
+    private fun buildTurnStartParams(
+        args: Map<String, Any?>,
+        cwd: String,
+        threadId: String
+    ): MutableMap<String, Any?> {
+        val params = linkedMapOf<String, Any?>(
+            "threadId" to threadId,
+            "input" to resolveInput(args),
+            "cwd" to cwd,
+            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
+            "sandboxPolicy" to (args["sandboxPolicy"] ?: buildDefaultCodexSandboxPolicy(cwd))
+        )
+        args.stringValue("approvalsReviewer")?.let {
+            params["approvalsReviewer"] = it
+        }
+        args["model"]?.let { params["model"] = it }
+        args["effort"]?.let { params["effort"] = it }
+        args["collaborationMode"]?.let { params["collaborationMode"] = it }
+        args["serviceTier"]?.let { params["serviceTier"] = it }
+        return params
+    }
+
+    private fun shouldRecoverMissingThread(error: Throwable): Boolean {
+        val message = error.message?.lowercase().orEmpty()
+        return message.contains("thread not found")
     }
 
     private suspend fun ensureThreadForTurn(args: Map<String, Any?>, cwd: String): String {

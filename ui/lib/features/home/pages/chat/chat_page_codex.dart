@@ -59,14 +59,14 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
 
     await _showCodexAccountStatus();
 
-    final target =
-        await ConversationService.getLatestConversationTarget(
-          mode: ConversationMode.codex,
-        ) ??
-        ConversationThreadTarget.newConversation(
-          mode: ConversationMode.codex,
-          requestKey: DateTime.now().millisecondsSinceEpoch.toString(),
-        );
+    final activeCodexConversationId =
+        _currentConversationIdByMode[ChatPageMode.codex];
+    final target = activeCodexConversationId != null
+        ? ConversationThreadTarget.existing(
+            conversationId: activeCodexConversationId,
+            mode: ConversationMode.codex,
+          )
+        : _newCodexThreadTarget();
     if (!mounted) return;
     await _applyConversationThreadTarget(target);
   }
@@ -190,6 +190,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         conversationId: conversationId,
         threadId: _activeCodexThreadId,
         text: messageText,
+        approvalPolicy: _codexPermissionMode.approvalPolicy,
+        approvalsReviewer: _codexPermissionMode.approvalsReviewer,
+        sandboxPolicy: _codexPermissionMode.sandboxPolicy,
       );
       _activeCodexThreadId =
           _asCodexString(response['threadId']) ?? _activeCodexThreadId;
@@ -287,4 +290,31 @@ int? _asCodexInt(dynamic value) {
 String? _asCodexString(dynamic value) {
   final text = value?.toString().trim() ?? '';
   return text.isEmpty ? null : text;
+}
+
+extension _CodexPermissionModePayload on CodexPermissionMode {
+  String get approvalPolicy {
+    return switch (this) {
+      CodexPermissionMode.fullAccess => 'never',
+      CodexPermissionMode.defaultMode ||
+      CodexPermissionMode.autoReview => 'on-request',
+    };
+  }
+
+  String get approvalsReviewer {
+    return switch (this) {
+      CodexPermissionMode.autoReview => 'guardian_subagent',
+      CodexPermissionMode.defaultMode ||
+      CodexPermissionMode.fullAccess => 'user',
+    };
+  }
+
+  Map<String, dynamic>? get sandboxPolicy {
+    return switch (this) {
+      CodexPermissionMode.fullAccess => const <String, dynamic>{
+        'type': 'dangerFullAccess',
+      },
+      CodexPermissionMode.defaultMode || CodexPermissionMode.autoReview => null,
+    };
+  }
 }

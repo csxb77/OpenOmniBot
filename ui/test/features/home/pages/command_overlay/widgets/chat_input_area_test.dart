@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -104,6 +103,58 @@ void main() {
     expect(tapped, isTrue);
   });
 
+  testWidgets('codex permission selector opens menu and selects mode', (
+    tester,
+  ) async {
+    CodexPermissionMode? selected;
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: null,
+        useLargeComposerStyle: true,
+        codexPermissionMode: CodexPermissionMode.fullAccess,
+        onCodexPermissionModeChanged: (mode) {
+          selected = mode;
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('chat-input-codex-permission-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-defaultMode'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-autoReview'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-fullAccess'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-autoReview'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(selected, CodexPermissionMode.autoReview);
+  });
+
   testWidgets('large composer uses newline action for multiline input', (
     tester,
   ) async {
@@ -136,6 +187,8 @@ Widget _buildTestApp({
   VoidCallback? onLongPressContextUsageRing,
   VoidCallback? onTriggerSlashCommand,
   bool useLargeComposerStyle = false,
+  CodexPermissionMode? codexPermissionMode,
+  ValueChanged<CodexPermissionMode>? onCodexPermissionModeChanged,
 }) {
   return DefaultAssetBundle(
     bundle: _TestAssetBundle(),
@@ -151,6 +204,8 @@ Widget _buildTestApp({
           contextUsageRatio: contextUsageRatio,
           onLongPressContextUsageRing: onLongPressContextUsageRing,
           onTriggerSlashCommand: onTriggerSlashCommand,
+          codexPermissionMode: codexPermissionMode,
+          onCodexPermissionModeChanged: onCodexPermissionModeChanged,
         ),
       ),
     ),
