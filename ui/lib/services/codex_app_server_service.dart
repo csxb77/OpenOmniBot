@@ -73,10 +73,17 @@ class CodexAppServerService {
   static Future<Map<String, dynamic>> startThread({
     int? conversationId,
     String? cwd,
+    String? model,
+    String? effort,
+    String? collaborationMode,
   }) {
     return _invokeMap('thread/start', {
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
     });
   }
 
@@ -144,6 +151,9 @@ class CodexAppServerService {
     String? approvalPolicy,
     String? approvalsReviewer,
     Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
   }) {
     return _invokeMap('turn/start', {
       if (threadId != null) 'threadId': threadId,
@@ -154,8 +164,47 @@ class CodexAppServerService {
       if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
         'approvalsReviewer': approvalsReviewer.trim(),
       if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
       'text': text,
     });
+  }
+
+  static Future<Map<String, dynamic>> startReview({
+    String? threadId,
+    int? conversationId,
+    String? cwd,
+    String? approvalPolicy,
+    String? approvalsReviewer,
+    Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+  }) {
+    return _invokeMap('review/start', {
+      if (threadId != null) 'threadId': threadId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
+        'approvalPolicy': approvalPolicy.trim(),
+      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
+        'approvalsReviewer': approvalsReviewer.trim(),
+      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> listModels() {
+    return _invokeMap('model/list');
+  }
+
+  static Future<Map<String, dynamic>> listCollaborationModes() {
+    return _invokeMap('collaborationMode/list');
   }
 
   static Future<Map<String, dynamic>> steerTurn({

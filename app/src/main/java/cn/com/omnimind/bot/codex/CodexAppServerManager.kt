@@ -96,9 +96,16 @@ class CodexAppServerManager private constructor(
             "thread/archive" -> archiveThread(args, archived = true)
             "thread/unarchive" -> archiveThread(args, archived = false)
             "thread/name/set" -> setThreadName(args)
+            "model/list" -> requestWrappedList("model/list", args, "models")
+            "collaborationMode/list" -> requestWrappedList(
+                "collaborationMode/list",
+                args,
+                "collaborationModes"
+            )
             "turn/start" -> startTurn(args)
             "turn/steer" -> steerTurn(args)
             "turn/interrupt" -> interruptTurn(args)
+            "review/start" -> startReview(args)
             "account/read" -> request("account/read", null)
             "account/login/start" -> request(
                 "account/login/start",
@@ -122,6 +129,7 @@ class CodexAppServerManager private constructor(
         args.stringValue("approvalsReviewer")?.let {
             params["approvalsReviewer"] = it
         }
+        addCodexOptionalRunParams(params, args)
         if (conversationId != null) {
             pendingThreadStartConversationId = conversationId
         }
@@ -203,6 +211,19 @@ class CodexAppServerManager private constructor(
         )
     }
 
+    private suspend fun requestWrappedList(
+        method: String,
+        args: Map<String, Any?>,
+        listKey: String
+    ): Map<String, Any?> {
+        val response = request(method, if (args.isEmpty()) null else args)
+        return when (response) {
+            is Map<*, *> -> response.entries.associate { (key, value) -> key.toString() to value }
+            is List<*> -> mapOf(listKey to response)
+            else -> mapOf(listKey to emptyList<Any?>(), "raw" to response)
+        }
+    }
+
     private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> {
         val cwd = sanitizeCodexAbsolutePath(args.stringValue("cwd")) ?: resolveDefaultCwd()
         var threadId = ensureThreadForTurn(args, cwd)
@@ -226,6 +247,41 @@ class CodexAppServerManager private constructor(
                 ?: throw error
             params["threadId"] = threadId
             request("turn/start", params) as Map<String, Any?>
+        }
+        val turnId = extractTurnId(response)
+        if (!turnId.isNullOrBlank()) {
+            activeTurnsByThreadId[threadId] = turnId
+        }
+        return response.withLocalIds(
+            threadId = threadId,
+            conversationId = bindingRepository.getBindingByThreadId(threadId)?.conversationId,
+            turnId = turnId
+        )
+    }
+
+    private suspend fun startReview(args: Map<String, Any?>): Map<String, Any?> {
+        val cwd = sanitizeCodexAbsolutePath(args.stringValue("cwd")) ?: resolveDefaultCwd()
+        var threadId = ensureThreadForTurn(args, cwd)
+        val params = buildReviewStartParams(
+            args = args,
+            cwd = cwd,
+            threadId = threadId
+        )
+        val response = try {
+            request("review/start", params) as Map<String, Any?>
+        } catch (error: Throwable) {
+            if (!shouldRecoverMissingThread(error)) {
+                throw error
+            }
+            Log.w(
+                "CodexAppServerManager",
+                "Codex review/start hit a missing thread; creating a fresh thread binding."
+            )
+            val retryResponse = startThread(args + mapOf("cwd" to cwd))
+            threadId = retryResponse["threadId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                ?: throw error
+            params["threadId"] = threadId
+            request("review/start", params) as Map<String, Any?>
         }
         val turnId = extractTurnId(response)
         if (!turnId.isNullOrBlank()) {
@@ -300,10 +356,25 @@ class CodexAppServerManager private constructor(
         args.stringValue("approvalsReviewer")?.let {
             params["approvalsReviewer"] = it
         }
-        args["model"]?.let { params["model"] = it }
-        args["effort"]?.let { params["effort"] = it }
-        args["collaborationMode"]?.let { params["collaborationMode"] = it }
-        args["serviceTier"]?.let { params["serviceTier"] = it }
+        addCodexOptionalRunParams(params, args)
+        return params
+    }
+
+    private fun buildReviewStartParams(
+        args: Map<String, Any?>,
+        cwd: String,
+        threadId: String
+    ): MutableMap<String, Any?> {
+        val params = linkedMapOf<String, Any?>(
+            "threadId" to threadId,
+            "cwd" to cwd,
+            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
+            "sandboxPolicy" to (args["sandboxPolicy"] ?: buildDefaultCodexSandboxPolicy(cwd))
+        )
+        args.stringValue("approvalsReviewer")?.let {
+            params["approvalsReviewer"] = it
+        }
+        addCodexOptionalRunParams(params, args)
         return params
     }
 
@@ -598,6 +669,16 @@ internal fun buildDefaultCodexSandboxPolicy(cwd: String): Map<String, Any?> {
         "excludeTmpdirEnvVar" to false,
         "excludeSlashTmp" to false
     )
+}
+
+internal fun addCodexOptionalRunParams(
+    params: MutableMap<String, Any?>,
+    args: Map<String, Any?>
+) {
+    args["model"]?.let { params["model"] = it }
+    args["effort"]?.let { params["effort"] = it }
+    args["collaborationMode"]?.let { params["collaborationMode"] = it }
+    args["serviceTier"]?.let { params["serviceTier"] = it }
 }
 
 private fun Map<String, Any?>.stringValue(key: String): String? {

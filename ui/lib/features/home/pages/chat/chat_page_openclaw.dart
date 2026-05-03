@@ -202,6 +202,9 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
   Future<bool> _tryHandleSlashCommand(String messageText) async {
     final trimmed = messageText.trim();
     if (!trimmed.startsWith('/')) return false;
+    if (_activeMode == ChatPageMode.codex) {
+      return _tryHandleCodexSlashCommand(trimmed);
+    }
 
     if (trimmed == '/compact' || trimmed.startsWith('/compact ')) {
       await _executeManualContextCompactionCommand();

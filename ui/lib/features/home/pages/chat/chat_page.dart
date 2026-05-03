@@ -52,6 +52,7 @@ import 'package:ui/utils/ui.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_runtime_attachment_payload.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
+import 'package:ui/features/home/pages/chat/utils/codex_slash_commands.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
 import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
 
@@ -82,7 +83,7 @@ part 'chat_page_ui.dart';
 
 enum ChatPageMode { normal, openclaw, codex }
 
-enum _SlashCommandPanelRoute { root, effort }
+enum _SlashCommandPanelRoute { root, effort, codexModel }
 
 class ChatPage extends StatefulWidget {
   final ConversationThreadTarget? threadTarget;
@@ -365,6 +366,14 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   bool _isCodexStatusLoading = false;
   String? _activeCodexThreadId;
   String? _activeCodexTurnId;
+  String? _activeCodexModelId;
+  String? _activeCodexCollaborationMode;
+  bool _isCodexModelListLoading = false;
+  bool _isCodexCollaborationModeListLoading = false;
+  String? _codexModelListError;
+  String? _codexCollaborationModeListError;
+  List<String> _codexModelOptions = const <String>[];
+  List<String> _codexCollaborationModes = const <String>[];
   CodexPermissionMode _codexPermissionMode = CodexPermissionMode.fullAccess;
   ChatBrowserSessionSnapshot? _liveBrowserSessionSnapshot;
   bool _isBrowserOverlayVisible = false;
@@ -1021,6 +1030,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       return _SlashCommandPanelRoute.root;
     }
     final normalized = trimmed.toLowerCase();
+    if (_activeMode == ChatPageMode.codex &&
+        (normalized == '/model' || normalized.startsWith('/model '))) {
+      return _SlashCommandPanelRoute.codexModel;
+    }
     if (normalized == '/effort' || normalized.startsWith('/effort ')) {
       return _SlashCommandPanelRoute.effort;
     }
@@ -1033,6 +1046,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }) {
     final source = (text ?? _messageController.text).trimLeft();
     return switch (route) {
+      _SlashCommandPanelRoute.codexModel =>
+        source.length <= 6 ? '' : source.substring(6).trimLeft(),
       _SlashCommandPanelRoute.effort =>
         source.length <= 7 ? '' : source.substring(7).trimLeft(),
       _SlashCommandPanelRoute.root => '',
@@ -1695,11 +1710,36 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _refreshCodexStatus();
 
+  Future<void> _refreshCodexCommandPreferences();
+
+  Future<void> _loadCodexModelOptions({bool force = false});
+
+  Future<void> _loadCodexCollaborationModes({bool force = false});
+
+  Future<void> _selectCodexModel(String modelId);
+
+  Future<void> _activateCodexPlanMode({bool persistOnly = false});
+
+  Future<void> _handleCodexSlashCommandCardSelected(
+    Map<String, dynamic> cardData,
+  );
+
+  Future<bool> _tryHandleCodexSlashCommand(String messageText);
+
+  Future<void> _executeCodexInitCommand();
+
+  Future<void> _startCodexReviewCommand();
+
   Future<void> _handleCodexTap();
 
   void _handleCodexAppServerEvent(Map<String, dynamic> event);
 
-  Future<void> _sendCodexMessage(String aiMessageId, String messageText);
+  Future<void> _sendCodexMessage(
+    String aiMessageId,
+    String messageText, {
+    String? modelOverride,
+    String? collaborationModeOverride,
+  });
 
   Future<void> _interruptCodexTurn();
 

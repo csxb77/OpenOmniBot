@@ -1,5 +1,20 @@
 part of 'chat_page.dart';
 
+const String _kCodexModelPreferenceKey = 'model';
+const String _kCodexCollaborationModePreferenceKey = 'collaboration_mode';
+const String _kCodexPreferenceStoragePrefix = 'chat_codex_command_preference';
+const String _kCodexInitPrompt = '''
+Please analyze this repository and create or update an AGENTS.md file that acts as a contributor guide for future coding agents.
+
+Include concise, repository-specific guidance for:
+- project structure and where important code lives
+- build, test, lint, and development commands
+- coding conventions and architectural patterns visible in the repo
+- testing expectations and any important setup notes
+
+Keep the file practical and avoid generic advice. If AGENTS.md already exists, preserve useful existing guidance and update it with what you learn from the current repository.
+''';
+
 mixin _ChatPageCodexMixin on _ChatPageStateBase {
   @override
   Future<void> _refreshCodexStatus() async {
@@ -117,6 +132,373 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
   }
 
   @override
+  Future<void> _refreshCodexCommandPreferences() async {
+    final conversationId = _currentConversationIdByMode[ChatPageMode.codex];
+    final model = _readCodexPreference(
+      _kCodexModelPreferenceKey,
+      conversationId: conversationId,
+    );
+    final collaborationMode = _readCodexPreference(
+      _kCodexCollaborationModePreferenceKey,
+      conversationId: conversationId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _activeCodexModelId = model;
+      _activeCodexCollaborationMode = collaborationMode;
+    });
+  }
+
+  @override
+  Future<void> _loadCodexModelOptions({bool force = false}) async {
+    if (_isCodexModelListLoading) {
+      return;
+    }
+    if (!force && _codexModelOptions.isNotEmpty) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isCodexModelListLoading = true;
+      _codexModelListError = null;
+    });
+    try {
+      final response = await CodexAppServerService.listModels();
+      final models = _extractCodexOptionIds(response, const <String>[
+        'models',
+        'items',
+        'data',
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _codexModelOptions = models;
+        _isCodexModelListLoading = false;
+        _codexModelListError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isCodexModelListLoading = false;
+        _codexModelListError = error.toString();
+      });
+    }
+  }
+
+  @override
+  Future<void> _loadCodexCollaborationModes({bool force = false}) async {
+    if (_isCodexCollaborationModeListLoading) {
+      return;
+    }
+    if (!force && _codexCollaborationModes.isNotEmpty) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isCodexCollaborationModeListLoading = true;
+      _codexCollaborationModeListError = null;
+    });
+    try {
+      final response = await CodexAppServerService.listCollaborationModes();
+      final modes = _extractCodexOptionIds(response, const <String>[
+        'collaborationModes',
+        'modes',
+        'items',
+        'data',
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _codexCollaborationModes = modes;
+        _isCodexCollaborationModeListLoading = false;
+        _codexCollaborationModeListError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isCodexCollaborationModeListLoading = false;
+        _codexCollaborationModeListError = error.toString();
+      });
+    }
+  }
+
+  @override
+  Future<void> _selectCodexModel(String modelId) async {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty || normalized.startsWith('/')) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _activeCodexModelId = normalized;
+    });
+    await _writeCodexPreference(_kCodexModelPreferenceKey, normalized);
+    _messageController.clear();
+    _hideSlashCommandPanel();
+  }
+
+  @override
+  Future<void> _activateCodexPlanMode({bool persistOnly = false}) async {
+    await _loadCodexCollaborationModes();
+    final planMode = _resolveCodexPlanMode(_codexCollaborationModes);
+    if (!mounted) return;
+    setState(() {
+      _activeCodexCollaborationMode = planMode;
+    });
+    await _writeCodexPreference(
+      _kCodexCollaborationModePreferenceKey,
+      planMode,
+    );
+    if (!persistOnly) {
+      _messageController.clear();
+      _hideSlashCommandPanel();
+    }
+  }
+
+  @override
+  Future<void> _handleCodexSlashCommandCardSelected(
+    Map<String, dynamic> cardData,
+  ) async {
+    final command = (cardData['toolTitle'] ?? cardData['displayName'] ?? '')
+        .toString()
+        .trim();
+    if (command.isEmpty) {
+      return;
+    }
+    if (command == '/model') {
+      _messageController.value = const TextEditingValue(
+        text: '/model ',
+        selection: TextSelection.collapsed(offset: 7),
+      );
+      _inputFocusNode.requestFocus();
+      _handleSlashCommandInput();
+      await _loadCodexModelOptions();
+      return;
+    }
+    if (command == '/review') {
+      await _startCodexReviewCommand();
+      return;
+    }
+    if (command == '/init') {
+      await _executeCodexInitCommand();
+      return;
+    }
+    if (command == '/plan') {
+      await _activateCodexPlanMode();
+      return;
+    }
+    if (_resolveSlashCommandPanelRoute(_messageController.text) ==
+        _SlashCommandPanelRoute.codexModel) {
+      await _selectCodexModel(command);
+    }
+  }
+
+  @override
+  Future<bool> _tryHandleCodexSlashCommand(String messageText) async {
+    final trimmed = messageText.trim();
+    final intent = resolveCodexSlashSubmitIntent(trimmed);
+    switch (intent.kind) {
+      case CodexSlashSubmitKind.none:
+        return false;
+      case CodexSlashSubmitKind.openModelPicker:
+        _triggerSlashCommandPanel();
+        await _loadCodexModelOptions();
+        return true;
+      case CodexSlashSubmitKind.selectModel:
+        await _selectCodexModel(intent.value ?? '');
+        return true;
+      case CodexSlashSubmitKind.startReview:
+        _messageController.clear();
+        _hideSlashCommandPanel();
+        await _startCodexReviewCommand();
+        return true;
+      case CodexSlashSubmitKind.startInit:
+        _messageController.clear();
+        _hideSlashCommandPanel();
+        await _executeCodexInitCommand();
+        return true;
+      case CodexSlashSubmitKind.activatePlan:
+        await _activateCodexPlanMode();
+        return true;
+      case CodexSlashSubmitKind.startPlan:
+        _messageController.clear();
+        _hideSlashCommandPanel();
+        await _activateCodexPlanMode(persistOnly: true);
+        await _startCodexTurnCommand(
+          displayText: trimmed,
+          actualText: intent.value ?? '',
+          collaborationModeOverride:
+              _activeCodexCollaborationMode ?? _resolveCodexPlanMode(const []),
+        );
+        return true;
+      case CodexSlashSubmitKind.unsupported:
+        _messageController.clear();
+        _hideSlashCommandPanel();
+        _showSnackBar(
+          LegacyTextLocalizer.isEnglish
+              ? 'Unsupported Codex command'
+              : '不支持的 Codex 命令',
+        );
+        return true;
+    }
+  }
+
+  @override
+  Future<void> _executeCodexInitCommand() async {
+    await _startCodexTurnCommand(
+      displayText: '/init',
+      actualText: _kCodexInitPrompt,
+    );
+  }
+
+  @override
+  Future<void> _startCodexReviewCommand() async {
+    if (_isAiResponding) {
+      return;
+    }
+    _inputFocusNode.unfocus();
+    _messageController.clear();
+    _hideSlashCommandPanel();
+    final messageIds = addUserMessage('/review');
+    try {
+      await _ensureActiveConversationReadyForStreaming();
+    } catch (_) {
+      if (mounted) {
+        _currentDispatchTaskId = messageIds.aiMessageId;
+        handleAgentError('Conversation setup failed. Please retry.');
+      }
+      return;
+    }
+    final conversationId = _currentConversationId;
+    if (conversationId == null) {
+      if (mounted) {
+        _currentDispatchTaskId = messageIds.aiMessageId;
+        handleAgentError('Conversation setup failed. Please retry.');
+      }
+      return;
+    }
+
+    _syncRuntimeSnapshotForMode(_activeMode);
+    _currentDispatchTaskId = messageIds.aiMessageId;
+    _runtimeCoordinator.registerTask(
+      taskId: messageIds.aiMessageId,
+      conversationId: conversationId,
+      mode: _modeKey(_activeMode),
+    );
+    await ConversationHistoryService.saveConversationMessages(
+      conversationId,
+      List<ChatMessageModel>.from(_messages),
+      mode: ConversationMode.codex,
+    );
+
+    try {
+      CodexStatus status = _codexStatus;
+      if (!status.connected) {
+        status = await CodexAppServerService.connect();
+        if (mounted) {
+          setState(() {
+            _codexStatus = status;
+          });
+        }
+      }
+      final response = await CodexAppServerService.startReview(
+        conversationId: conversationId,
+        threadId: _activeCodexThreadId,
+        approvalPolicy: _codexPermissionMode.approvalPolicy,
+        approvalsReviewer: _codexPermissionMode.approvalsReviewer,
+        sandboxPolicy: _codexPermissionMode.sandboxPolicy,
+        model: _activeCodexModelId,
+        collaborationMode: _activeCodexCollaborationMode,
+      );
+      _activeCodexThreadId =
+          _asCodexString(response['threadId']) ?? _activeCodexThreadId;
+      _activeCodexTurnId =
+          _asCodexString(response['turnId']) ?? _activeCodexTurnId;
+      await _writeCodexCommandPreferencesForCurrentConversation();
+    } catch (error) {
+      if (!mounted) return;
+      handleAgentError('Codex review 启动失败: $error');
+    }
+  }
+
+  Future<void> _startCodexTurnCommand({
+    required String displayText,
+    required String actualText,
+    String? collaborationModeOverride,
+  }) async {
+    if (_isAiResponding) {
+      return;
+    }
+    _inputFocusNode.unfocus();
+    _messageController.clear();
+    _hideSlashCommandPanel();
+    final messageIds = addUserMessage(displayText);
+    await _sendCodexMessage(
+      messageIds.aiMessageId,
+      actualText,
+      collaborationModeOverride: collaborationModeOverride,
+    );
+  }
+
+  String? _readCodexPreference(String kind, {int? conversationId}) {
+    try {
+      if (conversationId != null) {
+        final scoped = StorageService.getString(
+          _codexPreferenceKey(kind, conversationId: conversationId),
+          defaultValue: '',
+        );
+        final normalizedScoped = scoped?.trim() ?? '';
+        if (normalizedScoped.isNotEmpty) {
+          return normalizedScoped;
+        }
+      }
+      final global = StorageService.getString(
+        _codexPreferenceKey(kind),
+        defaultValue: '',
+      );
+      final normalizedGlobal = global?.trim() ?? '';
+      return normalizedGlobal.isEmpty ? null : normalizedGlobal;
+    } catch (error) {
+      debugPrint('Read Codex command preference failed: $error');
+      return null;
+    }
+  }
+
+  Future<void> _writeCodexPreference(String kind, String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    await StorageService.setString(_codexPreferenceKey(kind), normalized);
+    final conversationId = _currentConversationIdByMode[ChatPageMode.codex];
+    if (conversationId != null) {
+      await StorageService.setString(
+        _codexPreferenceKey(kind, conversationId: conversationId),
+        normalized,
+      );
+    }
+  }
+
+  Future<void> _writeCodexCommandPreferencesForCurrentConversation() async {
+    final modelId = _activeCodexModelId?.trim();
+    if (modelId != null && modelId.isNotEmpty) {
+      await _writeCodexPreference(_kCodexModelPreferenceKey, modelId);
+    }
+    final collaborationMode = _activeCodexCollaborationMode?.trim();
+    if (collaborationMode != null && collaborationMode.isNotEmpty) {
+      await _writeCodexPreference(
+        _kCodexCollaborationModePreferenceKey,
+        collaborationMode,
+      );
+    }
+  }
+
+  String _codexPreferenceKey(String kind, {int? conversationId}) {
+    if (conversationId == null) {
+      return '$_kCodexPreferenceStoragePrefix.$kind.global';
+    }
+    return '$_kCodexPreferenceStoragePrefix.$kind.conversation.$conversationId';
+  }
+
+  @override
   void _handleCodexAppServerEvent(Map<String, dynamic> event) {
     final conversationId =
         _asCodexInt(event['conversationId']) ??
@@ -149,7 +531,12 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<void> _sendCodexMessage(String aiMessageId, String messageText) async {
+  Future<void> _sendCodexMessage(
+    String aiMessageId,
+    String messageText, {
+    String? modelOverride,
+    String? collaborationModeOverride,
+  }) async {
     try {
       await _ensureActiveConversationReadyForStreaming();
     } catch (_) {
@@ -198,6 +585,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         approvalPolicy: _codexPermissionMode.approvalPolicy,
         approvalsReviewer: _codexPermissionMode.approvalsReviewer,
         sandboxPolicy: _codexPermissionMode.sandboxPolicy,
+        model: modelOverride ?? _activeCodexModelId,
+        collaborationMode:
+            collaborationModeOverride ?? _activeCodexCollaborationMode,
       );
       _activeCodexThreadId =
           _asCodexString(response['threadId']) ?? _activeCodexThreadId;
@@ -224,6 +614,7 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
           );
         }
       }
+      await _writeCodexCommandPreferencesForCurrentConversation();
     } catch (error) {
       if (!mounted) return;
       handleAgentError('Codex 启动失败: $error');
@@ -303,6 +694,80 @@ int? _asCodexInt(dynamic value) {
 String? _asCodexString(dynamic value) {
   final text = value?.toString().trim() ?? '';
   return text.isEmpty ? null : text;
+}
+
+List<String> _extractCodexOptionIds(
+  Map<String, dynamic> response,
+  List<String> listKeys,
+) {
+  final rawItems = <dynamic>[];
+  for (final key in listKeys) {
+    final value = response[key];
+    if (value is List) {
+      rawItems.addAll(value);
+    }
+  }
+  if (rawItems.isEmpty) {
+    for (final value in response.values) {
+      if (value is List) {
+        rawItems.addAll(value);
+      }
+    }
+  }
+  final seen = <String>{};
+  final result = <String>[];
+  for (final item in rawItems) {
+    final id = _codexOptionId(item);
+    if (id == null || !seen.add(id)) {
+      continue;
+    }
+    result.add(id);
+  }
+  return result;
+}
+
+String? _codexOptionId(dynamic item) {
+  if (item is String) {
+    final text = item.trim();
+    return text.isEmpty ? null : text;
+  }
+  if (item is Map) {
+    for (final key in const <String>[
+      'id',
+      'model',
+      'modelId',
+      'slug',
+      'name',
+      'value',
+      'mode',
+    ]) {
+      final text = item[key]?.toString().trim() ?? '';
+      if (text.isNotEmpty) {
+        return text;
+      }
+    }
+  }
+  final text = item?.toString().trim() ?? '';
+  return text.isEmpty ? null : text;
+}
+
+String _resolveCodexPlanMode(List<String> modes) {
+  for (final mode in modes) {
+    if (mode.toLowerCase() == 'plan') {
+      return mode;
+    }
+  }
+  for (final mode in modes) {
+    if (_isCodexPlanMode(mode)) {
+      return mode;
+    }
+  }
+  return 'plan';
+}
+
+bool _isCodexPlanMode(String? mode) {
+  final normalized = mode?.trim().toLowerCase() ?? '';
+  return normalized == 'plan' || normalized.contains('plan');
 }
 
 extension _CodexPermissionModePayload on CodexPermissionMode {

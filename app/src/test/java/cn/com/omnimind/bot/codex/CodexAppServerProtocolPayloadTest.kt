@@ -45,4 +45,24 @@ class CodexAppServerProtocolPayloadTest {
         assertEquals(false, policy["excludeTmpdirEnvVar"])
         assertEquals(false, policy["excludeSlashTmp"])
     }
+
+    @Test
+    fun addCodexOptionalRunParamsForwardsModelAndPlanMode() {
+        val params = linkedMapOf<String, Any?>("threadId" to "thread-1")
+
+        addCodexOptionalRunParams(
+            params,
+            mapOf(
+                "model" to "gpt-5-codex",
+                "effort" to "high",
+                "collaborationMode" to "plan",
+                "serviceTier" to "auto"
+            )
+        )
+
+        assertEquals("gpt-5-codex", params["model"])
+        assertEquals("high", params["effort"])
+        assertEquals("plan", params["collaborationMode"])
+        assertEquals("auto", params["serviceTier"])
+    }
 }

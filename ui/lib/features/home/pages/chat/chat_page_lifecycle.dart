@@ -214,6 +214,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _vlmAnswerController.clear();
     _applyDraftForConversationMode(targetMode);
     await initializeConversation();
+    if (_activeConversationMode == ChatPageMode.codex) {
+      await _refreshCodexCommandPreferences();
+    }
     await _applyStagedSharedDraftIfNeeded(effectiveTarget);
     await _persistVisibleThreadTargetIfNeeded();
     if (syncPage) {
