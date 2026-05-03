@@ -93,11 +93,13 @@ android {
         create("standard") {
             dimension = "edition"
             buildConfigField("boolean", "LOCAL_MODEL_FEATURE_ENABLED", "false")
+            buildConfigField("String", "APP_EDITION", "\"standard\"")
         }
 
         create("omniinfer") {
             dimension = "edition"
             buildConfigField("boolean", "LOCAL_MODEL_FEATURE_ENABLED", "true")
+            buildConfigField("String", "APP_EDITION", "\"omniinfer\"")
         }
     }
     signingConfigs {

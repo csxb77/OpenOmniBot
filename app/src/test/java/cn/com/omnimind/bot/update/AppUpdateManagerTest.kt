@@ -71,8 +71,45 @@ class AppUpdateManagerTest {
             )
         )
 
-        val selected = AppUpdateManager.selectPreferredApkAsset(assets)
+        val selected = AppUpdateManager.selectPreferredApkAsset(assets, "omniinfer")
         assertEquals("OpenOmniBot-v0.0.2.apk", selected?.name)
+    }
+
+    @Test
+    fun selectPreferredApkAssetSelectsMatchingEdition() {
+        val assets = listOf(
+            ReleaseAsset(
+                name = "OpenOmniBot-v0.4.0-standard.apk",
+                downloadUrl = "https://example.com/OpenOmniBot-v0.4.0-standard.apk"
+            ),
+            ReleaseAsset(
+                name = "OpenOmniBot-v0.4.0-omniinfer.apk",
+                downloadUrl = "https://example.com/OpenOmniBot-v0.4.0-omniinfer.apk"
+            )
+        )
+
+        assertEquals(
+            "OpenOmniBot-v0.4.0-standard.apk",
+            AppUpdateManager.selectPreferredApkAsset(assets, "standard")?.name
+        )
+        assertEquals(
+            "OpenOmniBot-v0.4.0-omniinfer.apk",
+            AppUpdateManager.selectPreferredApkAsset(assets, "omniinfer")?.name
+        )
+    }
+
+    @Test
+    fun selectPreferredApkAssetDoesNotCrossInstallSplitEdition() {
+        val selected = AppUpdateManager.selectPreferredApkAsset(
+            listOf(
+                ReleaseAsset(
+                    name = "OpenOmniBot-v0.4.0-standard.apk",
+                    downloadUrl = "https://example.com/OpenOmniBot-v0.4.0-standard.apk"
+                )
+            ),
+            "omniinfer"
+        )
+        assertNull(selected)
     }
 
     @Test

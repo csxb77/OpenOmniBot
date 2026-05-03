@@ -6,7 +6,6 @@ import android.database.sqlite.SQLiteDatabase
 import android.os.Process
 import android.os.storage.StorageManager
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.baselib.llm.MnnLocalProviderStateStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import io.flutter.embedding.engine.FlutterEngine
@@ -259,17 +258,10 @@ class StorageUsageChannel {
         val workspaceMemoryBytes = sumUniquePaths(listOf(File(paths.workspaceInternalRoot, "memory")))
         val workspaceUserFilesBytes = sumWorkspaceUserFiles(paths.workspaceRoot)
 
-        val localModelsEnabled = MnnLocalProviderStateStore.isEnabled()
-        val localModelsFilesBytes = if (localModelsEnabled) {
-            sumUniquePaths(paths.localModelsRoots)
-        } else {
-            0L
-        }
-        val localModelsCacheBytes = if (localModelsEnabled) {
-            sumUniquePaths(listOf(paths.localModelsMmapDir, paths.localModelsTempsDir, paths.localModelsBuiltinTempsDir))
-        } else {
-            0L
-        }
+        val localModelsFilesBytes = sumUniquePaths(paths.localModelsRoots)
+        val localModelsCacheBytes = sumUniquePaths(
+            listOf(paths.localModelsMmapDir, paths.localModelsTempsDir, paths.localModelsBuiltinTempsDir)
+        )
 
         val terminalLocalBytes = sumUniquePaths(listOf(paths.terminalLocalRoot))
         val terminalBootstrapBytes = sumUniquePaths(
@@ -457,12 +449,7 @@ class StorageUsageChannel {
             ),
         )
 
-        val visibleBaseCategories = if (localModelsEnabled) {
-            baseCategories
-        } else {
-            baseCategories.filterNot { isLocalModelStorageCategory(it.id) }
-        }
-        val localizedBaseCategories = visibleBaseCategories.map { localizeCategoryEntry(context, it) }
+        val localizedBaseCategories = baseCategories.map { localizeCategoryEntry(context, it) }
         val knownBytes = localizedBaseCategories.sumOf { it.bytes }
         val scanTotalBytes = appBinaryScanBytes + dataDirScanBytes + externalKnownBytes
         val baselineTotalBytes = systemStats?.totalBytes ?: scanTotalBytes
@@ -730,15 +717,7 @@ class StorageUsageChannel {
                     StrategyAction("local_models_files", required = false),
                 ),
             ),
-        ).map { preset ->
-            if (MnnLocalProviderStateStore.isEnabled()) {
-                preset
-            } else {
-                preset.copy(
-                    actions = preset.actions.filterNot { isLocalModelStorageCategory(it.categoryId) }
-                )
-            }
-        }
+        )
         return presets.map { preset -> localizeStrategyPreset(context, preset) }
     }
 
@@ -748,9 +727,6 @@ class StorageUsageChannel {
         olderThanDays: Int?,
     ): CleanupOutcome {
         val cutoffMillis = olderThanDays?.let { System.currentTimeMillis() - it * 24L * 60L * 60L * 1000L }
-        if (!MnnLocalProviderStateStore.isEnabled() && isLocalModelStorageCategory(categoryId)) {
-            return CleanupOutcome(success = true)
-        }
         return when (categoryId) {
             "cache" -> mergeOutcomes(
                 if (cutoffMillis != null) clearDirectoryContentsByAge(context.cacheDir, cutoffMillis) else clearDirectoryContents(context.cacheDir),
@@ -802,12 +778,6 @@ class StorageUsageChannel {
             "conversation_history" -> clearConversationHistory()
             else -> CleanupOutcome(success = false, failedPaths = listOf("unknown:$categoryId"))
         }
-    }
-
-    private fun isLocalModelStorageCategory(categoryId: String): Boolean {
-        return categoryId == "local_models_files" ||
-            categoryId == "local_models_cache" ||
-            categoryId == "local_models"
     }
 
     private fun clearWorkspaceInternalSubDir(

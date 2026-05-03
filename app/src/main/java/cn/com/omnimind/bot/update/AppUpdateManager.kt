@@ -10,6 +10,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import cn.com.omnimind.baselib.service.DeviceInfoService
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.manager.ExternalApkInstallResult
 import cn.com.omnimind.bot.manager.ExternalApkInstaller
 import kotlinx.coroutines.CoroutineScope
@@ -108,6 +109,8 @@ object AppUpdateManager {
     private const val PERIODIC_CHECK_HOURS = 12L
     private const val SILENT_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000L
     private const val USER_AGENT = "OpenOmniBot-App"
+    private const val EDITION_STANDARD = "standard"
+    private const val EDITION_OMNIINFER = "omniinfer"
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -311,14 +314,29 @@ object AppUpdateManager {
     }
 
     @VisibleForTesting
-    internal fun selectPreferredApkAsset(assets: List<ReleaseAsset>): ReleaseAsset? {
-        if (assets.isEmpty()) return null
-        val preferred = assets.firstOrNull {
+    internal fun selectPreferredApkAsset(
+        assets: List<ReleaseAsset>,
+        edition: String = BuildConfig.APP_EDITION,
+    ): ReleaseAsset? {
+        val apkAssets = assets.filter { it.name.lowercase(Locale.ROOT).endsWith(".apk") }
+        if (apkAssets.isEmpty()) return null
+
+        val normalizedEdition = normalizeEdition(edition)
+        val editionAsset = apkAssets.firstOrNull {
+            isEditionApkAsset(it.name, normalizedEdition)
+        }
+        if (editionAsset != null) return editionAsset
+
+        if (apkAssets.any { isKnownEditionApkAsset(it.name) }) {
+            return null
+        }
+
+        val preferred = apkAssets.firstOrNull {
             it.name.startsWith("OpenOmniBot-v", ignoreCase = true) &&
                 it.name.lowercase(Locale.ROOT).endsWith(".apk")
         }
         if (preferred != null) return preferred
-        return assets.firstOrNull { it.name.lowercase(Locale.ROOT).endsWith(".apk") }
+        return apkAssets.firstOrNull()
     }
 
     private suspend fun resolveInstallState(context: Context): AppUpdateState {
@@ -405,12 +423,14 @@ object AppUpdateManager {
                 candidates = parseReleaseCandidates(JSONArray(body)),
                 includeBeta = includeBeta
             ) ?: return emptyState(currentVersion, checkedAt = System.currentTimeMillis())
-            val preferredAsset = selectPreferredApkAsset(selectedRelease.assets)
+            val preferredAsset = selectPreferredApkAsset(selectedRelease.assets, BuildConfig.APP_EDITION)
 
+            val hasInstallableUpdate = preferredAsset != null &&
+                compareVersions(selectedRelease.version, currentVersion) > 0
             return AppUpdateState(
                 currentVersion = currentVersion,
                 latestVersion = selectedRelease.version,
-                hasUpdate = compareVersions(selectedRelease.version, currentVersion) > 0,
+                hasUpdate = hasInstallableUpdate,
                 checkedAt = System.currentTimeMillis(),
                 publishedAt = selectedRelease.publishedAt,
                 releaseUrl = selectedRelease.releaseUrl,
@@ -497,6 +517,24 @@ object AppUpdateManager {
             assets += ReleaseAsset(name = name, downloadUrl = downloadUrl)
         }
         return assets
+    }
+
+    private fun normalizeEdition(raw: String?): String {
+        return when (raw?.trim()?.lowercase(Locale.ROOT)) {
+            EDITION_STANDARD -> EDITION_STANDARD
+            EDITION_OMNIINFER -> EDITION_OMNIINFER
+            else -> if (BuildConfig.LOCAL_MODEL_FEATURE_ENABLED) EDITION_OMNIINFER else EDITION_STANDARD
+        }
+    }
+
+    private fun isEditionApkAsset(name: String, edition: String): Boolean {
+        return name.lowercase(Locale.ROOT).endsWith("-$edition.apk")
+    }
+
+    private fun isKnownEditionApkAsset(name: String): Boolean {
+        val normalized = name.lowercase(Locale.ROOT)
+        return normalized.endsWith("-$EDITION_STANDARD.apk") ||
+            normalized.endsWith("-$EDITION_OMNIINFER.apk")
     }
 
     private fun parseGithubTimeToMillis(raw: String?): Long {
