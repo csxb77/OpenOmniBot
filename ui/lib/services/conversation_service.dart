@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
+import 'package:ui/services/codex_app_server_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
 
 class ConversationService {
@@ -134,6 +135,32 @@ class ConversationService {
     int conversationId, {
     ConversationMode? mode,
   }) async {
+    if (mode == ConversationMode.codex) {
+      try {
+        await CodexAppServerService.archiveThread(
+          conversationId: conversationId,
+        );
+        final conversations = await getAllConversations(includeArchived: true);
+        final conversation = conversations
+            .where((item) => item.id == conversationId)
+            .cast<ConversationModel?>()
+            .firstWhere((item) => item != null, orElse: () => null);
+        if (conversation != null && !conversation.isArchived) {
+          await updateConversation(conversation.copyWith(isArchived: true));
+        }
+        await ConversationHistoryService.clearConversationThreadReferences(
+          conversationId,
+          mode: ConversationMode.codex,
+        );
+        await setCurrentConversationTarget(
+          await ConversationHistoryService.getLastVisibleThreadTarget(),
+        );
+        return true;
+      } catch (e) {
+        print('归档 Codex 对话失败: $e');
+        return false;
+      }
+    }
     try {
       final result = await _assistCore.invokeMethod<dynamic>(
         'deleteConversation',
@@ -170,11 +197,27 @@ class ConversationService {
   static Future<bool> archiveConversation(
     ConversationModel conversation,
   ) async {
+    if (conversation.mode == ConversationMode.codex) {
+      try {
+        await CodexAppServerService.archiveThread(
+          conversationId: conversation.id,
+        );
+      } catch (e) {
+        print('Codex 归档失败: $e');
+        return false;
+      }
+    }
     final archived = await updateConversation(
       conversation.copyWith(isArchived: true),
     );
     if (!archived) {
       return false;
+    }
+    if (conversation.mode == ConversationMode.codex) {
+      await ConversationHistoryService.clearConversationThreadReferences(
+        conversation.id,
+        mode: ConversationMode.codex,
+      );
     }
     await setCurrentConversationTarget(
       await ConversationHistoryService.getLastVisibleThreadTarget(),
@@ -185,6 +228,16 @@ class ConversationService {
   static Future<bool> unarchiveConversation(
     ConversationModel conversation,
   ) async {
+    if (conversation.mode == ConversationMode.codex) {
+      try {
+        await CodexAppServerService.unarchiveThread(
+          conversationId: conversation.id,
+        );
+      } catch (e) {
+        print('Codex 恢复失败: $e');
+        return false;
+      }
+    }
     return updateConversation(conversation.copyWith(isArchived: false));
   }
 
@@ -193,6 +246,18 @@ class ConversationService {
     required String newTitle,
     ConversationMode mode = ConversationMode.normal,
   }) async {
+    if (mode == ConversationMode.codex) {
+      try {
+        await CodexAppServerService.setThreadName(
+          conversationId: conversationId,
+          name: newTitle,
+        );
+        return true;
+      } catch (e) {
+        print('更新 Codex 对话标题失败: $e');
+        return false;
+      }
+    }
     try {
       final result = await _assistCore
           .invokeMethod<dynamic>('updateConversationTitle', {

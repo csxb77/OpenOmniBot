@@ -750,6 +750,7 @@ void main() {
     tester,
   ) async {
     var tapCount = 0;
+    var codexTapCount = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: DefaultAssetBundle(
@@ -768,6 +769,9 @@ void main() {
               onBrowserTap: () {},
               showAppUpdateIndicator: true,
               appUpdateTooltip: '发现新版本 v9.9.9',
+              onCodexTap: () {
+                codexTapCount += 1;
+              },
               onAppUpdateTap: () {
                 tapCount += 1;
               },
@@ -778,12 +782,30 @@ void main() {
     );
 
     final indicator = find.byKey(const ValueKey('chat-app-update-button'));
+    final codex = find.byKey(const ValueKey('chat-app-codex-button'));
+    final companion = find.byKey(const ValueKey('chat-app-companion-button'));
     expect(indicator, findsOneWidget);
+    expect(codex, findsOneWidget);
+    expect(companion, findsOneWidget);
+
+    expect(
+      tester.getRect(indicator).right,
+      lessThanOrEqualTo(tester.getRect(codex).left),
+    );
+    expect(
+      tester.getRect(codex).right,
+      lessThanOrEqualTo(tester.getRect(companion).left),
+    );
 
     await tester.tap(indicator);
     await tester.pumpAndSettle();
 
     expect(tapCount, 1);
+
+    await tester.tap(codex);
+    await tester.pumpAndSettle();
+
+    expect(codexTapCount, 1);
   });
 
   testWidgets('supports direct island swipe between model and tools layers', (

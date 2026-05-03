@@ -3128,6 +3128,12 @@ abstract class AppLocalizations {
   /// **'Python 包安装器'**
   String get alpinePipInstall;
 
+  /// No description provided for @alpineCodex.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenAI Codex CLI 与 app-server 桥接'**
+  String get alpineCodex;
+
   /// No description provided for @alpineSshClient.
   ///
   /// In zh, this message translates to:
@@ -3403,6 +3409,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'开发环境'**
   String get alpineDevEnv;
+
+  /// No description provided for @alpineAiAgent.
+  ///
+  /// In zh, this message translates to:
+  /// **'AI Agent'**
+  String get alpineAiAgent;
 
   /// No description provided for @alpineEnvConfig.
   ///

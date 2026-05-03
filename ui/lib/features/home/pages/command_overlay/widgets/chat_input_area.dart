@@ -59,6 +59,8 @@ const String _kLucideCommandSvg =
 
 enum RecordingState { idle, starting, recording, stopping, waitingServerStop }
 
+enum CodexPermissionMode { defaultMode, autoReview, fullAccess }
+
 class ChatInputAttachment {
   final String id;
   final String name;
@@ -114,6 +116,8 @@ class ChatInputArea extends StatefulWidget {
   final double? contextUsageRatio;
   final String? contextUsageTooltipMessage;
   final VoidCallback? onLongPressContextUsageRing;
+  final CodexPermissionMode? codexPermissionMode;
+  final ValueChanged<CodexPermissionMode>? onCodexPermissionModeChanged;
 
   const ChatInputArea({
     super.key,
@@ -140,6 +144,8 @@ class ChatInputArea extends StatefulWidget {
     this.contextUsageRatio,
     this.contextUsageTooltipMessage,
     this.onLongPressContextUsageRing,
+    this.codexPermissionMode,
+    this.onCodexPermissionModeChanged,
   });
 
   @override

@@ -209,6 +209,37 @@ object DatabaseHelper {
         }
     }
 
+    private val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `codex_thread_bindings` (
+                    `conversationId` INTEGER NOT NULL,
+                    `threadId` TEXT NOT NULL,
+                    `cwd` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`conversationId`)
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                `index_codex_thread_bindings_threadId`
+                ON `codex_thread_bindings` (`threadId`)
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS
+                `index_codex_thread_bindings_updatedAt`
+                ON `codex_thread_bindings` (`updatedAt`)
+                """.trimIndent()
+            )
+        }
+    }
+
     internal val ALL_MIGRATIONS = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
@@ -220,7 +251,8 @@ object DatabaseHelper {
         MIGRATION_8_9,
         MIGRATION_9_10,
         MIGRATION_10_11,
-        MIGRATION_11_12
+        MIGRATION_11_12,
+        MIGRATION_12_13
     )
 
     fun init(context: Context) {
@@ -833,6 +865,22 @@ object DatabaseHelper {
 
     suspend fun incrementConversationMessageCount(id: Long) {
         getDatabase().conversationDao().incrementMessageCount(id, System.currentTimeMillis())
+    }
+
+    suspend fun upsertCodexThreadBinding(binding: CodexThreadBinding) {
+        getDatabase().codexThreadBindingDao().upsert(binding)
+    }
+
+    suspend fun getCodexThreadBindingByConversationId(conversationId: Long): CodexThreadBinding? {
+        return getDatabase().codexThreadBindingDao().getByConversationId(conversationId)
+    }
+
+    suspend fun getCodexThreadBindingByThreadId(threadId: String): CodexThreadBinding? {
+        return getDatabase().codexThreadBindingDao().getByThreadId(threadId)
+    }
+
+    suspend fun deleteCodexThreadBindingByConversationId(conversationId: Long): Int {
+        return getDatabase().codexThreadBindingDao().deleteByConversationId(conversationId)
     }
 
     /**

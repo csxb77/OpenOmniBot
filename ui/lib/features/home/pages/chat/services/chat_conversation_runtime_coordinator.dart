@@ -14,6 +14,7 @@ import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/agent_stream_reducer.dart';
 import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/codex_event_reducer.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/link_preview_service.dart';
@@ -23,6 +24,7 @@ import 'package:ui/utils/data_parser.dart';
 
 const String kChatRuntimeModeNormal = 'normal';
 const String kChatRuntimeModeOpenClaw = 'openclaw';
+const String kChatRuntimeModeCodex = 'codex';
 const int _kStreamingTextChunkFlushThreshold = 5;
 
 enum _StreamingTextStreamKind {
@@ -199,6 +201,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   String _agentTextBaseId(String taskId) => '$taskId-text';
 
   final AgentStreamReducer _agentStreamReducer = const AgentStreamReducer();
+  final CodexEventReducer _codexEventReducer = const CodexEventReducer();
   final Map<String, ChatConversationRuntimeState> _runtimes =
       <String, ChatConversationRuntimeState>{};
   final Map<String, _TaskBinding> _taskBindings = <String, _TaskBinding>{};
@@ -424,6 +427,29 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       _clearStreamingTextBatchesForTask(runtime, taskId);
     }
     _taskBindings.remove(taskId);
+  }
+
+  CodexReduceResult applyCodexEvent({
+    required int conversationId,
+    required Map<String, dynamic> event,
+    ConversationModel? conversation,
+  }) {
+    ensureInitialized();
+    final runtime = ensureRuntime(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeCodex,
+      conversation: conversation,
+      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+    );
+    final result = _codexEventReducer.reduce(runtime: runtime, event: event);
+    if (result.handled) {
+      notifyListeners();
+      schedulePersistRuntimeConversation(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeCodex,
+      );
+    }
+    return result;
   }
 
   void clearPureChatThinking({
@@ -3092,6 +3118,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) {
     return mode == kChatRuntimeModeOpenClaw
         ? ConversationMode.openclaw
+        : mode == kChatRuntimeModeCodex
+        ? ConversationMode.codex
         : switch (conversation?.mode) {
             ConversationMode.chatOnly => ConversationMode.chatOnly,
             ConversationMode.subagent => ConversationMode.subagent,

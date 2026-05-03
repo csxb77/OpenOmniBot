@@ -1742,6 +1742,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alpinePipInstall => 'Python Package Installer';
 
   @override
+  String get alpineCodex => 'OpenAI Codex CLI and app-server bridge';
+
+  @override
   String get alpineSshClient => 'SSH Client';
 
   @override
@@ -1888,6 +1891,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alpineDevEnv => 'Dev Environment';
+
+  @override
+  String get alpineAiAgent => 'AI Agent';
 
   @override
   String get alpineEnvConfig => 'Environment Config';

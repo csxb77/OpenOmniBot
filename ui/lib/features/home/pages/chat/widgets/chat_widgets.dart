@@ -40,6 +40,15 @@ const String _chatAppBarAgentIconSvg =
     '<path d="M9 13v2"/>'
     '</svg>';
 
+const String _chatAppBarCodexIconSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="m16 18 6-6-6-6"/>'
+    '<path d="m8 6-6 6 6 6"/>'
+    '<path d="m14.5 4-5 16"/>'
+    '</svg>';
+
 const String _chatAppBarPureChatIconSvg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
     'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
@@ -86,6 +95,7 @@ const List<ChatSurfaceMode> kVisibleChatSurfaceModes = <ChatSurfaceMode>[
 class ChatAppBar extends StatelessWidget {
   final VoidCallback onMenuTap;
   final VoidCallback? onPureChatToggleTap;
+  final VoidCallback? onCodexTap;
   final VoidCallback onCompanionTap;
   final ChatSurfaceMode activeMode;
   final ValueChanged<ChatSurfaceMode> onModeChanged;
@@ -102,6 +112,10 @@ class ChatAppBar extends StatelessWidget {
   final String? activeToolType;
   final bool isCompanionModeEnabled;
   final bool isCompanionToggleLoading;
+  final bool isCodexReady;
+  final bool isCodexConnected;
+  final bool isCodexLoading;
+  final bool isCodexSelected;
   final bool showAppUpdateIndicator;
   final VoidCallback? onAppUpdateTap;
   final String? appUpdateTooltip;
@@ -117,6 +131,7 @@ class ChatAppBar extends StatelessWidget {
     super.key,
     required this.onMenuTap,
     this.onPureChatToggleTap,
+    this.onCodexTap,
     required this.onCompanionTap,
     required this.activeMode,
     required this.onModeChanged,
@@ -133,6 +148,10 @@ class ChatAppBar extends StatelessWidget {
     this.activeToolType,
     this.isCompanionModeEnabled = false,
     this.isCompanionToggleLoading = false,
+    this.isCodexReady = false,
+    this.isCodexConnected = false,
+    this.isCodexLoading = false,
+    this.isCodexSelected = false,
     this.showAppUpdateIndicator = false,
     this.onAppUpdateTap,
     this.appUpdateTooltip,
@@ -169,7 +188,7 @@ class ChatAppBar extends StatelessWidget {
                             _kChatAppBarAccessoryGap * 2
                       : 0);
               final rightReservedSpace =
-                  ((showAppUpdateIndicator ? 2 : 1) *
+                  ((showAppUpdateIndicator ? 3 : 2) *
                       _kChatAppBarRightActionSlotWidth) +
                   _kChatAppBarAccessoryGap;
               final symmetricReservedSpace = math.max(
@@ -335,6 +354,72 @@ class ChatAppBar extends StatelessWidget {
                             ),
                           ),
                         GestureDetector(
+                          key: const ValueKey('chat-app-codex-button'),
+                          onTap: isCodexLoading ? null : onCodexTap,
+                          child: Tooltip(
+                            message: isCodexLoading
+                                ? (Localizations.localeOf(
+                                            context,
+                                          ).languageCode ==
+                                          'en'
+                                      ? 'Checking Codex'
+                                      : '正在检测 Codex')
+                                : isCodexReady
+                                ? (isCodexConnected
+                                      ? 'Codex'
+                                      : (Localizations.localeOf(
+                                                  context,
+                                                ).languageCode ==
+                                                'en'
+                                            ? 'Connect Codex'
+                                            : '连接 Codex'))
+                                : (Localizations.localeOf(
+                                            context,
+                                          ).languageCode ==
+                                          'en'
+                                      ? 'Install Codex'
+                                      : '安装 Codex'),
+                            child: Container(
+                              color: Colors.transparent,
+                              padding: const EdgeInsets.all(15),
+                              child: isCodexLoading
+                                  ? SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              isCodexSelected || isCodexReady
+                                                  ? (context.isDarkTheme
+                                                        ? palette.accentPrimary
+                                                        : const Color(
+                                                            0xFF46535B,
+                                                          ))
+                                                  : iconTint,
+                                            ),
+                                      ),
+                                    )
+                                  : SvgPicture.string(
+                                      _chatAppBarCodexIconSvg,
+                                      width: 20,
+                                      height: 20,
+                                      colorFilter: ColorFilter.mode(
+                                        isCodexSelected
+                                            ? (context.isDarkTheme
+                                                  ? palette.accentPrimary
+                                                  : const Color(0xFF46535B))
+                                            : isCodexReady
+                                            ? iconTint
+                                            : iconTint.withValues(alpha: 0.45),
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          key: const ValueKey('chat-app-companion-button'),
                           onTap: isCompanionToggleLoading
                               ? null
                               : onCompanionTap,
@@ -1845,6 +1930,8 @@ class ChatInputWrapper extends StatelessWidget {
   final String? contextUsageTooltipMessage;
   final VoidCallback? onLongPressContextUsageRing;
   final ValueChanged<double>? onInputHeightChanged;
+  final CodexPermissionMode? codexPermissionMode;
+  final ValueChanged<CodexPermissionMode>? onCodexPermissionModeChanged;
   final bool translucent;
 
   const ChatInputWrapper({
@@ -1872,6 +1959,8 @@ class ChatInputWrapper extends StatelessWidget {
     this.contextUsageTooltipMessage,
     this.onLongPressContextUsageRing,
     this.onInputHeightChanged,
+    this.codexPermissionMode,
+    this.onCodexPermissionModeChanged,
     this.translucent = false,
   });
 
@@ -1907,6 +1996,8 @@ class ChatInputWrapper extends StatelessWidget {
             contextUsageRatio: contextUsageRatio,
             contextUsageTooltipMessage: contextUsageTooltipMessage,
             onLongPressContextUsageRing: onLongPressContextUsageRing,
+            codexPermissionMode: codexPermissionMode,
+            onCodexPermissionModeChanged: onCodexPermissionModeChanged,
             onInputHeightChanged: onInputHeightChanged,
           ),
         ],

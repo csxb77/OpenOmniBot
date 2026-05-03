@@ -15,6 +15,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   static const double _kChatInputWrapperTopPadding = 8.0;
   static const double _kChatInputFallbackHeight = 80.0;
 
+  ChatPageMode get _primaryChatMessagePageMode =>
+      _activeMode == ChatPageMode.codex
+      ? ChatPageMode.codex
+      : ChatPageMode.normal;
+
   double _resolveNormalSurfaceComposerInset({
     required double inputBottomPadding,
     required double keyboardSpacer,
@@ -867,6 +872,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               onPureChatToggleTap: () {
                 unawaited(_togglePureChatConversationMode());
               },
+              onCodexTap: () {
+                unawaited(_handleCodexTap());
+              },
               onCompanionTap: () {
                 unawaited(_toggleCompanionMode());
               },
@@ -874,10 +882,14 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               onModeChanged: (value) {
                 unawaited(_switchChatMode(value, syncPage: true));
               },
-              activeModelId: appBarMode == ChatSurfaceMode.normal
+              activeModelId:
+                  appBarMode == ChatSurfaceMode.normal &&
+                      _activeMode == ChatPageMode.normal
                   ? _activeNormalChatModelId
                   : null,
-              onModelTap: appBarMode == ChatSurfaceMode.normal
+              onModelTap:
+                  appBarMode == ChatSurfaceMode.normal &&
+                      _activeMode == ChatPageMode.normal
                   ? (anchorContext) {
                       unawaited(_openConversationModelSelector(anchorContext));
                     }
@@ -897,6 +909,10 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               activeToolType: _lastAgentToolType,
               isCompanionModeEnabled: _isCompanionModeEnabled,
               isCompanionToggleLoading: _isCompanionToggleLoading,
+              isCodexReady: _codexStatus.ready,
+              isCodexConnected: _codexStatus.connected,
+              isCodexLoading: _isCodexStatusLoading,
+              isCodexSelected: _activeMode == ChatPageMode.codex,
               showAppUpdateIndicator: showAppUpdateIndicator,
               appUpdateTooltip: appUpdateTooltip,
               onAppUpdateTap: showAppUpdateIndicator
@@ -973,6 +989,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       onLongPressContextUsageRing:
                           _activeMode == ChatPageMode.normal
                           ? _handleContextUsageRingLongPress
+                          : null,
+                      codexPermissionMode: _activeMode == ChatPageMode.codex
+                          ? _codexPermissionMode
+                          : null,
+                      onCodexPermissionModeChanged:
+                          _activeMode == ChatPageMode.codex
+                          ? (mode) {
+                              setState(() {
+                                _codexPermissionMode = mode;
+                              });
+                            }
                           : null,
                       onInputHeightChanged: _handleInputAreaHeightChanged,
                       onClearSelectedModelOverride:
@@ -1234,7 +1261,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           keyboardSpacer: keyboardSpacer,
                           commandPanelBottomOffset: commandPanelBottomOffset,
                           conversationBody: _buildModeMessagePage(
-                            ChatPageMode.normal,
+                            _primaryChatMessagePageMode,
                             backgroundConfig,
                             visualProfile,
                             bottomOverlayInset:
@@ -1423,7 +1450,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                                                 _handleModePageChanged,
                                             children: [
                                               _buildModeMessagePage(
-                                                ChatPageMode.normal,
+                                                _primaryChatMessagePageMode,
                                                 backgroundConfig,
                                                 visualProfile,
                                                 bottomOverlayInset:

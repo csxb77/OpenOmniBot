@@ -406,6 +406,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return;
     }
 
+    if (_activeConversationMode == ChatPageMode.codex) {
+      await _sendCodexMessage(messageIds.aiMessageId, messageText);
+      return;
+    }
+
     try {
       await _ensureActiveConversationReadyForStreaming();
     } catch (_) {
@@ -863,6 +868,24 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   void _onCancelTask() {
     try {
+      if (_activeConversationMode == ChatPageMode.codex) {
+        unawaited(_interruptCodexTurn());
+        final taskId =
+            _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
+        if (taskId != null) {
+          _runtimeCoordinator.unregisterTask(taskId);
+        }
+        setState(() {
+          _isAiResponding = false;
+          _isContextCompressing = false;
+          _isCheckingExecutableTask = false;
+          _isExecutingTask = false;
+          _isInputAreaVisible = true;
+          _currentDispatchTaskId = null;
+          _messages.removeWhere((msg) => msg.isLoading);
+        });
+        return;
+      }
       if (_currentDispatchTaskId != null ||
           _activeRuntime?.lastAgentTaskId != null ||
           _isCheckingExecutableTask ||
