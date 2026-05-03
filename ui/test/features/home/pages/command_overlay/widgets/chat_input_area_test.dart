@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 
 void main() {
@@ -119,9 +120,15 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(
-      find.byKey(const ValueKey('chat-input-codex-permission-button')),
+    final permissionButton = find.byKey(
+      const ValueKey('chat-input-codex-permission-button'),
     );
+    expect(
+      find.descendant(of: permissionButton, matching: find.byType(SvgPicture)),
+      findsOneWidget,
+    );
+
+    await tester.tap(permissionButton);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
@@ -143,6 +150,17 @@ void main() {
       ),
       findsOneWidget,
     );
+    for (final mode in CodexPermissionMode.values) {
+      expect(
+        find.descendant(
+          of: find.byKey(
+            ValueKey('chat-input-codex-permission-option-${mode.name}'),
+          ),
+          matching: find.byType(SvgPicture),
+        ),
+        findsOneWidget,
+      );
+    }
 
     await tester.tap(
       find.byKey(

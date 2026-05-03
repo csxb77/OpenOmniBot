@@ -57,6 +57,13 @@ const String _kLucideCommandSvg =
     '<path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/>'
     '</svg>';
 
+const String _kCodexPermissionDefaultIconAsset =
+    'assets/home/chat/permission_hand.svg';
+const String _kCodexPermissionAutoReviewIconAsset =
+    'assets/home/chat/codex.svg';
+const String _kCodexPermissionFullAccessIconAsset =
+    'assets/home/chat/permission_shield_alert.svg';
+
 enum RecordingState { idle, starting, recording, stopping, waitingServerStop }
 
 enum CodexPermissionMode { defaultMode, autoReview, fullAccess }

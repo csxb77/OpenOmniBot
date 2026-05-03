@@ -881,7 +881,7 @@ void main() {
     expect(codexTapCount, 1);
   });
 
-  testWidgets('tints codex icon with theme color when selected', (
+  testWidgets('tints and enlarges codex icon with theme color when selected', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -919,6 +919,8 @@ void main() {
       codexIcon.colorFilter,
       const ColorFilter.mode(Color(0xFF2C7FEB), BlendMode.srcIn),
     );
+    expect(codexIcon.width, 22);
+    expect(codexIcon.height, 22);
   });
 
   testWidgets('supports direct island swipe between model and tools layers', (

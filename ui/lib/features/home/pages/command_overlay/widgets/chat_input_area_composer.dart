@@ -739,8 +739,8 @@ mixin _ChatInputAreaComposerMixin
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      _codexPermissionIcon(mode),
+                    _buildCodexPermissionIcon(
+                      mode,
                       size: 18,
                       color: isSelected ? selectedColor : inactiveColor,
                     ),
@@ -789,10 +789,12 @@ mixin _ChatInputAreaComposerMixin
               : const Color(0xFFEAF1FF),
           shape: BoxShape.circle,
         ),
-        child: Icon(
-          _codexPermissionIcon(selected),
-          size: iconSize,
-          color: selectedColor,
+        child: Center(
+          child: _buildCodexPermissionIcon(
+            selected,
+            size: iconSize,
+            color: selectedColor,
+          ),
         ),
       ),
     );
@@ -814,12 +816,25 @@ mixin _ChatInputAreaComposerMixin
     };
   }
 
-  IconData _codexPermissionIcon(CodexPermissionMode mode) {
+  String _codexPermissionIconAsset(CodexPermissionMode mode) {
     return switch (mode) {
-      CodexPermissionMode.defaultMode => Icons.shield_outlined,
-      CodexPermissionMode.autoReview => Icons.fact_check_outlined,
-      CodexPermissionMode.fullAccess => Icons.lock_open_rounded,
+      CodexPermissionMode.defaultMode => _kCodexPermissionDefaultIconAsset,
+      CodexPermissionMode.autoReview => _kCodexPermissionAutoReviewIconAsset,
+      CodexPermissionMode.fullAccess => _kCodexPermissionFullAccessIconAsset,
     };
+  }
+
+  Widget _buildCodexPermissionIcon(
+    CodexPermissionMode mode, {
+    required double size,
+    required Color color,
+  }) {
+    return SvgPicture.asset(
+      _codexPermissionIconAsset(mode),
+      width: size,
+      height: size,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
   }
 
   Widget _buildMicControlButton({required double iconSize}) {

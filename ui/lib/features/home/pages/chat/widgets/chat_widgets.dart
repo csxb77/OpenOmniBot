@@ -14,85 +14,15 @@ import '../../command_overlay/widgets/message_bubble.dart';
 import '../../command_overlay/widgets/chat_input_area.dart';
 import 'agent_run_group_message.dart';
 
-const String _chatAppBarUpdateSparklesSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 '
-    '1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 '
-    '1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-'
-    '1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-'
-    '1.594z"/>'
-    '<path d="M20 2v4"/>'
-    '<path d="M22 4h-4"/>'
-    '<circle cx="4" cy="20" r="2"/>'
-    '</svg>';
-
-const String _chatAppBarAgentIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M12 8V4H8"/>'
-    '<rect width="16" height="12" x="4" y="8" rx="2"/>'
-    '<path d="M2 14h2"/>'
-    '<path d="M20 14h2"/>'
-    '<path d="M15 13v2"/>'
-    '<path d="M9 13v2"/>'
-    '</svg>';
-
-const String _chatAppBarCodexIconSvg =
-    '<svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" '
-    'width="1em" xmlns="http://www.w3.org/2000/svg">'
-    '<title>Codex</title>'
-    '<path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 '
-    '2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 '
-    '013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 '
-    '1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607 '
-    '.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 '
-    '4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 '
-    '1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-'
-    '1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 '
-    '0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-'
-    '.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 '
-    '00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 '
-    '3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-'
-    '1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-'
-    '.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 '
-    '011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 '
-    '100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-'
-    '1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64'
-    'L8.462 9.23z" fill="currentColor"></path>'
-    '</svg>';
-
-const String _chatAppBarModeMenuClosedIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M3 5h8"/>'
-    '<path d="M3 12h8"/>'
-    '<path d="M3 19h8"/>'
-    '<path d="m15 8 3-3 3 3"/>'
-    '<path d="m15 16 3 3 3-3"/>'
-    '</svg>';
-
-const String _chatAppBarModeMenuOpenIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M3 5h8"/>'
-    '<path d="M3 12h8"/>'
-    '<path d="M3 19h8"/>'
-    '<path d="m15 5 3 3 3-3"/>'
-    '<path d="m15 19 3-3 3 3"/>'
-    '</svg>';
-
-const String _chatAppBarPureChatIconSvg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-    'stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202'
-    'A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/>'
-    '</svg>';
+const String _kChatAppBarUpdateSparklesAsset =
+    'assets/home/chat/update_sparkles.svg';
+const String _kChatAppBarAgentIconAsset = 'assets/home/chat/agent.svg';
+const String _kChatAppBarCodexIconAsset = 'assets/home/chat/codex.svg';
+const String _kChatAppBarModeMenuClosedIconAsset =
+    'assets/home/chat/mode_menu_closed.svg';
+const String _kChatAppBarModeMenuOpenIconAsset =
+    'assets/home/chat/mode_menu_open.svg';
+const String _kChatAppBarPureChatIconAsset = 'assets/home/chat/pure_chat.svg';
 
 const List<Color> _kDarkChatAccentGradient = <Color>[
   Color(0xFFAA9774),
@@ -331,8 +261,8 @@ class ChatAppBar extends StatelessWidget {
                               child: Container(
                                 color: Colors.transparent,
                                 padding: const EdgeInsets.all(15),
-                                child: SvgPicture.string(
-                                  _chatAppBarUpdateSparklesSvg,
+                                child: SvgPicture.asset(
+                                  _kChatAppBarUpdateSparklesAsset,
                                   width: 18,
                                   height: 18,
                                   colorFilter: const ColorFilter.mode(
@@ -521,7 +451,7 @@ class _ChatAppBarModeShortcutButtonState
         height: 40,
         padding: EdgeInsets.zero,
         child: _ChatAppBarModeShortcutMenuIcon(
-          iconSvg: _chatAppBarCodexIconSvg,
+          iconAsset: _kChatAppBarCodexIconAsset,
           tooltip: isEnglish ? 'Codex mode' : 'Codex 模式',
           selected: widget.isCodexSelected,
           selectedColor: selectedColor,
@@ -535,7 +465,7 @@ class _ChatAppBarModeShortcutButtonState
         height: 40,
         padding: EdgeInsets.zero,
         child: _ChatAppBarModeShortcutMenuIcon(
-          iconSvg: _chatAppBarPureChatIconSvg,
+          iconAsset: _kChatAppBarPureChatIconAsset,
           tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
           selected: widget.isPureChatSelected,
           selectedColor: selectedColor,
@@ -547,14 +477,14 @@ class _ChatAppBarModeShortcutButtonState
     ];
   }
 
-  String _closedIconSvg() {
+  String _closedIconAsset() {
     if (widget.isCodexSelected) {
-      return _chatAppBarCodexIconSvg;
+      return _kChatAppBarCodexIconAsset;
     }
     if (widget.isPureChatSelected) {
-      return _chatAppBarPureChatIconSvg;
+      return _kChatAppBarPureChatIconAsset;
     }
-    return _chatAppBarModeMenuClosedIconSvg;
+    return _kChatAppBarModeMenuClosedIconAsset;
   }
 
   Widget _buildClosedIcon(Color color) {
@@ -568,17 +498,18 @@ class _ChatAppBarModeShortcutButtonState
         ),
       );
     }
-    return SvgPicture.string(
-      _closedIconSvg(),
-      width: 20,
-      height: 20,
+    final iconSize = widget.isCodexSelected ? 22.0 : 20.0;
+    return SvgPicture.asset(
+      _closedIconAsset(),
+      width: iconSize,
+      height: iconSize,
       colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
     );
   }
 
   Widget _buildOpenIcon(Color color) {
-    return SvgPicture.string(
-      _chatAppBarModeMenuOpenIconSvg,
+    return SvgPicture.asset(
+      _kChatAppBarModeMenuOpenIconAsset,
       width: 20,
       height: 20,
       colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
@@ -617,14 +548,14 @@ class _ChatAppBarModeShortcutButtonState
 
 class _ChatAppBarModeShortcutMenuIcon extends StatelessWidget {
   const _ChatAppBarModeShortcutMenuIcon({
-    required this.iconSvg,
+    required this.iconAsset,
     required this.tooltip,
     required this.selected,
     required this.selectedColor,
     required this.iconTint,
   });
 
-  final String iconSvg;
+  final String iconAsset;
   final String tooltip;
   final bool selected;
   final Color selectedColor;
@@ -639,10 +570,10 @@ class _ChatAppBarModeShortcutMenuIcon extends StatelessWidget {
         width: 40,
         height: 40,
         child: Center(
-          child: SvgPicture.string(
-            iconSvg,
-            width: 18,
-            height: 18,
+          child: SvgPicture.asset(
+            iconAsset,
+            width: 20,
+            height: 20,
             colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
           ),
         ),
@@ -693,35 +624,10 @@ class _ChatModeModelSwitcher extends StatefulWidget {
 }
 
 class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
-  static const String _terminalIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round">'
-      '<path d="m7 11 2-2-2-2"/>'
-      '<path d="M11 13h4"/>'
-      '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>'
-      '</svg>';
-  static const String _browserIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'fill="none" viewBox="0 0 24 24">'
-      '<path stroke="currentColor" stroke-linecap="round" '
-      'stroke-linejoin="round" '
-      'd="M12 8C9.79086 8 8 9.79086 8 12C8 12.7286 8.19479 13.4117 8.53513 14'
-      'M12 8C14.2091 8 16 9.79086 16 12C16 13.0144 15.6224 13.9407 15 14.6458'
-      'M12 8H20.0645M15 14.6458C14.2671 15.4762 13.1947 16 12 16C10.5194 16 '
-      '9.22675 15.1956 8.53513 14M15 14.6458L10.7394 20.9124'
-      'M8.53513 14L4.36907 7.22607M4.36907 7.22607C3.50156 8.60982 3 10.2463 '
-      '3 12C3 16.5427 6.36566 20.2994 10.7394 20.9124M4.36907 7.22607'
-      'C5.9604 4.68775 8.7831 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 '
-      '16.9706 21 12 21C11.5722 21 11.1513 20.9702 10.7394 20.9124"/>'
-      '</svg>';
-  static const String _environmentIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round">'
-      '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/>'
-      '<path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>'
-      '</svg>';
+  static const String _terminalIconAsset = 'assets/home/chat/terminal.svg';
+  static const String _browserIconAsset = 'assets/home/chat/browser.svg';
+  static const String _environmentIconAsset =
+      'assets/home/chat/environment.svg';
   static const Duration _switchDuration = Duration(milliseconds: 460);
   static const double _verticalSwitchThreshold = 10;
   static const double _verticalVelocityThreshold = 240;
@@ -881,9 +787,9 @@ class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
       },
     );
     final toolLayerWidget = _ChatToolSlider(
-      environmentIconSvg: _environmentIconSvg,
-      terminalIconSvg: _terminalIconSvg,
-      browserIconSvg: _browserIconSvg,
+      environmentIconAsset: _environmentIconAsset,
+      terminalIconAsset: _terminalIconAsset,
+      browserIconAsset: _browserIconAsset,
       activeToolType: widget.activeToolType,
       hasTerminalEnvironment: widget.hasTerminalEnvironment,
       onTerminalEnvironmentTap: (anchorContext) {
@@ -988,9 +894,9 @@ class _ChatModeModelSwitcherState extends State<_ChatModeModelSwitcher> {
 }
 
 class _ChatToolSlider extends StatelessWidget {
-  final String environmentIconSvg;
-  final String terminalIconSvg;
-  final String browserIconSvg;
+  final String environmentIconAsset;
+  final String terminalIconAsset;
+  final String browserIconAsset;
   final String? activeToolType;
   final bool hasTerminalEnvironment;
   final ValueChanged<BuildContext> onTerminalEnvironmentTap;
@@ -1001,9 +907,9 @@ class _ChatToolSlider extends StatelessWidget {
   final AppBackgroundVisualProfile visualProfile;
 
   const _ChatToolSlider({
-    required this.environmentIconSvg,
-    required this.terminalIconSvg,
-    required this.browserIconSvg,
+    required this.environmentIconAsset,
+    required this.terminalIconAsset,
+    required this.browserIconAsset,
     this.activeToolType,
     required this.hasTerminalEnvironment,
     required this.onTerminalEnvironmentTap,
@@ -1068,8 +974,8 @@ class _ChatToolSlider extends StatelessWidget {
                         ? 'Open terminal'
                         : '打开终端',
                     onTap: onTerminalTap,
-                    child: SvgPicture.string(
-                      terminalIconSvg,
+                    child: SvgPicture.asset(
+                      terminalIconAsset,
                       width: 16,
                       height: 16,
                     ),
@@ -1089,8 +995,8 @@ class _ChatToolSlider extends StatelessWidget {
                               ? 'No browser session available'
                               : '当前会话还没有可用的浏览器会话'),
                     onTap: onBrowserTap,
-                    child: SvgPicture.string(
-                      browserIconSvg,
+                    child: SvgPicture.asset(
+                      browserIconAsset,
                       width: 16,
                       height: 16,
                     ),
@@ -1133,8 +1039,8 @@ class _ChatToolSlider extends StatelessWidget {
                 alignment: Alignment.center,
                 child: ColorFiltered(
                   colorFilter: ColorFilter.mode(inactiveColor, BlendMode.srcIn),
-                  child: SvgPicture.string(
-                    environmentIconSvg,
+                  child: SvgPicture.asset(
+                    environmentIconAsset,
                     width: 15,
                     height: 15,
                   ),
@@ -1210,15 +1116,8 @@ class ChatModeSlider extends StatefulWidget {
 }
 
 class _ChatModeSliderState extends State<ChatModeSlider> {
-  static const String _workspaceIconSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
-      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
-      'stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folders-icon lucide-folders">'
-      '<path d="M20 5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5a1.5 1.5 0 0 1 1.2.6l.6.8a1.5 1.5 0 0 0 1.2.6z"/>'
-      '<path d="M3 8.268a2 2 0 0 0-1 1.738V19a2 2 0 0 0 2 2h11a2 2 0 0 0 1.732-1"/>'
-      '</svg>';
-
-  static const String _normalChatIconSvg = _chatAppBarAgentIconSvg;
+  static const String _workspaceIconAsset = 'assets/home/chat/workspace.svg';
+  static const String _normalChatIconAsset = _kChatAppBarAgentIconAsset;
 
   double _dragDelta = 0;
 
@@ -1308,8 +1207,8 @@ class _ChatModeSliderState extends State<ChatModeSlider> {
                 Expanded(
                   child: _buildModeIcon(
                     isSelected: widget.activeMode == ChatSurfaceMode.normal,
-                    child: SvgPicture.string(
-                      _normalChatIconSvg,
+                    child: SvgPicture.asset(
+                      _normalChatIconAsset,
                       width: 16,
                       height: 16,
                     ),
@@ -1318,8 +1217,8 @@ class _ChatModeSliderState extends State<ChatModeSlider> {
                 Expanded(
                   child: _buildModeIcon(
                     isSelected: widget.activeMode == ChatSurfaceMode.workspace,
-                    child: SvgPicture.string(
-                      _workspaceIconSvg,
+                    child: SvgPicture.asset(
+                      _workspaceIconAsset,
                       width: 16,
                       height: 16,
                     ),
