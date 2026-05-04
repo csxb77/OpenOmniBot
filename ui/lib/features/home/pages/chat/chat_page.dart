@@ -392,7 +392,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   double? _hdPadLeftPaneWidth;
   double? _hdPadRightPaneWidth;
   bool _hdPadLeftPaneCollapsed = false;
+  bool _hdPadRightPaneCollapsed = false;
   bool _isHdPadPaneDragging = false;
+  double? _hdPadPaneDragStartWidth;
+  double _hdPadPaneDragDelta = 0;
   final GlobalKey<OmnibotWorkspaceBrowserState> _hdPadWorkspaceBrowserKey =
       GlobalKey<OmnibotWorkspaceBrowserState>();
 
@@ -499,8 +502,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   double get _normalSurfaceVisibility =>
       (1.0 - _surfacePageProgress).clamp(0.0, 1.0).toDouble();
   bool _isHdPadLandscapeForMediaQuery(MediaQueryData mediaQuery) {
-    final size = mediaQuery.size;
-    return size.width > size.height;
+    return isHdPadLandscapeViewport(mediaQuery.size);
   }
 
   void _loadHdPadPanePreferences() {
@@ -527,6 +529,12 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     }
   }
 
+  void _resetHdPadPaneDragState() {
+    _isHdPadPaneDragging = false;
+    _hdPadPaneDragStartWidth = null;
+    _hdPadPaneDragDelta = 0;
+  }
+
   void _handleEmbeddedDrawerThreadTargetSelected(
     ConversationThreadTarget target,
   ) {
@@ -537,7 +545,16 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   void _toggleHdPadLeftPaneCollapsed() {
     _dismissChatInputFocus();
     setState(() {
+      _resetHdPadPaneDragState();
       _hdPadLeftPaneCollapsed = !_hdPadLeftPaneCollapsed;
+    });
+  }
+
+  void _toggleHdPadRightPaneCollapsed() {
+    _dismissChatInputFocus();
+    setState(() {
+      _resetHdPadPaneDragState();
+      _hdPadRightPaneCollapsed = !_hdPadRightPaneCollapsed;
     });
   }
 

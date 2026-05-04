@@ -14,6 +14,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   ChatPaneOverlayAnchorGeometry? _lastStableToolActivityAnchorGeometry;
   static const double _kChatInputWrapperTopPadding = 8.0;
   static const double _kChatInputFallbackHeight = 80.0;
+  static const double _kHdPadPaneCollapseWidthRatio = 0.12;
+  static const double _kHdPadPaneCollapseMinWidthFactor = 0.72;
 
   ChatPageMode get _primaryChatMessagePageMode =>
       _activeMode == ChatPageMode.codex
@@ -34,6 +36,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         inputBottomPadding +
         keyboardSpacer +
         _kChatMessageBottomSafeSpacing;
+  }
+
+  double _resolveHdPadPaneCollapseThreshold({
+    required double availableWidth,
+    required double minPaneWidth,
+  }) {
+    final ratioThreshold = availableWidth * _kHdPadPaneCollapseWidthRatio;
+    final minWidthThreshold = minPaneWidth * _kHdPadPaneCollapseMinWidthFactor;
+    return math
+        .min(minPaneWidth - 1, math.max(ratioThreshold, minWidthThreshold))
+        .toDouble();
   }
 
   void _scheduleSlashCommandPanelInsetSync(bool visible) {
@@ -897,6 +910,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required Widget child,
     required bool translucent,
     required AppBackgroundVisualProfile visualProfile,
+    bool showBorder = true,
+    bool showShadow = true,
   }) {
     final palette = context.omniPalette;
     return DecoratedBox(
@@ -907,18 +922,22 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           opacity: translucent ? 0.72 : 1,
         ),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: translucent
-              ? visualProfile.islandBorderColor
-              : const Color(0xFFD9E6FB),
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x121A2433),
-            blurRadius: 28,
-            offset: Offset(0, 12),
-          ),
-        ],
+        border: showBorder
+            ? Border.all(
+                color: translucent
+                    ? visualProfile.islandBorderColor
+                    : const Color(0xFFD9E6FB),
+              )
+            : null,
+        boxShadow: showShadow
+            ? const [
+                BoxShadow(
+                  color: Color(0x121A2433),
+                  blurRadius: 28,
+                  offset: Offset(0, 12),
+                ),
+              ]
+            : null,
       ),
       child: ClipRRect(borderRadius: BorderRadius.circular(24), child: child),
     );
@@ -938,6 +957,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required bool showMenuButton,
     required bool showSurfaceSwitcher,
     required VoidCallback onMenuTap,
+    VoidCallback? onWorkspacePaneTap,
+    bool showWorkspacePaneButton = false,
   }) {
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
       List<ChatMessageModel>.from(_messages),
@@ -1007,6 +1028,31 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final appBarMode = showSurfaceSwitcher
         ? _activeSurfaceMode
         : ChatSurfaceMode.normal;
+    final activeAppBarModelId = appBarMode == ChatSurfaceMode.normal
+        ? switch (_activeMode) {
+            ChatPageMode.normal => _activeNormalChatModelId,
+            ChatPageMode.codex => _activeCodexModelId,
+            ChatPageMode.openclaw => null,
+          }
+        : null;
+    final ValueChanged<BuildContext>? onAppBarModelTap =
+        appBarMode == ChatSurfaceMode.normal
+        ? switch (_activeMode) {
+            ChatPageMode.normal => (anchorContext) {
+              unawaited(_openConversationModelSelector(anchorContext));
+            },
+            ChatPageMode.codex => (anchorContext) {
+              _messageController.value = const TextEditingValue(
+                text: '/model ',
+                selection: TextSelection.collapsed(offset: 7),
+              );
+              _inputFocusNode.requestFocus();
+              _handleSlashCommandInput();
+              unawaited(_loadCodexModelOptions());
+            },
+            ChatPageMode.openclaw => null,
+          }
+        : null;
     final bottomRegionBackgroundColor = !backgroundActive && context.isDarkTheme
         ? context.omniPalette.pageBackground
         : Colors.transparent;
@@ -1038,18 +1084,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               onModeChanged: (value) {
                 unawaited(_switchChatMode(value, syncPage: true));
               },
-              activeModelId:
-                  appBarMode == ChatSurfaceMode.normal &&
-                      _activeMode == ChatPageMode.normal
-                  ? _activeNormalChatModelId
-                  : null,
-              onModelTap:
-                  appBarMode == ChatSurfaceMode.normal &&
-                      _activeMode == ChatPageMode.normal
-                  ? (anchorContext) {
-                      unawaited(_openConversationModelSelector(anchorContext));
-                    }
-                  : null,
+              activeModelId: activeAppBarModelId,
+              onModelTap: onAppBarModelTap,
               displayLayer: _resolveChatPaneDisplayLayer(
                 showSurfaceSwitcher: showSurfaceSwitcher,
               ),
@@ -1087,6 +1123,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                   _activeMode == ChatPageMode.codex,
               isPureChatSelected: _isPureChatSelected,
               isPureChatToggleLocked: _isPureChatToggleLocked,
+              showWorkspacePaneButton: showWorkspacePaneButton,
+              onWorkspacePaneTap: onWorkspacePaneTap,
             ),
             Expanded(child: conversationBody),
           ],
@@ -1325,6 +1363,15 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           preferredLeftWidth: _hdPadLeftPaneWidth,
           preferredRightWidth: _hdPadRightPaneWidth,
           collapseLeftPane: _hdPadLeftPaneCollapsed,
+          collapseRightPane: _hdPadRightPaneCollapsed,
+        );
+        final leftCollapseThreshold = _resolveHdPadPaneCollapseThreshold(
+          availableWidth: availableWidth,
+          minPaneWidth: HdPadPaneLayoutResolver.minLeftWidth,
+        );
+        final rightCollapseThreshold = _resolveHdPadPaneCollapseThreshold(
+          availableWidth: availableWidth,
+          minPaneWidth: HdPadPaneLayoutResolver.minRightWidth,
         );
         final paneDuration = _isHdPadPaneDragging
             ? Duration.zero
@@ -1383,15 +1430,34 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                     ? const SizedBox.shrink()
                     : _PaneResizeHandle(
                         onDragStart: () {
-                          setState(() => _isHdPadPaneDragging = true);
-                        },
-                        onDragUpdate: (delta) {
                           setState(() {
-                            _hdPadLeftPaneWidth = layout.leftWidth + delta;
+                            _isHdPadPaneDragging = true;
+                            _hdPadPaneDragStartWidth = layout.leftWidth;
+                            _hdPadPaneDragDelta = 0;
                           });
                         },
+                        onDragUpdate: (delta) {
+                          _hdPadPaneDragDelta += delta;
+                          final nextWidth =
+                              (_hdPadPaneDragStartWidth ?? layout.leftWidth) +
+                              _hdPadPaneDragDelta;
+                          final shouldCollapse =
+                              nextWidth <= leftCollapseThreshold;
+                          setState(() {
+                            if (shouldCollapse) {
+                              _hdPadLeftPaneCollapsed = true;
+                              _resetHdPadPaneDragState();
+                            } else {
+                              _hdPadLeftPaneCollapsed = false;
+                              _hdPadLeftPaneWidth = nextWidth;
+                            }
+                          });
+                          if (shouldCollapse) {
+                            _persistHdPadPanePreferences();
+                          }
+                        },
                         onDragEnd: () {
-                          setState(() => _isHdPadPaneDragging = false);
+                          setState(_resetHdPadPaneDragState);
                           _persistHdPadPanePreferences();
                         },
                       ),
@@ -1434,36 +1500,88 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           showMenuButton: true,
                           showSurfaceSwitcher: false,
                           onMenuTap: _toggleHdPadLeftPaneCollapsed,
+                          showWorkspacePaneButton: _hdPadRightPaneCollapsed,
+                          onWorkspacePaneTap: _toggleHdPadRightPaneCollapsed,
                         );
                       },
                     ),
                   ),
                 ),
               ),
-              _PaneResizeHandle(
-                onDragStart: () {
-                  setState(() => _isHdPadPaneDragging = true);
-                },
-                onDragUpdate: (delta) {
-                  setState(() {
-                    _hdPadRightPaneWidth = layout.rightWidth - delta;
-                  });
-                },
-                onDragEnd: () {
-                  setState(() => _isHdPadPaneDragging = false);
-                  _persistHdPadPanePreferences();
-                },
+              AnimatedContainer(
+                duration: paneDuration,
+                curve: paneCurve,
+                width: _hdPadRightPaneCollapsed
+                    ? 0
+                    : HdPadPaneLayoutResolver.dividerHitWidth,
+                child: _hdPadRightPaneCollapsed
+                    ? const SizedBox.shrink()
+                    : _PaneResizeHandle(
+                        onDragStart: () {
+                          setState(() {
+                            _isHdPadPaneDragging = true;
+                            _hdPadPaneDragStartWidth = layout.rightWidth;
+                            _hdPadPaneDragDelta = 0;
+                          });
+                        },
+                        onDragUpdate: (delta) {
+                          _hdPadPaneDragDelta += delta;
+                          final nextWidth =
+                              (_hdPadPaneDragStartWidth ?? layout.rightWidth) -
+                              _hdPadPaneDragDelta;
+                          final shouldCollapse =
+                              nextWidth <= rightCollapseThreshold;
+                          setState(() {
+                            if (shouldCollapse) {
+                              _hdPadRightPaneCollapsed = true;
+                              _resetHdPadPaneDragState();
+                            } else {
+                              _hdPadRightPaneCollapsed = false;
+                              _hdPadRightPaneWidth = nextWidth;
+                            }
+                          });
+                          if (shouldCollapse) {
+                            _persistHdPadPanePreferences();
+                          }
+                        },
+                        onDragEnd: () {
+                          setState(_resetHdPadPaneDragState);
+                          _persistHdPadPanePreferences();
+                        },
+                      ),
               ),
               AnimatedContainer(
                 duration: paneDuration,
                 curve: paneCurve,
                 width: layout.rightWidth,
-                child: _buildPaneSurface(
-                  translucent: backgroundActive,
-                  visualProfile: visualProfile,
-                  child: _buildHdPadWorkspacePane(
-                    backgroundActive: backgroundActive,
-                    visualProfile: visualProfile,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.centerRight,
+                    minWidth: expandedLayout.rightWidth,
+                    maxWidth: expandedLayout.rightWidth,
+                    child: SizedBox(
+                      width: expandedLayout.rightWidth,
+                      child: IgnorePointer(
+                        ignoring: _hdPadRightPaneCollapsed,
+                        child: AnimatedSlide(
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeInOutCubic,
+                          offset: _hdPadRightPaneCollapsed
+                              ? const Offset(0.08, 0)
+                              : Offset.zero,
+                          child: _buildPaneSurface(
+                            translucent: backgroundActive,
+                            visualProfile: visualProfile,
+                            showBorder: false,
+                            showShadow: false,
+                            child: _buildHdPadWorkspacePane(
+                              backgroundActive: backgroundActive,
+                              visualProfile: visualProfile,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1507,7 +1625,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               canPop: false,
               onPopInvokedWithResult: (didPop, _) {
                 if (didPop) return;
-                if (isHdPadLandscape && _workspaceBrowserCanGoUp) {
+                if (isHdPadLandscape &&
+                    !_hdPadRightPaneCollapsed &&
+                    _workspaceBrowserCanGoUp) {
                   _hdPadWorkspaceBrowserKey.currentState?.openParentDirectory();
                   return;
                 }
@@ -2135,7 +2255,7 @@ class _PaneResizeHandle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      behavior: HitTestBehavior.translucent,
+      behavior: HitTestBehavior.opaque,
       onHorizontalDragStart: (_) => onDragStart?.call(),
       onHorizontalDragUpdate: (details) => onDragUpdate(details.delta.dx),
       onHorizontalDragEnd: (_) => onDragEnd?.call(),

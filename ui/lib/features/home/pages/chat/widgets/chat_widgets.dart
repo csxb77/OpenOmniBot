@@ -23,6 +23,8 @@ const String _kChatAppBarModeMenuClosedIconAsset =
 const String _kChatAppBarModeMenuOpenIconAsset =
     'assets/home/chat/mode_menu_open.svg';
 const String _kChatAppBarPureChatIconAsset = 'assets/home/chat/pure_chat.svg';
+const String _kChatAppBarWorkspaceIconAsset =
+    'assets/home/workspace_folder_icon.svg';
 
 const List<Color> _kDarkChatAccentGradient = <Color>[
   Color(0xFFAA9774),
@@ -79,6 +81,8 @@ class ChatAppBar extends StatelessWidget {
   final bool showPureChatToggle;
   final bool isPureChatSelected;
   final bool isPureChatToggleLocked;
+  final bool showWorkspacePaneButton;
+  final VoidCallback? onWorkspacePaneTap;
 
   const ChatAppBar({
     super.key,
@@ -117,6 +121,8 @@ class ChatAppBar extends StatelessWidget {
     this.showPureChatToggle = false,
     this.isPureChatSelected = false,
     this.isPureChatToggleLocked = true,
+    this.showWorkspacePaneButton = false,
+    this.onWorkspacePaneTap,
   });
 
   @override
@@ -133,20 +139,28 @@ class ChatAppBar extends StatelessWidget {
         ? _kChatAppBarPureChatIconAsset
         : _kChatAppBarAgentIconAsset;
     const updateTint = Color(0xFFD4A017);
+    final showWorkspaceButton =
+        showWorkspacePaneButton && onWorkspacePaneTap != null;
+    final appBarBackgroundColor = showSurfaceSwitcher
+        ? palette.pageBackground
+        : palette.surfacePrimary;
     return ColoredBox(
-      color: translucent ? Colors.transparent : palette.pageBackground,
+      key: const ValueKey('chat-app-bar-background'),
+      color: translucent ? Colors.transparent : appBarBackgroundColor,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: SizedBox(
           height: 50,
           child: LayoutBuilder(
             builder: (context, constraints) {
+              const leftActionRowWidth = _kChatAppBarAccessoryButtonSize;
               final leftReservedSpace =
                   (showMenuButton ? _kChatAppBarMenuButtonSize : 0) +
-                  _kChatAppBarAccessoryButtonSize +
+                  leftActionRowWidth +
                   _kChatAppBarAccessoryGap * 2;
               final rightActionCount =
                   (showAppUpdateIndicator ? 1 : 0) +
+                  (showWorkspaceButton ? 1 : 0) +
                   (showPureChatToggle ? 1 : 0);
               final rightReservedSpace =
                   rightActionCount * _kChatAppBarRightActionSlotWidth +
@@ -170,21 +184,19 @@ class ChatAppBar extends StatelessWidget {
                   ? _kChatAppBarMenuButtonSize + _kChatAppBarAccessoryGap
                   : _kChatAppBarAccessoryGap;
               final accessoryRightEdge = islandLeft - _kChatAppBarAccessoryGap;
-              final maxCompanionLeft =
-                  accessoryRightEdge - _kChatAppBarAccessoryButtonSize;
-              final centeredCompanionLeft =
-                  accessoryLeftEdge +
-                  ((accessoryRightEdge -
-                              accessoryLeftEdge -
-                              _kChatAppBarAccessoryButtonSize) /
-                          2)
-                      .clamp(0, double.infinity)
+              final accessoryAvailableWidth = math
+                  .max(0, accessoryRightEdge - accessoryLeftEdge)
+                  .toDouble();
+              final accessoryMaxLeft = math.max(
+                accessoryLeftEdge,
+                accessoryRightEdge - leftActionRowWidth,
+              );
+              final accessoryRowLeft =
+                  (accessoryLeftEdge +
+                          ((accessoryAvailableWidth - leftActionRowWidth) / 2)
+                              .clamp(0, double.infinity))
+                      .clamp(accessoryLeftEdge, accessoryMaxLeft)
                       .toDouble();
-              final companionLeft = maxCompanionLeft >= accessoryLeftEdge
-                  ? centeredCompanionLeft
-                        .clamp(accessoryLeftEdge, maxCompanionLeft)
-                        .toDouble()
-                  : accessoryLeftEdge;
 
               return Stack(
                 alignment: Alignment.center,
@@ -216,20 +228,22 @@ class ChatAppBar extends StatelessWidget {
                       ),
                     ),
                   Positioned(
-                    left: companionLeft,
+                    left: accessoryRowLeft,
                     top: 0,
                     bottom: 0,
-                    width: _kChatAppBarAccessoryButtonSize,
-                    child: Center(
-                      child: _ChatAppBarCompanionButton(
-                        isEnabled: isCompanionModeEnabled,
-                        isLoading: isCompanionToggleLoading,
-                        iconTint: iconTint,
-                        selectedColor: context.isDarkTheme
-                            ? palette.accentPrimary
-                            : const Color(0xFF1930D9),
-                        onTap: onCompanionTap,
-                      ),
+                    width: leftActionRowWidth.toDouble(),
+                    child: Row(
+                      children: [
+                        _ChatAppBarCompanionButton(
+                          isEnabled: isCompanionModeEnabled,
+                          isLoading: isCompanionToggleLoading,
+                          iconTint: iconTint,
+                          selectedColor: context.isDarkTheme
+                              ? palette.accentPrimary
+                              : const Color(0xFF1930D9),
+                          onTap: onCompanionTap,
+                        ),
+                      ],
                     ),
                   ),
                   Center(
@@ -280,6 +294,17 @@ class ChatAppBar extends StatelessWidget {
                                     BlendMode.srcIn,
                                   ),
                                 ),
+                              ),
+                            ),
+                          ),
+                        if (showWorkspaceButton)
+                          SizedBox(
+                            width: _kChatAppBarRightActionSlotWidth,
+                            height: _kChatAppBarRightActionSlotWidth,
+                            child: Center(
+                              child: _ChatAppBarWorkspaceButton(
+                                iconTint: iconTint,
+                                onTap: onWorkspacePaneTap!,
                               ),
                             ),
                           ),
@@ -360,6 +385,40 @@ class _ChatAppBarCompanionButton extends StatelessWidget {
                   height: 20,
                   colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatAppBarWorkspaceButton extends StatelessWidget {
+  const _ChatAppBarWorkspaceButton({
+    required this.iconTint,
+    required this.onTap,
+  });
+
+  final Color iconTint;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: LegacyTextLocalizer.isEnglish ? 'Show workspace' : '显示工作区',
+      child: GestureDetector(
+        key: const ValueKey('chat-app-bar-workspace-pane-button'),
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: _kChatAppBarAccessoryButtonSize,
+          height: _kChatAppBarAccessoryButtonSize,
+          child: Center(
+            child: SvgPicture.asset(
+              _kChatAppBarWorkspaceIconAsset,
+              width: 20,
+              height: 20,
+              colorFilter: ColorFilter.mode(iconTint, BlendMode.srcIn),
+            ),
+          ),
         ),
       ),
     );

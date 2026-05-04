@@ -209,6 +209,10 @@ class CodexAppServerService {
     return _invokeMap('collaborationMode/list');
   }
 
+  static Future<Map<String, dynamic>> readConfig() {
+    return _invokeMap('config/read');
+  }
+
   static Future<Map<String, dynamic>> steerTurn({
     String? threadId,
     int? conversationId,

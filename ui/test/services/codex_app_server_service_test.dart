@@ -78,7 +78,7 @@ void main() {
     expect(args['collaborationMode'], 'plan');
   });
 
-  test('lists codex models and collaboration modes', () async {
+  test('lists codex models, collaboration modes, and config', () async {
     final methods = <String>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
       methods.add(call.method);
@@ -87,7 +87,8 @@ void main() {
 
     await CodexAppServerService.listModels();
     await CodexAppServerService.listCollaborationModes();
+    await CodexAppServerService.readConfig();
 
-    expect(methods, ['model/list', 'collaborationMode/list']);
+    expect(methods, ['model/list', 'collaborationMode/list', 'config/read']);
   });
 }

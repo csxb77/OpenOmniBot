@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
+import 'package:ui/theme/theme_context.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -689,6 +690,89 @@ void main() {
     expect(islandRect.right, lessThan(modeMenuRect.left));
   });
 
+  testWidgets('uses page background when surface switcher is visible', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: Scaffold(
+            body: ChatAppBar(
+              onMenuTap: () {},
+              onCompanionTap: () {},
+              activeMode: ChatSurfaceMode.normal,
+              onModeChanged: (_) {},
+              activeModelId: 'gpt-5.4',
+              displayLayer: ChatIslandDisplayLayer.model,
+              onDisplayLayerChanged: (_) {},
+              onTerminalEnvironmentTap: (_) {},
+              onTerminalTap: () {},
+              onBrowserTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final appBarContext = tester.element(find.byType(ChatAppBar));
+    final rootSurface = tester.widget<ColoredBox>(
+      find.byKey(const ValueKey('chat-app-bar-background')),
+    );
+
+    expect(rootSurface.color, appBarContext.omniPalette.pageBackground);
+  });
+
+  testWidgets('shows workspace restore button before the right mode menu', (
+    tester,
+  ) async {
+    var tapCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: Scaffold(
+            body: ChatAppBar(
+              onMenuTap: () {},
+              onCompanionTap: () {},
+              activeMode: ChatSurfaceMode.normal,
+              onModeChanged: (_) {},
+              activeModelId: 'gpt-5.4',
+              displayLayer: ChatIslandDisplayLayer.model,
+              onDisplayLayerChanged: (_) {},
+              onTerminalEnvironmentTap: (_) {},
+              onTerminalTap: () {},
+              onBrowserTap: () {},
+              showPureChatToggle: true,
+              showWorkspacePaneButton: true,
+              onWorkspacePaneTap: () {
+                tapCount += 1;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final workspaceButton = find.byKey(
+      const ValueKey('chat-app-bar-workspace-pane-button'),
+    );
+    final island = find.byKey(const ValueKey('chat-app-bar-island'));
+    final modeMenu = find.byKey(
+      const ValueKey('chat-app-bar-pure-chat-button'),
+    );
+    final workspaceRect = tester.getRect(workspaceButton);
+    final islandRect = tester.getRect(island);
+    final modeMenuRect = tester.getRect(modeMenu);
+
+    expect(workspaceButton, findsOneWidget);
+    expect(islandRect.right, lessThan(workspaceRect.left));
+    expect(workspaceRect.right, lessThanOrEqualTo(modeMenuRect.left));
+
+    await tester.tap(workspaceButton);
+    expect(tapCount, 1);
+  });
+
   testWidgets('keeps swapped shortcuts clear of island on narrow screens', (
     tester,
   ) async {
@@ -1132,6 +1216,13 @@ void main() {
 
     expect(find.byType(ChatModeSlider), findsNothing);
     expect(find.text('gpt-5.4'), findsOneWidget);
+
+    final appBarContext = tester.element(find.byType(ChatAppBar));
+    final rootSurface = tester.widget<ColoredBox>(
+      find.byKey(const ValueKey('chat-app-bar-background')),
+    );
+
+    expect(rootSurface.color, appBarContext.omniPalette.surfacePrimary);
   });
 
   testWidgets(

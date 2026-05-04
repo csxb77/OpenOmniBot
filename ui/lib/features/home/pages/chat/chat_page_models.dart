@@ -1067,6 +1067,15 @@ class HdPadPaneLayout {
   final double rightWidth;
 }
 
+const double kHdPadMinShortestSide = 600;
+const double kHdPadMinLandscapeWidth = 960;
+
+bool isHdPadLandscapeViewport(Size size) {
+  return size.width > size.height &&
+      size.shortestSide >= kHdPadMinShortestSide &&
+      size.width >= kHdPadMinLandscapeWidth;
+}
+
 class HdPadPaneLayoutResolver {
   const HdPadPaneLayoutResolver();
 
@@ -1084,40 +1093,45 @@ class HdPadPaneLayoutResolver {
     double? preferredLeftWidth,
     double? preferredRightWidth,
     bool collapseLeftPane = false,
+    bool collapseRightPane = false,
   }) {
-    final dividerCount = collapseLeftPane ? 1 : 2;
+    final showLeftPane = !collapseLeftPane;
+    final showRightPane = !collapseRightPane;
+    final dividerCount = (showLeftPane ? 1 : 0) + (showRightPane ? 1 : 0);
     final availableWidth = math.max(
       0,
       totalWidth - dividerHitWidth * dividerCount,
     );
 
-    var leftWidth = collapseLeftPane
-        ? 0.0
-        : (preferredLeftWidth ?? defaultLeftWidth).clamp(
-            minLeftWidth,
-            maxLeftWidth,
-          );
-    var rightWidth = (preferredRightWidth ?? defaultRightWidth).clamp(
-      minRightWidth,
-      maxRightWidth,
-    );
+    var leftWidth = showLeftPane
+        ? (preferredLeftWidth ?? defaultLeftWidth)
+              .clamp(minLeftWidth, maxLeftWidth)
+              .toDouble()
+        : 0.0;
+    var rightWidth = showRightPane
+        ? (preferredRightWidth ?? defaultRightWidth)
+              .clamp(minRightWidth, maxRightWidth)
+              .toDouble()
+        : 0.0;
 
-    if (!collapseLeftPane) {
+    if (showLeftPane) {
       final maxLeftBySpace = math.max(
         minLeftWidth,
         availableWidth - rightWidth - minCenterWidth,
       );
-      leftWidth = leftWidth.clamp(minLeftWidth, maxLeftBySpace);
+      leftWidth = leftWidth.clamp(minLeftWidth, maxLeftBySpace).toDouble();
     }
 
-    final maxRightBySpace = math.max(
-      minRightWidth,
-      availableWidth - leftWidth - minCenterWidth,
-    );
-    rightWidth = rightWidth.clamp(minRightWidth, maxRightBySpace);
+    if (showRightPane) {
+      final maxRightBySpace = math.max(
+        minRightWidth,
+        availableWidth - leftWidth - minCenterWidth,
+      );
+      rightWidth = rightWidth.clamp(minRightWidth, maxRightBySpace).toDouble();
+    }
 
     var centerWidth = availableWidth - leftWidth - rightWidth;
-    if (centerWidth < minCenterWidth) {
+    if (showRightPane && centerWidth < minCenterWidth) {
       final rightFlexible = rightWidth - minRightWidth;
       if (rightFlexible > 0) {
         final delta = math.min(minCenterWidth - centerWidth, rightFlexible);
@@ -1125,7 +1139,7 @@ class HdPadPaneLayoutResolver {
         centerWidth += delta;
       }
     }
-    if (!collapseLeftPane && centerWidth < minCenterWidth) {
+    if (showLeftPane && centerWidth < minCenterWidth) {
       final leftFlexible = leftWidth - minLeftWidth;
       if (leftFlexible > 0) {
         final delta = math.min(minCenterWidth - centerWidth, leftFlexible);
@@ -1136,7 +1150,7 @@ class HdPadPaneLayoutResolver {
 
     return HdPadPaneLayout(
       leftWidth: leftWidth,
-      centerWidth: centerWidth,
+      centerWidth: math.max(0, centerWidth),
       rightWidth: centerWidth.isNegative ? 0 : rightWidth,
     );
   }

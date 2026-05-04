@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.lifecycle.lifecycleScope
 import cn.com.omnimind.baselib.util.OmniLog
@@ -54,6 +55,7 @@ class MainActivity : FlutterActivity() {
         val mainActivityStart = System.currentTimeMillis()
         OmniLog.d(TAG, "MainActivity onCreate start")
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
+        applyResponsiveOrientation()
         super.onCreate(savedInstanceState)
         val channelStart = System.currentTimeMillis()
         channelManager.onCreate(this)
@@ -126,6 +128,15 @@ class MainActivity : FlutterActivity() {
 
     override fun shouldHandleDeeplinking(): Boolean {
         return false
+    }
+
+    private fun applyResponsiveOrientation() {
+        val isTablet = resources.configuration.smallestScreenWidthDp >= 600
+        requestedOrientation = if (isTablet) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

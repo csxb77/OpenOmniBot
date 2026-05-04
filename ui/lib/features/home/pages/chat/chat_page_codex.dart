@@ -29,6 +29,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         _codexStatus = status;
         _isCodexStatusLoading = false;
       });
+      if (_activeMode == ChatPageMode.codex) {
+        unawaited(_loadCodexModelOptionsWhenReady());
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -147,6 +150,39 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
       _activeCodexModelId = model;
       _activeCodexCollaborationMode = collaborationMode;
     });
+    if (model == null) {
+      unawaited(_loadCodexModelOptionsWhenReady());
+    }
+  }
+
+  Future<void> _loadCodexModelOptionsWhenReady() async {
+    if ((_activeCodexModelId ?? '').trim().isNotEmpty ||
+        _isCodexModelListLoading) {
+      return;
+    }
+    var status = _codexStatus;
+    try {
+      if (!status.ready) {
+        status = await CodexAppServerService.status();
+      }
+      if (!status.ready) {
+        return;
+      }
+      if (!status.connected) {
+        status = await CodexAppServerService.connect();
+        unawaited(CodexAppServerService.listThreads());
+      }
+    } catch (error) {
+      debugPrint('Prepare Codex model options failed: $error');
+      return;
+    }
+    if (!mounted || !status.connected) {
+      return;
+    }
+    setState(() {
+      _codexStatus = status;
+    });
+    await _loadCodexModelOptions(force: true);
   }
 
   @override
@@ -154,7 +190,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
     if (_isCodexModelListLoading) {
       return;
     }
-    if (!force && _codexModelOptions.isNotEmpty) {
+    if (!force &&
+        _codexModelOptions.isNotEmpty &&
+        (_activeCodexModelId ?? '').trim().isNotEmpty) {
       return;
     }
     if (!mounted) return;
@@ -163,15 +201,28 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
       _codexModelListError = null;
     });
     try {
+      final configModel = await _readCodexModelIdFromServerConfig();
       final response = await CodexAppServerService.listModels();
       final models = _extractCodexOptionIds(response, const <String>[
         'models',
         'items',
         'data',
       ]);
+      final preferredModel =
+          configModel ??
+          _extractCodexPreferredOptionId(response) ??
+          (models.isNotEmpty ? models.first : null);
+      final modelOptions =
+          preferredModel != null && !models.contains(preferredModel)
+          ? <String>[preferredModel, ...models]
+          : models;
       if (!mounted) return;
       setState(() {
-        _codexModelOptions = models;
+        _codexModelOptions = modelOptions;
+        if ((_activeCodexModelId ?? '').trim().isEmpty &&
+            preferredModel != null) {
+          _activeCodexModelId = preferredModel;
+        }
         _isCodexModelListLoading = false;
         _codexModelListError = null;
       });
@@ -181,6 +232,16 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         _isCodexModelListLoading = false;
         _codexModelListError = error.toString();
       });
+    }
+  }
+
+  Future<String?> _readCodexModelIdFromServerConfig() async {
+    try {
+      final response = await CodexAppServerService.readConfig();
+      return _extractCodexConfigModelId(response);
+    } catch (error) {
+      debugPrint('Read Codex config model failed: $error');
+      return null;
     }
   }
 
@@ -724,6 +785,71 @@ List<String> _extractCodexOptionIds(
     result.add(id);
   }
   return result;
+}
+
+String? _extractCodexPreferredOptionId(Map<String, dynamic> response) {
+  for (final key in const <String>[
+    'currentModel',
+    'currentModelId',
+    'selectedModel',
+    'selectedModelId',
+    'activeModel',
+    'activeModelId',
+    'defaultModel',
+    'defaultModelId',
+    'model',
+    'modelId',
+  ]) {
+    final id = _codexOptionId(response[key]);
+    if (id != null) {
+      return id;
+    }
+  }
+  for (final key in const <String>[
+    'current',
+    'selected',
+    'active',
+    'default',
+  ]) {
+    final value = response[key];
+    if (value is Map) {
+      final id = _codexOptionId(value);
+      if (id != null) {
+        return id;
+      }
+    }
+  }
+  return null;
+}
+
+String? _extractCodexConfigModelId(Map<String, dynamic> response) {
+  final direct = _codexOptionId(response['model'] ?? response['modelId']);
+  if (direct != null) {
+    return direct;
+  }
+  for (final key in const <String>[
+    'config',
+    'effectiveConfig',
+    'effective',
+    'settings',
+    'data',
+    'result',
+  ]) {
+    final value = response[key];
+    if (value is Map) {
+      final id = _codexOptionId(value['model'] ?? value['modelId']);
+      if (id != null) {
+        return id;
+      }
+      final nested = _extractCodexConfigModelId(
+        value.map((key, nestedValue) => MapEntry(key.toString(), nestedValue)),
+      );
+      if (nested != null) {
+        return nested;
+      }
+    }
+  }
+  return null;
 }
 
 String? _codexOptionId(dynamic item) {
