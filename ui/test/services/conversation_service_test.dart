@@ -68,6 +68,19 @@ void main() {
         case 'completeConversation':
         case 'setCurrentConversationId':
           return 'SUCCESS';
+        case 'updateConversationPromptTokenThreshold':
+          final conversationId = (args['conversationId'] as num?)?.toInt();
+          final threshold = (args['promptTokenThreshold'] as num?)?.toInt();
+          final index = nativeConversations.indexWhere(
+            (item) => item['id'] == conversationId,
+          );
+          if (index >= 0 && threshold != null) {
+            nativeConversations[index] = <String, dynamic>{
+              ...nativeConversations[index],
+              'promptTokenThreshold': threshold,
+            };
+          }
+          return 'SUCCESS';
         case 'deleteConversation':
           final conversationId = (args['conversationId'] as num?)?.toInt();
           nativeConversations.removeWhere(
@@ -177,6 +190,35 @@ void main() {
     expect(conversations.single.promptTokenThreshold, 128000);
     expect(conversations.single.contextUsageRatio, closeTo(0.5, 0.0001));
   });
+
+  test(
+    'updates conversation prompt token threshold via native channel',
+    () async {
+      nativeConversations = <Map<String, dynamic>>[
+        {
+          'id': 11,
+          'title': 'normal hello',
+          'mode': ConversationMode.normal.storageValue,
+          'summary': null,
+          'status': 0,
+          'lastMessage': null,
+          'messageCount': 0,
+          'promptTokenThreshold': 128000,
+          'createdAt': 1,
+          'updatedAt': 2,
+        },
+      ];
+
+      final updated =
+          await ConversationService.updateConversationPromptTokenThreshold(
+            conversationId: 11,
+            promptTokenThreshold: 400000,
+          );
+
+      expect(updated, isTrue);
+      expect(nativeConversations.single['promptTokenThreshold'], 400000);
+    },
+  );
 
   test(
     'deletes only the targeted thread metadata and keeps other modes intact',

@@ -767,7 +767,22 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         return mapOf(
             "id" to id,
             "displayName" to displayName,
-            "ownedBy" to ownedBy
+            "ownedBy" to ownedBy,
+            "contextLimit" to contextLimit,
+            "inputLimit" to inputLimit,
+            "outputLimit" to outputLimit,
+            "inputModalities" to inputModalities,
+            "outputModalities" to outputModalities,
+            "modelsDevProviderId" to modelsDevProviderId,
+            "modelsDevProviderName" to modelsDevProviderName,
+            "providerLogoUrl" to providerLogoUrl,
+            "family" to family,
+            "group" to group,
+            "attachment" to attachment,
+            "reasoning" to reasoning,
+            "toolCall" to toolCall,
+            "structuredOutput" to structuredOutput,
+            "temperature" to temperature
         )
     }
 

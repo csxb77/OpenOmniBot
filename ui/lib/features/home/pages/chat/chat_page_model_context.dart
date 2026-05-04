@@ -30,6 +30,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       });
       _scheduleNormalSurfaceModelReveal();
       await _syncInvalidNormalConversationOverrideIfNeeded();
+      await _syncActiveNormalConversationPromptTokenThreshold();
     } catch (e) {
       debugPrint('加载聊天模型上下文失败: $e');
     }
@@ -129,6 +130,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       );
     });
     await _syncInvalidNormalConversationOverrideIfNeeded();
+    await _syncActiveNormalConversationPromptTokenThreshold(
+      selection: nextSelection,
+      conversationId: conversationId,
+    );
   }
 
   @override
@@ -158,6 +163,12 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       );
     }
     if (!mounted) return;
+    final nextSelection = value == null
+        ? _activeConversationModelOverrideSelection
+        : _ChatModelOverrideSelection(
+            providerProfileId: value.providerProfileId,
+            modelId: value.modelId,
+          );
     setState(() {
       if (value != null) {
         _conversationModelOverride = value;
@@ -170,14 +181,13 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         profiles: _modelProviderProfiles,
         source: _modelOptionsByProfileId,
         sceneCatalog: _sceneCatalog,
-        overrideSelection: value == null
-            ? _activeConversationModelOverrideSelection
-            : _ChatModelOverrideSelection(
-                providerProfileId: value.providerProfileId,
-                modelId: value.modelId,
-              ),
+        overrideSelection: nextSelection,
       );
     });
+    await _syncActiveNormalConversationPromptTokenThreshold(
+      selection: nextSelection,
+      conversationId: conversationId,
+    );
   }
 
   @override
@@ -257,6 +267,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         );
       });
     }
+    await _syncActiveNormalConversationPromptTokenThreshold(
+      selection: selection,
+      conversationId: normalConversationId,
+    );
 
     final switchedLabel = displayAsMentionChip ? '@$modelId' : modelId;
     showToast(
@@ -327,6 +341,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       LegacyTextLocalizer.localize('已恢复场景默认模型'),
       type: ToastType.success,
     );
+    await _syncActiveNormalConversationPromptTokenThreshold();
   }
 
   @override
@@ -558,6 +573,150 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           ),
         );
       },
+    );
+  }
+
+  _ChatModelOverrideSelection? _effectiveNormalModelSelection(
+    _ChatModelOverrideSelection? explicitSelection,
+  ) {
+    if (explicitSelection != null) {
+      return explicitSelection;
+    }
+    if (_showConversationModelMentionChip) {
+      final override = _activeConversationModelOverrideSelection;
+      if (override != null) {
+        return override;
+      }
+    }
+    return _activeDispatchSceneSelection;
+  }
+
+  ProviderModelOption? _findProviderModelOption(
+    _ChatModelOverrideSelection selection,
+  ) {
+    final models =
+        _modelOptionsByProfileId[selection.providerProfileId] ??
+        const <ProviderModelOption>[];
+    for (final model in models) {
+      if (model.id == selection.modelId) {
+        return model;
+      }
+    }
+    return null;
+  }
+
+  ModelProviderProfileSummary? _findProviderProfile(String profileId) {
+    for (final profile in _modelProviderProfiles) {
+      if (profile.id == profileId) {
+        return profile;
+      }
+    }
+    return null;
+  }
+
+  Future<ProviderModelOption?> _resolveProviderModelOption(
+    _ChatModelOverrideSelection selection,
+  ) async {
+    final existing = _findProviderModelOption(selection);
+    if ((existing?.contextLimit ?? 0) > 0) {
+      return existing;
+    }
+    final profile = _findProviderProfile(selection.providerProfileId);
+    if (profile == null) {
+      return existing;
+    }
+    final seed =
+        existing ??
+        ProviderModelOption(
+          id: selection.modelId,
+          displayName: selection.modelId,
+          ownedBy: 'selection',
+        );
+    final enriched = await ModelProviderConfigService.enrichModelsForProfile(
+      profileId: profile.id,
+      providerName: profile.name,
+      apiBase: profile.baseUrl,
+      models: [seed],
+    );
+    if (enriched.isEmpty) {
+      return existing;
+    }
+    final resolved = enriched.first;
+    if (!mounted || (resolved.contextLimit ?? 0) <= 0) {
+      return resolved;
+    }
+    setState(() {
+      final next = <String, List<ProviderModelOption>>{
+        for (final entry in _modelOptionsByProfileId.entries)
+          entry.key: List<ProviderModelOption>.from(entry.value),
+      };
+      final bucket = next.putIfAbsent(
+        selection.providerProfileId,
+        () => <ProviderModelOption>[],
+      );
+      final index = bucket.indexWhere((item) => item.id == selection.modelId);
+      if (index >= 0) {
+        bucket[index] = resolved;
+      } else {
+        bucket.insert(0, resolved);
+      }
+      _modelOptionsByProfileId = next;
+    });
+    return resolved;
+  }
+
+  Future<void> _syncActiveNormalConversationPromptTokenThreshold({
+    _ChatModelOverrideSelection? selection,
+    int? conversationId,
+  }) async {
+    final targetConversationId =
+        conversationId ?? _currentConversationIdByMode[ChatPageMode.normal];
+    if (targetConversationId == null || targetConversationId <= 0) {
+      return;
+    }
+    final effectiveSelection = _effectiveNormalModelSelection(selection);
+    if (effectiveSelection == null) {
+      return;
+    }
+    final model = await _resolveProviderModelOption(effectiveSelection);
+    final contextLimit = model?.contextLimit;
+    if (contextLimit == null || contextLimit <= 0) {
+      return;
+    }
+    final currentConversation =
+        _runtimeForMode(ChatPageMode.normal)?.conversation ??
+        _currentConversationByMode[ChatPageMode.normal];
+    if (currentConversation?.promptTokenThreshold == contextLimit) {
+      return;
+    }
+    final updated =
+        await ConversationService.updateConversationPromptTokenThreshold(
+          conversationId: targetConversationId,
+          promptTokenThreshold: contextLimit,
+        );
+    if (!updated || !mounted) {
+      return;
+    }
+    final baseConversation = currentConversation;
+    if (baseConversation == null) {
+      return;
+    }
+    final nextConversation = baseConversation.copyWith(
+      promptTokenThreshold: contextLimit,
+    );
+    setState(() {
+      if (_currentConversationByMode[ChatPageMode.normal]?.id ==
+          targetConversationId) {
+        _currentConversationByMode[ChatPageMode.normal] = nextConversation;
+      }
+      final runtime = _runtimeForMode(ChatPageMode.normal);
+      if (runtime?.conversation?.id == targetConversationId) {
+        runtime!.conversation = nextConversation;
+      }
+    });
+    _syncRuntimeSnapshotForMode(
+      ChatPageMode.normal,
+      conversation: nextConversation,
     );
   }
 }
