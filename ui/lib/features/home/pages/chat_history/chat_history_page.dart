@@ -685,7 +685,6 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
             ? palette.surfaceSecondary
             : palette.previewFallback,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: palette.borderSubtle),
       ),
       child: Text(
         context.trLegacy('$messageCount 条消息'),
