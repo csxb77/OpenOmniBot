@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.database.AgentConversationEntry
+import cn.com.omnimind.baselib.database.AgentConversationEntryRecord
 import cn.com.omnimind.baselib.llm.AssistantToolCall
 import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
@@ -649,6 +650,160 @@ class AgentConversationHistorySupportTest {
         assertTrue(toolSummary.contains("\"summary\":\"${"s".repeat(240)}...\""))
         assertTrue(toolSummary.contains("\"terminalOutput\":\"${"t".repeat(1200)}...\""))
         assertFalse(toolSummary.contains("rawResultJson"))
+    }
+
+    @Test
+    fun `prepareEntryForStorage compacts oversized tool payload before persistence`() {
+        val longRaw = "raw".repeat(12_000)
+        val longTerminal = (1..5000).joinToString("\n") { "line-$it" }
+        val entry = AgentConversationEntry(
+            id = 1,
+            conversationId = 8,
+            conversationMode = "normal",
+            entryId = "task-8-tool-1",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "终端执行完成",
+            payloadJson = gson.toJson(
+                mapOf(
+                    "toolName" to "terminal_execute",
+                    "displayName" to "执行命令",
+                    "toolType" to "terminal",
+                    "summary" to "终端执行完成",
+                    "argsJson" to gson.toJson(mapOf("command" to "pwd")),
+                    "rawResultJson" to gson.toJson(mapOf("stdout" to longRaw)),
+                    "terminalOutput" to longTerminal,
+                    "success" to true
+                )
+            ),
+            createdAt = 1,
+            updatedAt = 1
+        )
+
+        val stored = AgentConversationHistorySupport.prepareEntryForStorage(entry)
+        val payload = AgentConversationHistorySupport.readMap(stored.payloadJson)
+
+        assertTrue(stored.payloadJson.length <= AgentConversationHistorySupport.MAX_STORAGE_ENTRY_PAYLOAD_CHARS)
+        assertEquals(true, payload["payloadCompacted"])
+        assertEquals("terminal_execute", payload["toolName"])
+        assertTrue(payload["rawResultJson"].toString().length < longRaw.length)
+        assertTrue(payload["terminalOutput"].toString().contains("line-5000"))
+    }
+
+    @Test
+    fun `materializeRecord repairs truncated oversized tool rows into compact non replay entry`() {
+        val record = AgentConversationEntryRecord(
+            id = 12,
+            conversationId = 9,
+            conversationMode = "normal",
+            entryId = "task-9-tool-1",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT,
+            status = AgentConversationHistoryRepository.STATUS_ERROR,
+            summary = "工具执行失败，历史负载过大",
+            payloadJson = "",
+            createdAt = 10,
+            updatedAt = 11,
+            payloadOriginalLength = 9_900_000,
+            payloadTruncated = true,
+            summaryOriginalLength = 12,
+            summaryTruncated = false
+        )
+
+        val materialized = AgentConversationHistorySupport.materializeRecord(record)
+        val payload = AgentConversationHistorySupport.readMap(materialized.entry.payloadJson)
+        val replayMessages = AgentConversationHistorySupport.buildPromptRelevantMessages(
+            listOf(materialized.entry)
+        )
+
+        assertTrue(materialized.needsRepair)
+        assertEquals(true, payload["historyOmitted"])
+        assertEquals("工具调用历史", payload["displayName"])
+        assertEquals(
+            "工具执行失败，历史负载过大",
+            payload["summary"]
+        )
+        assertTrue(replayMessages.isEmpty())
+    }
+
+    @Test
+    fun `materializeRecord repairs truncated oversized ui card rows into omitted card payload`() {
+        val record = AgentConversationEntryRecord(
+            id = 13,
+            conversationId = 9,
+            conversationMode = "normal",
+            entryId = "task-9-thinking",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "深度思考过程已折叠",
+            payloadJson = "",
+            createdAt = 20,
+            updatedAt = 21,
+            payloadOriginalLength = 1_500_000,
+            payloadTruncated = true,
+            summaryOriginalLength = 9,
+            summaryTruncated = false
+        )
+
+        val materialized = AgentConversationHistorySupport.materializeRecord(record)
+        val payload = AgentConversationHistorySupport.readMap(materialized.entry.payloadJson)
+        val content = (payload["content"] as Map<*, *>)
+        val cardData = (content["cardData"] as Map<*, *>)
+
+        assertTrue(materialized.needsRepair)
+        assertEquals("history_omitted_card", cardData["type"])
+        assertEquals("深度思考过程已折叠", cardData["summary"])
+        assertEquals(1_500_000, (cardData["originalPayloadLength"] as Number).toInt())
+    }
+
+    @Test
+    fun `prepareEntryForStorage keeps deep thinking runtime state while compacting oversized card`() {
+        val longThinking = "分析中 ".repeat(10000)
+        val payload = mapOf(
+            "id" to "task-11-thinking",
+            "type" to 2,
+            "user" to 3,
+            "content" to mapOf(
+                "id" to "task-11-thinking",
+                "cardData" to mapOf(
+                    "type" to "deep_thinking",
+                    "taskID" to "task-11",
+                    "cardId" to "task-11-thinking",
+                    "thinkingContent" to longThinking,
+                    "thinkingContentTruncated" to false,
+                    "stage" to 2,
+                    "isLoading" to true,
+                    "startTime" to 1000
+                )
+            ),
+            "isLoading" to false,
+            "isFirst" to false,
+            "isError" to false,
+            "isSummarizing" to false
+        )
+        val entry = AgentConversationEntry(
+            id = 14,
+            conversationId = 10,
+            conversationMode = "normal",
+            entryId = "task-11-thinking",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "思考中",
+            payloadJson = gson.toJson(payload),
+            createdAt = 1000,
+            updatedAt = 1200
+        )
+
+        val stored = AgentConversationHistorySupport.prepareEntryForStorage(entry)
+        val storedPayload = AgentConversationHistorySupport.readMap(stored.payloadJson)
+        val content = storedPayload["content"] as Map<*, *>
+        val cardData = content["cardData"] as Map<*, *>
+
+        assertTrue(stored.payloadJson.length <= AgentConversationHistorySupport.MAX_STORAGE_ENTRY_PAYLOAD_CHARS)
+        assertEquals("deep_thinking", cardData["type"])
+        assertEquals(2, (cardData["stage"] as Number).toInt())
+        assertEquals(true, cardData["isLoading"])
+        assertEquals(true, cardData["thinkingContentTruncated"])
+        assertTrue((cardData["thinkingContent"] as String).contains("分析中"))
     }
 
     @Test
