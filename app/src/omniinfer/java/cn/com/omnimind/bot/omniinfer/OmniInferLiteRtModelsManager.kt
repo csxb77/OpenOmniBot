@@ -34,7 +34,7 @@ object OmniInferLiteRtModelsManager {
     private const val KEY_AUTO_START = "omniinfer_litert_auto_start_on_app_open"
     private const val LITERT_EXTENSION = ".litertlm"
     private const val MARKET_ASSET_NAME = "omniinfer_litert_model_market.json"
-    private const val DEFAULT_N_CTX = 8192
+    private const val DEFAULT_N_CTX = 16384
 
     private var appContext: Context? = null
     private var cachedMarketModels: List<LiteRtMarketModel>? = null
