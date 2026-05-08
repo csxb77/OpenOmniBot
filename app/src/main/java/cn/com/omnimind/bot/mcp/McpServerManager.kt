@@ -25,12 +25,13 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.host
-import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
 import io.ktor.server.response.respondRedirect
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -311,7 +312,7 @@ object McpServerManager {
             install(Authentication) {
                 bearer("bearer-auth") {
                     authenticate { credential ->
-                        if (credential.token != null && timingSafeEquals(credential.token, token)) {
+                        if (timingSafeEquals(credential.token, token)) {
                             UserIdPrincipal("mcp-client")
                         } else null
                     }

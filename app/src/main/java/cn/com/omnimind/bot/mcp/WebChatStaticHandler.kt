@@ -4,6 +4,7 @@ import android.content.Context
 import io.ktor.http.ContentType
 import io.ktor.server.application.call
 import io.ktor.server.request.path
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondText
