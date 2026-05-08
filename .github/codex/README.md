@@ -18,4 +18,4 @@ The workflow intentionally does not switch users with `sudo`. Run the GitHub Act
 
 If `cicd` has passwordless sudo, consider running a separate self-hosted runner service as a dedicated low-privilege account such as `cicd-codex` and setting `CODEX_RUNNER_USER=cicd-codex`.
 
-The workflow still keeps a separate logical write policy. External issues and read-only commands can run with the permissive local CLI sandbox, but their diffs are not published.
+The workflow still keeps a separate logical write policy. External issues and read-only commands can run with the permissive local CLI sandbox, but their diffs are not published. Maintainer-approved write commands on fork PRs publish to a repository-owned `codex/pr-*` branch and open a draft follow-up PR instead of pushing to the contributor's fork branch.

@@ -134,7 +134,10 @@ jobs:
             }
 
             function isWriteIntent(task) {
-              return /\b(fix|repair|implement|add|update|change|write|test|refactor|patch|commit)\b|修复|修改|实现|添加|更新|测试|重构|补丁/i.test(task || '');
+              const value = task || '';
+              return /\b(fix|repair|implement|add|update|write|test|refactor|patch|commit)\b|修复|修改|实现|添加|更新|测试|重构|补丁/i.test(value)
+                || /\b(?:make|apply)\s+changes?\b/i.test(value)
+                || /\bchange\s+(?:it|this|that|the|a|an|[a-z0-9_./-]+)/i.test(value);
             }
 
             function slugify(input) {
@@ -341,24 +344,26 @@ jobs:
 
             const taskLooksReadOnly = isReadOnlyIntent(task) && !isWriteIntent(task);
             let sandbox = 'workspace-write';
-            if (forceReadOnly || taskLooksReadOnly || isForkPr) {
+            if (forceReadOnly || taskLooksReadOnly) {
               sandbox = 'read-only';
             }
-            if (forceWrite && !isForkPr) {
+            if (forceWrite) {
               sandbox = 'workspace-write';
             }
 
-            const writeAllowed = actorCanWrite && sandbox === 'workspace-write' && !(isPr && isForkPr);
+            const writeAllowed = actorCanWrite && sandbox === 'workspace-write';
             const publishMode = writeAllowed
-              ? (isPr ? 'pr_head' : 'issue_branch')
+              ? (isPr ? (isForkPr ? 'pr_branch' : 'pr_head') : 'issue_branch')
               : 'comment_only';
             const branchSlug = slugify(`${targetTitle} ${task}`);
             const branchPrefix = isPr ? 'pr' : 'issue';
             const branchName = `codex/${branchPrefix}-${targetNumber}-${branchSlug}`;
             const checkoutRef = isPr
-              ? (publishMode === 'pr_head' ? `refs/pull/${targetNumber}/head` : `refs/pull/${targetNumber}/merge`)
+              ? (publishMode === 'comment_only' ? `refs/pull/${targetNumber}/merge` : `refs/pull/${targetNumber}/head`)
               : baseRef;
-            const publishRef = publishMode === 'pr_head' ? headRef : baseRef;
+            const publishRef = publishMode === 'pr_head'
+              ? headRef
+              : (publishMode === 'pr_branch' ? `refs/pull/${targetNumber}/head` : baseRef);
 
             setOutputs(defaultOutputs({
               skip: 'false',
@@ -600,7 +605,7 @@ jobs:
           git config core.fileMode false
           git config core.hooksPath /dev/null
 
-          if [[ "$PUBLISH_MODE" == "issue_branch" ]]; then
+          if [[ "$PUBLISH_MODE" == "issue_branch" || "$PUBLISH_MODE" == "pr_branch" ]]; then
             git check-ref-format --branch "$BRANCH_NAME"
             if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
               git fetch --no-tags origin "$BRANCH_NAME"
@@ -658,7 +663,7 @@ jobs:
           commit_summary="$(node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('codex-artifact/result.json','utf8')); process.stdout.write((r.summary || 'Codex update').replace(/\s+/g,' ').slice(0,72));")"
           git commit -m "Codex bot: ${commit_summary}" -m "Triggered by ${TARGET_KIND} #${TARGET_NUMBER}."
 
-          if [[ "$PUBLISH_MODE" == "issue_branch" ]]; then
+          if [[ "$PUBLISH_MODE" == "issue_branch" || "$PUBLISH_MODE" == "pr_branch" ]]; then
             git push origin "HEAD:$BRANCH_NAME"
             published_branch="$BRANCH_NAME"
           else
@@ -728,14 +733,18 @@ jobs:
                 blockedFiles || '(unknown protected file)',
                 '```',
               ].join('\n');
-            } else if (process.env.PUSHED === 'true' && process.env.PUBLISH_MODE === 'issue_branch') {
+            } else if (process.env.PUSHED === 'true' && (process.env.PUBLISH_MODE === 'issue_branch' || process.env.PUBLISH_MODE === 'pr_branch')) {
               const branch = process.env.BRANCH_NAME;
               const baseRef = process.env.BASE_REF || 'main';
               const prTitle = clean(result.pr_title) || `Codex: ${process.env.TARGET_TITLE || `Issue #${issueNumber}`}`;
+              const targetKind = clean(process.env.TARGET_KIND);
+              const referenceLine = targetKind === 'pr'
+                ? `Follow-up to #${issueNumber}`
+                : `Refs #${issueNumber}`;
               const prBody = [
                 clean(result.pr_body) || body,
                 '',
-                `Refs #${issueNumber}`,
+                referenceLine,
                 '',
                 `Triggered by Codex bot run ${context.runId}.`,
               ].join('\n');
@@ -765,7 +774,7 @@ jobs:
               body = [
                 body,
                 '',
-                `Draft PR: ${prUrl}`,
+                `${process.env.PUBLISH_MODE === 'pr_branch' ? 'Draft follow-up PR' : 'Draft PR'}: ${prUrl}`,
               ].join('\n');
             } else if (process.env.PUSHED === 'true' && process.env.PUBLISH_MODE === 'pr_head') {
               const sha = clean(process.env.COMMIT_SHA);
@@ -778,7 +787,7 @@ jobs:
               body = [
                 body,
                 '',
-                'Codex identified code changes, but this trigger is read-only. A maintainer can rerun with `@codex fix ...` on a same-repository branch or add `codex-run` to the issue.',
+                'Codex identified code changes, but this trigger is read-only. A maintainer can rerun with an explicit write request such as `@codex fix ...`, or add `codex-run` to an issue.',
               ].join('\n');
             } else if (process.env.RESULT_STATUS === 'code_change' && process.env.HAS_PATCH !== 'true') {
               body = [
