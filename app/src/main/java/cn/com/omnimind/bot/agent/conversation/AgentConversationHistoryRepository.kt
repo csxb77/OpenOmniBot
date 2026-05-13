@@ -75,6 +75,7 @@ class AgentConversationHistoryRepository(
         conversationMode: String,
         entryId: String,
         text: String,
+        reasoningContent: String? = null,
         isError: Boolean = false,
         attachments: List<Map<String, Any?>> = emptyList(),
         reasoningContent: String? = null,

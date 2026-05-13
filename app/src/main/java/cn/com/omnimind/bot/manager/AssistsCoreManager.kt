@@ -4412,6 +4412,9 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         val payload = buildToolStartPayload(toolName, argsJson).toMutableMap().apply {
                             put("cardId", entryId)
                         }
+                        latestThinkingContent.takeIf { it.isNotBlank() }?.let { reasoning ->
+                            payload["reasoning_content"] = reasoning
+                        }
                         upsertToolEvent(
                             entryId = entryId,
                             roundIndex = roundIndex,
@@ -4490,6 +4493,9 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                             .toMutableMap().apply {
                                 put("cardId", entryId)
                             }
+                        latestThinkingContent.takeIf { it.isNotBlank() }?.let { reasoning ->
+                            payload["reasoning_content"] = reasoning
+                        }
                         val success = payload["success"] != false
                         upsertToolEvent(
                             entryId = entryId,

@@ -76,6 +76,7 @@ internal object AgentConversationHistorySupport {
     ): Map<String, Any?> {
         val safeText = AgentTextSanitizer.sanitizeUtf16(text)
         val safeReasoning = AgentTextSanitizer.sanitizeUtf16(reasoningContent.orEmpty())
+            .trim()
             .takeIf { it.isNotBlank() }
         val historyAttachments = AgentImageAttachmentSupport
             .prepareAttachments(attachments)
@@ -97,9 +98,12 @@ internal object AgentConversationHistorySupport {
             "isError" to isError,
             "isSummarizing" to false,
             "streamMeta" to streamMeta,
-            "reasoning_content" to safeReasoning,
             "createAt" to Instant.ofEpochMilli(createdAt).toString()
-        ).filterValues { it != null }
+        ).apply {
+            if (user == 2 && safeReasoning != null) {
+                put("reasoning_content", safeReasoning)
+            }
+        }.filterValues { it != null }
     }
 
     fun buildCardMessagePayload(
@@ -481,6 +485,13 @@ internal object AgentConversationHistorySupport {
         } else {
             chooseText("terminalOutput")
         }
+        val reasoningContent = text(incoming, "reasoning_content").ifEmpty {
+            text(incoming, "reasoningContent").ifEmpty {
+                text(existing, "reasoning_content").ifEmpty {
+                    text(existing, "reasoningContent")
+                }
+            }
+        }
 
         return linkedMapOf<String, Any?>(
             "taskId" to chooseAny("taskId"),
@@ -536,7 +547,7 @@ internal object AgentConversationHistorySupport {
             payload["reasoning_content"]?.toString()
                 ?: payload["reasoningContent"]?.toString()
                 ?: ""
-        ).takeIf { it.isNotBlank() }
+        ).trim().takeIf { it.isNotBlank() }
         return listOf(
             ChatCompletionMessage(
                 role = "assistant",
@@ -1408,7 +1419,7 @@ internal object AgentConversationHistorySupport {
                     ?: payload["reasoningContent"]?.toString()
                     ?: "",
                 MAX_STORAGE_MESSAGE_TEXT_CHARS
-            ).takeIf { it.isNotBlank() }
+            ).trim().takeIf { it.isNotBlank() }
         } else {
             null
         }
