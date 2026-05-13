@@ -78,7 +78,6 @@ class AgentConversationHistoryRepository(
         reasoningContent: String? = null,
         isError: Boolean = false,
         attachments: List<Map<String, Any?>> = emptyList(),
-        reasoningContent: String? = null,
         streamMeta: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
