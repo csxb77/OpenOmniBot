@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 
 DEFAULT_PART_SIZE = 50 * 1024 * 1024
@@ -63,30 +62,67 @@ def request_json(
     headers: Optional[Dict[str, str]] = None,
     retries: int = 3,
 ) -> Dict:
-    request_headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        **(headers or {}),
-    }
-    last_error: Optional[Exception] = None
+    request_headers = [
+        f"Authorization: Bearer {token}",
+        "Accept: application/json",
+    ]
+    request_headers.extend(f"{name}: {value}" for name, value in (headers or {}).items())
+    command = [
+        "curl",
+        "--fail-with-body",
+        "--show-error",
+        "--silent",
+        "--location",
+        "--request",
+        method,
+        "--write-out",
+        "\n%{http_code}",
+    ]
+    for header in request_headers:
+        command.extend(["--header", header])
+    if body is not None:
+        command.extend(["--data-binary", "@-"])
+    command.append(url)
+
+    last_error: Optional[BaseException] = None
     for attempt in range(1, retries + 1):
-        request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
-        try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                payload = response.read().decode("utf-8")
-                return json.loads(payload) if payload else {}
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            last_error = RuntimeError(f"{method} {url} failed with HTTP {error.code}: {detail}")
-            if error.code < 500:
+        result = subprocess.run(
+            command,
+            input=body,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        payload, status = split_curl_response(stdout)
+
+        if result.returncode == 0 and status < 400:
+            return json.loads(payload) if payload else {}
+
+        detail = payload or stderr
+        last_error = RuntimeError(f"{method} {url} failed with HTTP {status}: {detail}")
+        if status and status < 500:
+            break
+        if result.returncode != 0 and not status:
+            last_error = RuntimeError(f"{method} {url} failed: {stderr or payload}")
+            if attempt >= retries:
                 break
-        except urllib.error.URLError as error:
-            last_error = error
 
         if attempt < retries:
             time.sleep(2 * attempt)
 
     raise last_error or RuntimeError(f"{method} {url} failed")
+
+
+def split_curl_response(stdout: str) -> Tuple[str, int]:
+    if "\n" not in stdout:
+        return stdout, 0
+    payload, status_raw = stdout.rsplit("\n", 1)
+    try:
+        return payload, int(status_raw)
+    except ValueError:
+        return stdout, 0
 
 
 def simple_upload(args: argparse.Namespace, base_url: str, size: int) -> None:
