@@ -12,7 +12,13 @@ Cloudflare Worker for public app update checks, authenticated release metadata m
   - Public APK download endpoint backed by R2.
 - `PUT /admin/releases/:tag/assets/:asset`
   - Requires `Authorization: Bearer <ADMIN_TOKEN>`.
-  - Streams an APK or `.apk.sha256` file into the bound R2 bucket.
+  - Streams a small APK or `.apk.sha256` file into the bound R2 bucket.
+- `POST /admin/releases/:tag/assets/:asset?action=mpu-create`
+- `PUT /admin/releases/:tag/assets/:asset?action=mpu-uploadpart&uploadId=...&partNumber=...`
+- `POST /admin/releases/:tag/assets/:asset?action=mpu-complete&uploadId=...`
+- `DELETE /admin/releases/:tag/assets/:asset?action=mpu-abort&uploadId=...`
+  - Requires admin auth.
+  - Multipart upload flow for large APKs, keeping each Worker request below Cloudflare's request body limit.
 - `POST /admin/releases`
   - Requires `Authorization: Bearer <ADMIN_TOKEN>`.
   - Upserts a release tag and APK assets.
@@ -55,12 +61,14 @@ Use the deployed Worker URL as:
 
 Use the same token as the GitHub Actions secret `APP_UPDATE_WORKER_TOKEN`.
 
-GitHub release publishing uploads staged APKs with:
+GitHub release publishing uploads staged APKs with the helper script. Large APKs use Worker-backed R2 multipart upload automatically:
 
 ```bash
-curl --request PUT \
-  --header "Authorization: Bearer $APP_UPDATE_WORKER_TOKEN" \
-  --header "Content-Type: application/vnd.android.package-archive" \
-  --upload-file OpenOmniBot-v1.6.2-omniinfer.apk \
-  "$APP_UPDATE_WORKER_URL/admin/releases/v1.6.2/assets/OpenOmniBot-v1.6.2-omniinfer.apk"
+python3 scripts/upload_release_asset_to_worker.py \
+  --worker-url "$APP_UPDATE_WORKER_URL" \
+  --token "$APP_UPDATE_WORKER_TOKEN" \
+  --tag v1.6.2 \
+  --file OpenOmniBot-v1.6.2-omniinfer.apk \
+  --content-type application/vnd.android.package-archive \
+  --sha256 "$APK_SHA256"
 ```

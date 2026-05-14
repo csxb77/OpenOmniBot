@@ -296,39 +296,27 @@ jobs:
             PYTHON_BIN=python3.11
           fi
 
-          url_encode() {
-            "${PYTHON_BIN}" -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
-          }
-
-          api_url="${APP_UPDATE_WORKER_URL%/}"
-          api_url="${api_url%/updates}"
-          api_url="${api_url%/admin/releases}"
-          encoded_tag="$(url_encode "${RELEASE_TAG_NAME}")"
-
-          upload_asset() {
-            local asset_path="$1"
-            local content_type="$2"
-            local sha256="$3"
-            local asset_name
-            asset_name="$(basename "${asset_path}")"
-            local encoded_name
-            encoded_name="$(url_encode "${asset_name}")"
-
-            curl --fail --show-error --silent --location \
-              --request PUT "${api_url}/admin/releases/${encoded_tag}/assets/${encoded_name}" \
-              --header "Authorization: Bearer ${APP_UPDATE_WORKER_TOKEN}" \
-              --header "Content-Type: ${content_type}" \
-              --header "X-Content-SHA256: ${sha256}" \
-              --upload-file "${asset_path}" >/dev/null
-          }
-
           for edition in omniinfer standard; do
             apk_path="${RELEASE_ASSET_DIR}/OpenOmniBot-${SAFE_REF_NAME}-${edition}.apk"
             sha_path="${apk_path}.sha256"
             sha256="$(awk '{print $1}' "${sha_path}")"
             sha_file_sha256="$(sha256sum "${sha_path}" | awk '{print $1}')"
-            upload_asset "${apk_path}" "application/vnd.android.package-archive" "${sha256}"
-            upload_asset "${sha_path}" "text/plain; charset=utf-8" "${sha_file_sha256}"
+
+            "${PYTHON_BIN}" scripts/upload_release_asset_to_worker.py \
+              --worker-url "${APP_UPDATE_WORKER_URL}" \
+              --token "${APP_UPDATE_WORKER_TOKEN}" \
+              --tag "${RELEASE_TAG_NAME}" \
+              --file "${apk_path}" \
+              --content-type "application/vnd.android.package-archive" \
+              --sha256 "${sha256}"
+
+            "${PYTHON_BIN}" scripts/upload_release_asset_to_worker.py \
+              --worker-url "${APP_UPDATE_WORKER_URL}" \
+              --token "${APP_UPDATE_WORKER_TOKEN}" \
+              --tag "${RELEASE_TAG_NAME}" \
+              --file "${sha_path}" \
+              --content-type "text/plain; charset=utf-8" \
+              --sha256 "${sha_file_sha256}"
           done
 
       - name: Publish release tag to Cloudflare Worker

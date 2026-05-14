@@ -61,9 +61,13 @@ export default {
         return handleUpsertRelease(request, env);
       }
 
-      if (request.method === "PUT" && pathname.startsWith(ADMIN_RELEASE_ROUTE_PREFIX)) {
+      if (
+        (request.method === "POST" || request.method === "PUT" || request.method === "DELETE") &&
+        pathname.startsWith(ADMIN_RELEASE_ROUTE_PREFIX) &&
+        pathname.includes("/assets/")
+      ) {
         requireAdmin(request, env);
-        return handleUploadAsset(request, url, env);
+        return handleAssetMutation(request, url, env);
       }
 
       if (pathname === "/admin/releases" && request.method === "DELETE") {
@@ -151,13 +155,29 @@ async function handleUpsertRelease(request, env) {
   return json({ ok: true, release });
 }
 
+async function handleAssetMutation(request, url, env) {
+  const action = stringValue(url.searchParams.get("action"));
+  if (!action && request.method === "PUT") {
+    return handleUploadAsset(request, url, env);
+  }
+  if (action === "mpu-create" && request.method === "POST") {
+    return handleCreateMultipartUpload(request, url, env);
+  }
+  if (action === "mpu-uploadpart" && request.method === "PUT") {
+    return handleUploadMultipartPart(request, url, env);
+  }
+  if (action === "mpu-complete" && request.method === "POST") {
+    return handleCompleteMultipartUpload(request, url, env);
+  }
+  if (action === "mpu-abort" && request.method === "DELETE") {
+    return handleAbortMultipartUpload(url, env);
+  }
+  throw httpError(400, "unsupported asset upload action");
+}
+
 async function handleUploadAsset(request, url, env) {
   const bucket = requireBucket(env);
-  const parsed = parseAdminAssetPath(normalizePath(url.pathname));
-  if (!parsed) {
-    throw httpError(404, "Upload route not found");
-  }
-
+  const parsed = requireAdminAssetPath(url);
   const { tag, name } = parsed;
   validateStoredAssetName(name);
   if (!request.body) {
@@ -170,19 +190,14 @@ async function handleUploadAsset(request, url, env) {
   const key = assetObjectKey(tag, name, env);
   const uploadedAt = Date.now();
 
-  const uploaded = await bucket.put(key, request.body, {
-    httpMetadata: {
-      contentType,
-      contentDisposition: `attachment; filename="${headerFileName(name)}"`,
-    },
-    customMetadata: omitEmpty({
-      tag,
-      name,
-      sha256,
-      size: size ? String(size) : "",
-      uploadedAt: String(uploadedAt),
-    }),
-  });
+  const uploaded = await bucket.put(key, request.body, assetUploadOptions({
+    tag,
+    name,
+    contentType,
+    sha256,
+    size,
+    uploadedAt,
+  }));
 
   const workerDownloadUrl = publicDownloadUrl(url, tag, name);
   return json({
@@ -198,6 +213,112 @@ async function handleUploadAsset(request, url, env) {
       uploadedAt,
     },
   });
+}
+
+async function handleCreateMultipartUpload(request, url, env) {
+  const bucket = requireBucket(env);
+  const { tag, name } = requireAdminAssetPath(url);
+  validateStoredAssetName(name);
+
+  const key = assetObjectKey(tag, name, env);
+  const sha256 = stringValue(request.headers.get("x-content-sha256"));
+  const size = normalizeSize(request.headers.get("x-content-size") || request.headers.get("content-length"));
+  const uploadedAt = Date.now();
+  const multipartUpload = await bucket.createMultipartUpload(key, assetUploadOptions({
+    tag,
+    name,
+    contentType: request.headers.get("content-type") || contentTypeForAssetName(name),
+    sha256,
+    size,
+    uploadedAt,
+  }));
+
+  return json({
+    ok: true,
+    upload: {
+      key: multipartUpload.key,
+      uploadId: multipartUpload.uploadId,
+      uploadedAt,
+    },
+  });
+}
+
+async function handleUploadMultipartPart(request, url, env) {
+  const bucket = requireBucket(env);
+  const { tag, name } = requireAdminAssetPath(url);
+  validateStoredAssetName(name);
+  if (!request.body) {
+    throw httpError(400, "part body is required");
+  }
+
+  const uploadId = stringValue(url.searchParams.get("uploadId"));
+  const partNumber = Number(url.searchParams.get("partNumber"));
+  if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
+    throw httpError(400, "valid uploadId and partNumber are required");
+  }
+
+  const multipartUpload = bucket.resumeMultipartUpload(assetObjectKey(tag, name, env), uploadId);
+  try {
+    const uploadedPart = await multipartUpload.uploadPart(partNumber, request.body);
+    return json({ ok: true, part: uploadedPart });
+  } catch (error) {
+    throw httpError(400, error.message || "multipart part upload failed");
+  }
+}
+
+async function handleCompleteMultipartUpload(request, url, env) {
+  const bucket = requireBucket(env);
+  const { tag, name } = requireAdminAssetPath(url);
+  validateStoredAssetName(name);
+
+  const uploadId = stringValue(url.searchParams.get("uploadId"));
+  if (!uploadId) {
+    throw httpError(400, "uploadId is required");
+  }
+
+  const body = await readJson(request);
+  const parts = normalizeUploadedParts(body.parts);
+  const multipartUpload = bucket.resumeMultipartUpload(assetObjectKey(tag, name, env), uploadId);
+  let object;
+  try {
+    object = await multipartUpload.complete(parts);
+  } catch (error) {
+    throw httpError(400, error.message || "multipart upload complete failed");
+  }
+
+  const workerDownloadUrl = publicDownloadUrl(url, tag, name);
+  return json({
+    ok: true,
+    asset: {
+      name,
+      r2ObjectKey: object.key,
+      workerDownloadUrl,
+      downloadUrl: workerDownloadUrl,
+      sha256: stringValue(body.sha256),
+      size: normalizeSize(body.size),
+      etag: object.httpEtag || object.etag || "",
+      uploadedAt: normalizeTimestamp(body.uploadedAt || Date.now()),
+    },
+  });
+}
+
+async function handleAbortMultipartUpload(url, env) {
+  const bucket = requireBucket(env);
+  const { tag, name } = requireAdminAssetPath(url);
+  validateStoredAssetName(name);
+
+  const uploadId = stringValue(url.searchParams.get("uploadId"));
+  if (!uploadId) {
+    throw httpError(400, "uploadId is required");
+  }
+
+  const multipartUpload = bucket.resumeMultipartUpload(assetObjectKey(tag, name, env), uploadId);
+  try {
+    await multipartUpload.abort();
+  } catch (error) {
+    throw httpError(400, error.message || "multipart upload abort failed");
+  }
+  return json({ ok: true, aborted: true });
 }
 
 async function handleDownloadAsset(request, url, env) {
@@ -443,6 +564,14 @@ function assetWorkerDownloadUrl(asset, url, tag) {
   return asset.workerDownloadUrl || asset.r2DownloadUrl || (asset.name ? publicDownloadUrl(url, tag, asset.name) : "");
 }
 
+function requireAdminAssetPath(url) {
+  const parsed = parseAdminAssetPath(normalizePath(url.pathname));
+  if (!parsed) {
+    throw httpError(404, "Upload route not found");
+  }
+  return parsed;
+}
+
 function parseDownloadPath(pathname) {
   const rest = pathname.slice(DOWNLOAD_ROUTE_PREFIX.length);
   const separator = rest.indexOf("/");
@@ -498,6 +627,38 @@ function contentTypeForAssetName(name) {
 
 function headerFileName(name) {
   return stringValue(name).replace(/["\r\n]/g, "_");
+}
+
+function assetUploadOptions({ tag, name, contentType, sha256, size, uploadedAt }) {
+  return {
+    httpMetadata: {
+      contentType: contentType || contentTypeForAssetName(name),
+      contentDisposition: `attachment; filename="${headerFileName(name)}"`,
+    },
+    customMetadata: omitEmpty({
+      tag,
+      name,
+      sha256,
+      size: size ? String(size) : "",
+      uploadedAt: String(uploadedAt || Date.now()),
+    }),
+  };
+}
+
+function normalizeUploadedParts(rawParts) {
+  if (!Array.isArray(rawParts) || rawParts.length === 0) {
+    throw httpError(400, "parts are required");
+  }
+  return rawParts
+    .map((part) => {
+      const partNumber = Number(part?.partNumber);
+      const etag = stringValue(part?.etag);
+      if (!Number.isInteger(partNumber) || partNumber < 1 || !etag) {
+        throw httpError(400, "each part needs partNumber and etag");
+      }
+      return { partNumber, etag };
+    })
+    .sort((left, right) => left.partNumber - right.partNumber);
 }
 
 function normalizePath(pathname) {
