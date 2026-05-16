@@ -18,6 +18,7 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/features/home/pages/chat/utils/stream_text_merge.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
+import 'package:ui/features/home/pages/chat/utils/keyboard_inset_motion_tracker.dart';
 import 'package:ui/features/home/pages/chat/widgets/agent_run_group_message.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/services/storage_service.dart';
@@ -67,7 +68,8 @@ class ChatBotSheet extends StatefulWidget {
   State<ChatBotSheet> createState() => _ChatBotSheetState();
 }
 
-class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
+class _ChatBotSheetState extends State<ChatBotSheet>
+    with WidgetsBindingObserver, AgentStreamHandler {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _messageScrollController = ScrollController();
   final DraggableScrollableController _sheetController =
@@ -77,6 +79,8 @@ class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
   final TextEditingController _vlmAnswerController = TextEditingController();
   final GlobalKey<ChatInputAreaState> _chatInputAreaKey =
       GlobalKey<ChatInputAreaState>();
+  final KeyboardInsetMotionTracker _emptyGreetingKeyboardLiftTracker =
+      KeyboardInsetMotionTracker();
 
   late AiChatService _aiService;
   bool _isAiResponding = false;
@@ -263,6 +267,7 @@ class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
   void initState() {
     super.initState();
 
+    WidgetsBinding.instance.addObserver(this);
     _aiService = AiChatService();
 
     _aiService.setOnMessageCallback((taskId, content, type) {
@@ -879,7 +884,23 @@ class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
   }
 
   @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    _syncEmptyGreetingKeyboardLiftFromView();
+  }
+
+  void _syncEmptyGreetingKeyboardLiftFromView() {
+    if (!mounted) return;
+    final view = View.of(context);
+    final bottomInset = view.viewInsets.bottom / view.devicePixelRatio;
+    if (_emptyGreetingKeyboardLiftTracker.update(bottomInset)) {
+      setState(() {});
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _messageController.removeListener(_handleSlashCommandInput);
     _messageController.dispose();
     _messageScrollController.dispose();
@@ -2031,7 +2052,9 @@ class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
     final screenHeight = MediaQuery.of(context).size.height;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final inputAreaHeight = _inputAreaHeight > 0 ? _inputAreaHeight : 72.0;
-    final hideEmptyGreeting = _inputFocusNode.hasFocus || bottomInset > 0.5;
+    final liftEmptyGreeting = _emptyGreetingKeyboardLiftTracker.resolveForBuild(
+      bottomInset,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateInputAreaMetrics();
     });
@@ -2127,25 +2150,26 @@ class _ChatBotSheetState extends State<ChatBotSheet> with AgentStreamHandler {
                       ],
                     ),
                     if (_messages.isEmpty)
-                      Positioned(
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 280),
+                        curve: Curves.easeInOutCubic,
                         left: 0,
                         right: 0,
-                        top: 116,
+                        top: liftEmptyGreeting ? 56 : 116,
                         child: IgnorePointer(
-                          child: AnimatedOpacity(
-                            duration: const Duration(milliseconds: 160),
-                            curve: Curves.easeOutCubic,
-                            opacity: hideEmptyGreeting ? 0 : 1,
-                            child: ExcludeSemantics(
-                              excluding: hideEmptyGreeting,
-                              child: ChatEmptyGreeting(
-                                compact: true,
-                                primaryTextColor: const Color(0xFF353E53),
-                                secondaryTextColor: const Color(0xFF71809B),
-                                accentColor: Theme.of(
-                                  context,
-                                ).colorScheme.primary,
-                              ),
+                          child: AnimatedAlign(
+                            duration: const Duration(milliseconds: 280),
+                            curve: Curves.easeInOutCubic,
+                            alignment: liftEmptyGreeting
+                                ? Alignment.centerLeft
+                                : Alignment.center,
+                            child: ChatEmptyGreeting(
+                              compact: true,
+                              primaryTextColor: const Color(0xFF353E53),
+                              secondaryTextColor: const Color(0xFF71809B),
+                              accentColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
                             ),
                           ),
                         ),

@@ -1383,7 +1383,7 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<Set<String>>? onExpandedAgentRunTaskIdsChanged;
   final AppBackgroundVisualProfile visualProfile;
   final AppBackgroundConfig appearanceConfig;
-  final bool hideEmptyGreeting;
+  final bool liftEmptyGreeting;
 
   const ChatMessageList({
     super.key,
@@ -1405,7 +1405,7 @@ class ChatMessageList extends StatefulWidget {
     this.onExpandedAgentRunTaskIdsChanged,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.appearanceConfig = AppBackgroundConfig.defaults,
-    this.hideEmptyGreeting = false,
+    this.liftEmptyGreeting = false,
   });
 
   @override
@@ -1995,24 +1995,20 @@ class _ChatMessageListState extends State<ChatMessageList> {
       content = GestureDetector(
         onVerticalDragUpdate: (_) {},
         behavior: HitTestBehavior.opaque,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOutCubic,
-          opacity: widget.hideEmptyGreeting ? 0 : 1,
-          child: ExcludeSemantics(
-            excluding: widget.hideEmptyGreeting,
-            child: Align(
-              alignment: const Alignment(-1, -0.18),
-              child: ChatEmptyGreeting(
-                primaryTextColor: usePaletteText
-                    ? context.omniPalette.textPrimary
-                    : widget.visualProfile.primaryTextColor,
-                secondaryTextColor: usePaletteText
-                    ? context.omniPalette.textSecondary
-                    : widget.visualProfile.secondaryTextColor,
-                accentColor: context.omniPalette.accentPrimary,
-              ),
-            ),
+        child: AnimatedAlign(
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeInOutCubic,
+          alignment: widget.liftEmptyGreeting
+              ? const Alignment(-1, -1)
+              : const Alignment(0, -0.18),
+          child: ChatEmptyGreeting(
+            primaryTextColor: usePaletteText
+                ? context.omniPalette.textPrimary
+                : widget.visualProfile.primaryTextColor,
+            secondaryTextColor: usePaletteText
+                ? context.omniPalette.textSecondary
+                : widget.visualProfile.secondaryTextColor,
+            accentColor: context.omniPalette.accentPrimary,
           ),
         ),
       );

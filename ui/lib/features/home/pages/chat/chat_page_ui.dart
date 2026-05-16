@@ -819,10 +819,10 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       mode: mode,
       snapshot: toolActivitySnapshot,
     );
-    final keyboardVisible =
-        (MediaQuery.maybeOf(context)?.viewInsets.bottom ?? 0.0) > 0.5;
-    final hideEmptyGreeting =
-        mode == _activeMode && (_inputFocusNode.hasFocus || keyboardVisible);
+    final bottomInset = MediaQuery.maybeOf(context)?.viewInsets.bottom ?? 0.0;
+    final liftEmptyGreeting =
+        mode == _activeMode &&
+        _emptyGreetingKeyboardLiftTracker.resolveForBuild(bottomInset);
     return ChatMessageList(
       messages: resolvedMessages,
       activeAgentTaskIds: activeAgentTaskIds,
@@ -830,7 +830,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       onExpandedAgentRunTaskIdsChanged: (taskIds) {
         _updateExpandedAgentRunTaskIds(mode, taskIds);
       },
-      hideEmptyGreeting: hideEmptyGreeting,
+      liftEmptyGreeting: liftEmptyGreeting,
       scrollController: _scrollControllerForMode(mode),
       bottomOverlayInset:
           bottomOverlayInset +

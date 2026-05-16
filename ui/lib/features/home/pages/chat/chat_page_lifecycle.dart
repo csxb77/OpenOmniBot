@@ -100,6 +100,21 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   }
 
   @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    _syncEmptyGreetingKeyboardLiftFromView();
+  }
+
+  void _syncEmptyGreetingKeyboardLiftFromView() {
+    if (!mounted) return;
+    final view = View.of(context);
+    final bottomInset = view.viewInsets.bottom / view.devicePixelRatio;
+    if (_emptyGreetingKeyboardLiftTracker.update(bottomInset)) {
+      setState(() {});
+    }
+  }
+
+  @override
   bool _threadTargetChanged(
     ConversationThreadTarget? oldTarget,
     ConversationThreadTarget? newTarget,
