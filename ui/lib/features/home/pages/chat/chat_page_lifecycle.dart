@@ -650,7 +650,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   }
 
   @override
-  void _onFocusChange() {}
+  void _onFocusChange() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void _handleAppUpdateStatusChanged() {

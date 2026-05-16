@@ -14,6 +14,7 @@ import '../utils/agent_run_timeline.dart';
 import '../../command_overlay/widgets/message_bubble.dart';
 import '../../command_overlay/widgets/chat_input_area.dart';
 import 'agent_run_group_message.dart';
+import 'chat_empty_greeting.dart';
 
 const String _kChatAppBarUpdateSparklesAsset =
     'assets/home/chat/update_sparkles.svg';
@@ -1382,6 +1383,7 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<Set<String>>? onExpandedAgentRunTaskIdsChanged;
   final AppBackgroundVisualProfile visualProfile;
   final AppBackgroundConfig appearanceConfig;
+  final bool hideEmptyGreeting;
 
   const ChatMessageList({
     super.key,
@@ -1403,6 +1405,7 @@ class ChatMessageList extends StatefulWidget {
     this.onExpandedAgentRunTaskIdsChanged,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.appearanceConfig = AppBackgroundConfig.defaults,
+    this.hideEmptyGreeting = false,
   });
 
   @override
@@ -1985,69 +1988,81 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
     final Widget content;
     if (widget.messages.isEmpty) {
+      final usePaletteText =
+          !widget.appearanceConfig.isActive &&
+          widget.appearanceConfig.chatTextColorMode !=
+              AppBackgroundTextColorMode.custom;
       content = GestureDetector(
         onVerticalDragUpdate: (_) {},
         behavior: HitTestBehavior.opaque,
-        child: Center(
-          child: Text(
-            Localizations.localeOf(context).languageCode == 'en'
-                ? 'How can I help you?'
-                : '有什么可以帮助你的？',
-            style: TextStyle(
-              color:
-                  !widget.appearanceConfig.isActive &&
-                      widget.appearanceConfig.chatTextColorMode !=
-                          AppBackgroundTextColorMode.custom
-                  ? context.omniPalette.textSecondary
-                  : widget.visualProfile.secondaryTextColor,
-              fontSize: 14,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          opacity: widget.hideEmptyGreeting ? 0 : 1,
+          child: ExcludeSemantics(
+            excluding: widget.hideEmptyGreeting,
+            child: Align(
+              alignment: const Alignment(-1, -0.18),
+              child: ChatEmptyGreeting(
+                primaryTextColor: usePaletteText
+                    ? context.omniPalette.textPrimary
+                    : widget.visualProfile.primaryTextColor,
+                secondaryTextColor: usePaletteText
+                    ? context.omniPalette.textSecondary
+                    : widget.visualProfile.secondaryTextColor,
+                accentColor: context.omniPalette.accentPrimary,
+              ),
             ),
           ),
         ),
       );
-    } else {
-      String? latestUserMessageId;
-      final messageSource = _observableMessages ?? widget.messages;
-      final timelineEntries = buildAgentRunTimelineEntries(
-        List<ChatMessageModel>.from(messageSource),
-        activeTaskIds: widget.activeAgentTaskIds,
-      );
-      for (final item in messageSource) {
-        if (item.user == 1) {
-          latestUserMessageId = item.id;
-          break;
-        }
+      if (pageBackgroundColor == null) {
+        return content;
       }
-      Widget listView = ListView.builder(
-        controller: widget.scrollController,
-        reverse: false,
-        physics: const ClampingScrollPhysics(),
-        clipBehavior: Clip.hardEdge,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-        itemCount: timelineEntries.length,
-        itemBuilder: (context, index) {
-          final dataIndex = timelineEntries.length - 1 - index;
-          final entry = timelineEntries[dataIndex];
-          final isOldestEntry = dataIndex == timelineEntries.length - 1;
-          final needTopPadding = isOldestEntry && !entry.isUserMessage;
-          return _buildTimelineListRow(
-            messageSource: messageSource,
-            entry: entry,
-            latestUserMessageId: latestUserMessageId,
-            padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
-          );
-        },
-      );
-      content = ClipRect(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: NotificationListener<ScrollNotification>(
-            onNotification: _handleListScrollNotification,
-            child: listView,
-          ),
-        ),
-      );
+      return ColoredBox(color: pageBackgroundColor, child: content);
     }
+
+    String? latestUserMessageId;
+    final messageSource = _observableMessages ?? widget.messages;
+    final timelineEntries = buildAgentRunTimelineEntries(
+      List<ChatMessageModel>.from(messageSource),
+      activeTaskIds: widget.activeAgentTaskIds,
+    );
+    for (final item in messageSource) {
+      if (item.user == 1) {
+        latestUserMessageId = item.id;
+        break;
+      }
+    }
+    Widget listView = ListView.builder(
+      controller: widget.scrollController,
+      reverse: false,
+      physics: const ClampingScrollPhysics(),
+      clipBehavior: Clip.hardEdge,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      itemCount: timelineEntries.length,
+      itemBuilder: (context, index) {
+        final dataIndex = timelineEntries.length - 1 - index;
+        final entry = timelineEntries[dataIndex];
+        final isOldestEntry = dataIndex == timelineEntries.length - 1;
+        final needTopPadding = isOldestEntry && !entry.isUserMessage;
+        return _buildTimelineListRow(
+          messageSource: messageSource,
+          entry: entry,
+          latestUserMessageId: latestUserMessageId,
+          padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
+        );
+      },
+    );
+    content = ClipRect(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: _handleListScrollNotification,
+          child: listView,
+        ),
+      ),
+    );
 
     final paddedContent = AnimatedPadding(
       duration: const Duration(milliseconds: 180),
