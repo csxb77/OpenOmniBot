@@ -232,6 +232,24 @@ void main() {
     expect(tester.widget<TextField>(find.byType(TextField)).minLines, 1);
   });
 
+  testWidgets('large composer starts collapsing while keyboard is closing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 2);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 1);
+    tester.view.resetViewInsets();
+  });
+
   testWidgets('large composer resizes from bottom to keep actions anchored', (
     tester,
   ) async {

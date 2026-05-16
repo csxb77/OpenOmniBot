@@ -293,28 +293,39 @@ class _ContextUsageRingPainter extends CustomPainter {
 class ChatInputAreaState extends _ChatInputAreaStateBase
     with _ChatInputAreaComposerMixin, _ChatInputAreaPopupMixin {}
 
+enum _ComposerKeyboardPhase { hidden, opening, visible, closing }
+
+extension on _ComposerKeyboardPhase {
+  bool get expandsEmptyTextField {
+    return switch (this) {
+      _ComposerKeyboardPhase.opening || _ComposerKeyboardPhase.visible => true,
+      _ComposerKeyboardPhase.hidden || _ComposerKeyboardPhase.closing => false,
+    };
+  }
+}
+
 class _ComposerInteractionState {
   const _ComposerInteractionState({
     required this.hasText,
     required this.hasFocus,
-    required this.keyboardVisible,
+    required this.keyboardPhase,
   });
 
   final bool hasText;
   final bool hasFocus;
-  final bool keyboardVisible;
+  final _ComposerKeyboardPhase keyboardPhase;
 
-  bool get expandsTextField => hasText || keyboardVisible;
+  bool get expandsTextField => hasText || keyboardPhase.expandsEmptyTextField;
 
   _ComposerInteractionState copyWith({
     bool? hasText,
     bool? hasFocus,
-    bool? keyboardVisible,
+    _ComposerKeyboardPhase? keyboardPhase,
   }) {
     return _ComposerInteractionState(
       hasText: hasText ?? this.hasText,
       hasFocus: hasFocus ?? this.hasFocus,
-      keyboardVisible: keyboardVisible ?? this.keyboardVisible,
+      keyboardPhase: keyboardPhase ?? this.keyboardPhase,
     );
   }
 
@@ -323,17 +334,21 @@ class _ComposerInteractionState {
     return other is _ComposerInteractionState &&
         other.hasText == hasText &&
         other.hasFocus == hasFocus &&
-        other.keyboardVisible == keyboardVisible;
+        other.keyboardPhase == keyboardPhase;
   }
 
   @override
-  int get hashCode => Object.hash(hasText, hasFocus, keyboardVisible);
+  int get hashCode => Object.hash(hasText, hasFocus, keyboardPhase);
 }
 
 abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const double _keyboardVisibleInsetThreshold = 0.5;
+  static const double _keyboardMotionEpsilon = 1.0;
+
   late ValueNotifier<_ComposerInteractionState> _composerStateNotifier;
   bool _isPopupVisible = false;
+  double _lastKeyboardInset = 0;
 
   final ScrollController _textFieldScrollController = ScrollController();
 
@@ -360,7 +375,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
       _ComposerInteractionState(
         hasText: widget.controller.text.trim().isNotEmpty,
         hasFocus: widget.focusNode.hasFocus,
-        keyboardVisible: false,
+        keyboardPhase: _ComposerKeyboardPhase.hidden,
       ),
     );
     widget.controller.addListener(_onTextChanged);
@@ -382,6 +397,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _syncKeyboardPhaseFromView();
     final palette = context.omniPalette;
     _terminalSvg = SvgPicture.asset(
       _kInputTerminalIconAsset,
@@ -525,27 +541,53 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    _syncKeyboardVisibilityFromView();
+    _syncKeyboardPhaseFromView();
   }
 
-  void _syncKeyboardVisibilityFromView() {
+  void _syncKeyboardPhaseFromView() {
     if (!mounted) return;
     final view = View.of(context);
     final bottomInset = view.viewInsets.bottom / view.devicePixelRatio;
-    final isVisible = bottomInset > 0.5;
-    _updateComposerState(keyboardVisible: isVisible);
+    final keyboardPhase = _resolveKeyboardPhase(bottomInset);
+    _updateComposerState(keyboardPhase: keyboardPhase);
+  }
+
+  _ComposerKeyboardPhase _resolveKeyboardPhase(double bottomInset) {
+    final normalizedInset = bottomInset.isFinite
+        ? math.max(0.0, bottomInset)
+        : 0.0;
+    final previousInset = _lastKeyboardInset;
+    _lastKeyboardInset = normalizedInset;
+
+    if (normalizedInset <= _keyboardVisibleInsetThreshold) {
+      return _ComposerKeyboardPhase.hidden;
+    }
+    if (previousInset <= _keyboardVisibleInsetThreshold ||
+        normalizedInset > previousInset + _keyboardMotionEpsilon) {
+      return _ComposerKeyboardPhase.opening;
+    }
+    if (normalizedInset < previousInset - _keyboardMotionEpsilon) {
+      return _ComposerKeyboardPhase.closing;
+    }
+
+    return switch (_composerStateNotifier.value.keyboardPhase) {
+      _ComposerKeyboardPhase.hidden ||
+      _ComposerKeyboardPhase.opening ||
+      _ComposerKeyboardPhase.visible => _ComposerKeyboardPhase.visible,
+      _ComposerKeyboardPhase.closing => _ComposerKeyboardPhase.closing,
+    };
   }
 
   void _updateComposerState({
     bool? hasText,
     bool? hasFocus,
-    bool? keyboardVisible,
+    _ComposerKeyboardPhase? keyboardPhase,
   }) {
     final current = _composerStateNotifier.value;
     final next = current.copyWith(
       hasText: hasText,
       hasFocus: hasFocus,
-      keyboardVisible: keyboardVisible,
+      keyboardPhase: keyboardPhase,
     );
     if (next == current) {
       return;
