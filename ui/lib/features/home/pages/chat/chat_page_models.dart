@@ -1130,7 +1130,11 @@ double resolveChatComposerKeyboardSpacer({
   final normalizedClearance = keyboardClearance.isFinite
       ? math.max(0.0, keyboardClearance)
       : 0.0;
-  return normalizedBottomInset + normalizedClearance;
+  final closingClearance = math.min(
+    normalizedClearance,
+    normalizedBottomInset,
+  );
+  return normalizedBottomInset + closingClearance;
 }
 
 bool isHdPadLandscapeViewport(Size size) {

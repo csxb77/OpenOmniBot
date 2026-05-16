@@ -293,11 +293,46 @@ class _ContextUsageRingPainter extends CustomPainter {
 class ChatInputAreaState extends _ChatInputAreaStateBase
     with _ChatInputAreaComposerMixin, _ChatInputAreaPopupMixin {}
 
+class _ComposerInteractionState {
+  const _ComposerInteractionState({
+    required this.hasText,
+    required this.hasFocus,
+    required this.keyboardVisible,
+  });
+
+  final bool hasText;
+  final bool hasFocus;
+  final bool keyboardVisible;
+
+  bool get expandsTextField => hasText || keyboardVisible;
+
+  _ComposerInteractionState copyWith({
+    bool? hasText,
+    bool? hasFocus,
+    bool? keyboardVisible,
+  }) {
+    return _ComposerInteractionState(
+      hasText: hasText ?? this.hasText,
+      hasFocus: hasFocus ?? this.hasFocus,
+      keyboardVisible: keyboardVisible ?? this.keyboardVisible,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _ComposerInteractionState &&
+        other.hasText == hasText &&
+        other.hasFocus == hasFocus &&
+        other.keyboardVisible == keyboardVisible;
+  }
+
+  @override
+  int get hashCode => Object.hash(hasText, hasFocus, keyboardVisible);
+}
+
 abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  late ValueNotifier<bool> _hasTextNotifier;
-  late ValueNotifier<bool> _isFocusedNotifier;
-  late ValueNotifier<bool> _isKeyboardVisibleNotifier;
+  late ValueNotifier<_ComposerInteractionState> _composerStateNotifier;
   bool _isPopupVisible = false;
 
   final ScrollController _textFieldScrollController = ScrollController();
@@ -321,11 +356,13 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   @override
   void initState() {
     super.initState();
-    _hasTextNotifier = ValueNotifier<bool>(
-      widget.controller.text.trim().isNotEmpty,
+    _composerStateNotifier = ValueNotifier<_ComposerInteractionState>(
+      _ComposerInteractionState(
+        hasText: widget.controller.text.trim().isNotEmpty,
+        hasFocus: widget.focusNode.hasFocus,
+        keyboardVisible: false,
+      ),
     );
-    _isFocusedNotifier = ValueNotifier<bool>(false);
-    _isKeyboardVisibleNotifier = ValueNotifier<bool>(false);
     widget.controller.addListener(_onTextChanged);
     widget.focusNode.addListener(_onFocusChanged);
     WidgetsBinding.instance.addObserver(this);
@@ -478,13 +515,11 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   }
 
   void _onTextChanged() {
-    _hasTextNotifier.value = widget.controller.text.trim().isNotEmpty;
-    _reportInputHeightAfterBuild();
+    _updateComposerState(hasText: widget.controller.text.trim().isNotEmpty);
   }
 
   void _onFocusChanged() {
-    _isFocusedNotifier.value = widget.focusNode.hasFocus;
-    _reportInputHeightAfterBuild();
+    _updateComposerState(hasFocus: widget.focusNode.hasFocus);
   }
 
   @override
@@ -498,10 +533,24 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     final view = View.of(context);
     final bottomInset = view.viewInsets.bottom / view.devicePixelRatio;
     final isVisible = bottomInset > 0.5;
-    if (_isKeyboardVisibleNotifier.value == isVisible) {
+    _updateComposerState(keyboardVisible: isVisible);
+  }
+
+  void _updateComposerState({
+    bool? hasText,
+    bool? hasFocus,
+    bool? keyboardVisible,
+  }) {
+    final current = _composerStateNotifier.value;
+    final next = current.copyWith(
+      hasText: hasText,
+      hasFocus: hasFocus,
+      keyboardVisible: keyboardVisible,
+    );
+    if (next == current) {
       return;
     }
-    _isKeyboardVisibleNotifier.value = isVisible;
+    _composerStateNotifier.value = next;
     _reportInputHeightAfterBuild();
   }
 
@@ -520,9 +569,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _textFieldScrollController.dispose();
-    _hasTextNotifier.dispose();
-    _isFocusedNotifier.dispose();
-    _isKeyboardVisibleNotifier.dispose();
+    _composerStateNotifier.dispose();
     _composerFlowController.dispose();
     widget.controller.removeListener(_onTextChanged);
     widget.focusNode.removeListener(_onFocusChanged);

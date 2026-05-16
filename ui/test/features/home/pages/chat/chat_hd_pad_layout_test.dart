@@ -154,6 +154,16 @@ void main() {
     );
   });
 
+  test('ramps composer clearance out as the soft keyboard finishes hiding', () {
+    expect(
+      resolveChatComposerKeyboardSpacer(
+        shouldLiftComposerForKeyboard: true,
+        bottomInset: 4,
+      ),
+      8,
+    );
+  });
+
   test('clamps overlay anchor when keyboard spacing exceeds viewport', () {
     final geometry = resolveChatPaneOverlayAnchorGeometry(
       viewportSize: const Size(420, 300),

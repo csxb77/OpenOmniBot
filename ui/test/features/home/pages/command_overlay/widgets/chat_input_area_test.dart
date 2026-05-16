@@ -232,6 +232,18 @@ void main() {
     expect(tester.widget<TextField>(find.byType(TextField)).minLines, 1);
   });
 
+  testWidgets('large composer resizes from bottom to keep actions anchored', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    final animatedSize = tester.widget<AnimatedSize>(find.byType(AnimatedSize));
+    expect(animatedSize.alignment, Alignment.bottomCenter);
+  });
+
   testWidgets('large composer stays expanded for existing text without focus', (
     tester,
   ) async {

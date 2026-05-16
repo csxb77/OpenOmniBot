@@ -102,60 +102,52 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
   /// 构建输入框内容区域（按钮、文本框等）
   Widget _buildInputContent() {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _hasTextNotifier,
-      builder: (context, hasText, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: _isFocusedNotifier,
-          builder: (context, _, _) {
-            final openClawButton = _buildOpenClawButton();
-            final hasPayload = hasText || widget.attachments.isNotEmpty;
-            return Row(
-              children: [
-                Expanded(child: _buildTextField()),
-                const SizedBox(width: 9),
-                _buildAnimatedButtonRow(
-                  hasText: hasPayload,
-                  openClawButton: openClawButton,
-                ),
-              ],
-            );
-          },
+    return ValueListenableBuilder<_ComposerInteractionState>(
+      valueListenable: _composerStateNotifier,
+      builder: (context, composerState, _) {
+        final openClawButton = _buildOpenClawButton();
+        final hasPayload =
+            composerState.hasText || widget.attachments.isNotEmpty;
+        return Row(
+          children: [
+            Expanded(child: _buildTextField()),
+            const SizedBox(width: 9),
+            _buildAnimatedButtonRow(
+              hasText: hasPayload,
+              openClawButton: openClawButton,
+            ),
+          ],
         );
       },
     );
   }
 
   Widget _buildLargeComposer() {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _hasTextNotifier,
-      builder: (context, hasText, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: _isKeyboardVisibleNotifier,
-          builder: (context, keyboardVisible, _) {
-            final hasPayload = hasText || widget.attachments.isNotEmpty;
-            final expandedInput = hasText || keyboardVisible;
+    return ValueListenableBuilder<_ComposerInteractionState>(
+      valueListenable: _composerStateNotifier,
+      builder: (context, composerState, _) {
+        final hasPayload =
+            composerState.hasText || widget.attachments.isNotEmpty;
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.attachments.isNotEmpty) ...[
-                  _buildAttachmentPreview(),
-                  const SizedBox(height: 8),
-                ],
-                if ((widget.selectedModelOverrideId ?? '')
-                    .trim()
-                    .isNotEmpty) ...[
-                  _buildSelectedModelOverrideChip(),
-                  const SizedBox(height: 8),
-                ],
-                _buildTextField(multiline: true, expanded: expandedInput),
-                const SizedBox(height: 6),
-                _buildLargeActionRow(hasPayload: hasPayload),
-              ],
-            );
-          },
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.attachments.isNotEmpty) ...[
+              _buildAttachmentPreview(),
+              const SizedBox(height: 8),
+            ],
+            if ((widget.selectedModelOverrideId ?? '').trim().isNotEmpty) ...[
+              _buildSelectedModelOverrideChip(),
+              const SizedBox(height: 8),
+            ],
+            _buildTextField(
+              multiline: true,
+              expanded: composerState.expandsTextField,
+            ),
+            const SizedBox(height: 6),
+            _buildLargeActionRow(hasPayload: hasPayload),
+          ],
         );
       },
     );
@@ -359,10 +351,11 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         if (!_isComposerHovered) return;
         setState(() => _isComposerHovered = false);
       },
-      child: ValueListenableBuilder<bool>(
-        valueListenable: _isFocusedNotifier,
+      child: ValueListenableBuilder<_ComposerInteractionState>(
+        valueListenable: _composerStateNotifier,
         child: content,
-        builder: (context, focused, child) {
+        builder: (context, composerState, child) {
+          final focused = composerState.hasFocus;
           final inputSurfaceColor = context.isDarkTheme
               ? palette.surfacePrimary
               : const Color(0xFFF9FCFF);
@@ -431,7 +424,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
                         child: AnimatedSize(
                           duration: const Duration(milliseconds: 220),
                           curve: Curves.easeOutCubic,
-                          alignment: Alignment.topCenter,
+                          alignment: Alignment.bottomCenter,
                           child: child ?? const SizedBox.shrink(),
                         ),
                       ),
