@@ -2790,6 +2790,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         onInputHeightChanged: _onInputHeightChanged,
         openClawEnabled: _openClawEnabled,
         onToggleOpenClaw: _setOpenClawEnabled,
+        useLargeComposerStyle: true,
         useAttachmentPickerForPlus: true,
         onPickAttachment: _pickAttachments,
         attachments: _pendingAttachments,

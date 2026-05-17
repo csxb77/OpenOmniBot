@@ -784,6 +784,7 @@ class _CommandOverlayState extends State<CommandOverlay> {
                       onToggleOpenClaw: _setOpenClawEnabled,
                       onLongPressOpenClaw: () =>
                           _showOpenClawCommandPanel(expand: true),
+                      useLargeComposerStyle: true,
                       useFrostedGlass: true, // command_overlay 使用毛玻璃效果
                       useAttachmentPickerForPlus: true,
                       onPickAttachment: _pickAttachments,
