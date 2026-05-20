@@ -151,6 +151,13 @@ class StorageService {
 
   static const String kAutoBackToChatAfterTaskKey =
       'auto_back_to_chat_after_task';
+  static const String kPreventScreenSleepDuringTasksKey =
+      'prevent_screen_sleep_during_tasks';
+  static const String kTaskCompletionNotificationEnabledKey =
+      'task_completion_notification_enabled';
+  static const String kPetOverlayImagePathKey = 'pet_overlay_image_path';
+  static const String kPetOverlaySelectedIdKey = 'pet_overlay_selected_id';
+  static const String kPetOverlayVisibleKey = 'pet_overlay_visible';
   static const String kThemeOptionKey = 'theme_option';
   static const String kLanguageOptionKey = 'language_option';
 
@@ -161,6 +168,59 @@ class StorageService {
 
   static Future<void> setAutoBackToChatAfterTaskEnabled(bool enabled) async {
     await setBool(kAutoBackToChatAfterTaskKey, enabled);
+  }
+
+  static Future<bool> isPreventScreenSleepDuringTasksEnabled() async {
+    final enabled = getBool(
+      kPreventScreenSleepDuringTasksKey,
+      defaultValue: true,
+    );
+    return enabled ?? true;
+  }
+
+  static Future<void> setPreventScreenSleepDuringTasksEnabled(
+    bool enabled,
+  ) async {
+    await setBool(kPreventScreenSleepDuringTasksKey, enabled);
+  }
+
+  static Future<bool> isTaskCompletionNotificationEnabled() async {
+    final enabled = getBool(
+      kTaskCompletionNotificationEnabledKey,
+      defaultValue: true,
+    );
+    return enabled ?? true;
+  }
+
+  static Future<void> setTaskCompletionNotificationEnabled(
+    bool enabled,
+  ) async {
+    await setBool(kTaskCompletionNotificationEnabledKey, enabled);
+  }
+
+  static String getPetOverlayImagePath() {
+    return getString(kPetOverlayImagePathKey, defaultValue: '') ?? '';
+  }
+
+  static Future<void> setPetOverlayImagePath(String path) async {
+    await setString(kPetOverlayImagePathKey, path);
+  }
+
+  static String getPetOverlaySelectedId() {
+    return getString(kPetOverlaySelectedIdKey, defaultValue: 'builtin:xiaowan') ??
+        'builtin:xiaowan';
+  }
+
+  static Future<void> setPetOverlaySelectedId(String id) async {
+    await setString(kPetOverlaySelectedIdKey, id);
+  }
+
+  static bool isPetOverlayVisible() {
+    return getBool(kPetOverlayVisibleKey, defaultValue: false) ?? false;
+  }
+
+  static Future<void> setPetOverlayVisible(bool visible) async {
+    await setBool(kPetOverlayVisibleKey, visible);
   }
 
   static AppThemeMode getThemeMode() {

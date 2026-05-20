@@ -53,6 +53,7 @@ import cn.com.omnimind.bot.ui.scheduled.ScheduledTaskReminderLoader
 import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.util.SchemeUtil
+import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
 import cn.com.omnimind.bot.agent.AgentAiCapabilityConfigSync
@@ -1514,6 +1515,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
 
         mainJob.launch {
             try {
+                TaskRuntimeSettings.onTaskStarted(context)
                 val workspaceMemoryService = WorkspaceMemoryService(context)
                 val preparedContent = prepareChatTaskContent(
                     content = content,
@@ -1562,11 +1564,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: PermissionException) {
                 removeChatTaskPersistenceState(taskID)
+                TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
                     result.error("PERMISSION_ERROR", e.message, null)
                 }
             } catch (e: Exception) {
                 removeChatTaskPersistenceState(taskID)
+                TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
                     result.error("DO_TASK_ERROR", e.message, null)
                 }
@@ -1723,6 +1727,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 conversation = payload
             )
         }
+        TaskRuntimeSettings.onTaskFinished(context)
+        if (persistenceState?.isError != true) {
+            TaskRuntimeSettings.notifyTaskFinished(
+                context = context,
+                title = "小万回复已完成",
+                message = "纯聊天回复已完成，点击查看详情",
+                conversationId = persistenceState?.conversationId,
+                conversationMode = persistenceState?.conversationMode
+            )
+        }
     }
 
     private suspend fun maybeAutoCompactChatOnlyConversation(
@@ -1810,6 +1824,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     private fun handleVlmTaskFinished(source: String, taskId: String? = null) {
         mainJob.launch(Dispatchers.Main) {
             OmniLog.d(TAG, "收到 VLM 任务完成回调: source=$source")
+            TaskRuntimeSettings.onTaskFinished(context)
+            TaskRuntimeSettings.notifyTaskFinished(
+                context = context,
+                title = "小万任务已完成",
+                message = "任务已完成，点击查看详情",
+                conversationId = currentConversationId,
+                conversationMode = currentConversationMode
+            )
             navigateBackToChatIfNeeded()
             invokeFlutterEventSafely(
                 "onVLMTaskFinish",
@@ -1860,6 +1882,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         }
         mainJob.launch {
             try {
+                TaskRuntimeSettings.onTaskStarted(context)
                 AssistsUtil.Core.createVLMOperationTask(
                     context,
                     call.argument<String>("goal")!!,
@@ -1874,10 +1897,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: PermissionException) {
+                TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
                     result.error("PERMISSION_ERROR", e.message, null)
                 }
             } catch (e: Exception) {
+                TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
                     result.error("DO_TASK_ERROR", e.message, null)
                 }
@@ -3799,6 +3824,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val agentRunScope = CoroutineScope(agentRunJob + Dispatchers.Default)
         val agentRunContext = ActiveAgentRunContext(taskId = taskId, job = agentRunJob)
         registerActiveAgentRun(taskId, agentRunContext)
+        TaskRuntimeSettings.onTaskStarted(context)
 
         agentRunScope.launch {
             var historyRepository: AgentConversationHistoryRepository? = null
@@ -4672,6 +4698,17 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                                 )
                             }
                         }
+                        if (scheduledSubagentMeta == null) {
+                            TaskRuntimeSettings.notifyTaskFinished(
+                                context = context,
+                                title = if (isSuccess) "Agent 任务已完成" else "Agent 任务已结束",
+                                message = finalText.ifBlank {
+                                    if (isSuccess) "任务已完成，点击查看详情" else "任务已结束，点击查看详情"
+                                },
+                                conversationId = conversationId ?: currentConversationId,
+                                conversationMode = resolvedConversationMode
+                            )
+                        }
                         sendStreamEvent(
                             kind = "completed",
                             entryId = completedEntryId,
@@ -4989,6 +5026,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     OmniLog.w(TAG, "dispatch agent startup failure failed: ${it.message}")
                 }
             } finally {
+                TaskRuntimeSettings.onTaskFinished(context)
                 clearActiveAgentJob(taskId, agentRunJob)
             }
         }
@@ -5739,6 +5777,69 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         }
     }
 
+    fun setPreventScreenSleepDuringTasksEnabled(
+        call: MethodCall,
+        result: MethodChannel.Result
+    ) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        try {
+            val success = TaskRuntimeSettings.setPreventSleepEnabled(context, enabled)
+            if (success) {
+                result.success("SUCCESS")
+            } else {
+                result.error("SAVE_PREVENT_SLEEP_SETTING_FAILED", "Failed to save prevent sleep setting", null)
+            }
+        } catch (e: Exception) {
+            OmniLog.e(TAG, "save prevent sleep setting failed: ${e.message}")
+            result.error("SAVE_PREVENT_SLEEP_SETTING_FAILED", e.message, null)
+        }
+    }
+
+    fun setTaskCompletionNotificationEnabled(
+        call: MethodCall,
+        result: MethodChannel.Result
+    ) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        try {
+            val success = TaskRuntimeSettings.setTaskCompletionNotificationEnabled(context, enabled)
+            if (success) {
+                result.success("SUCCESS")
+            } else {
+                result.error("SAVE_TASK_NOTIFICATION_SETTING_FAILED", "Failed to save task notification setting", null)
+            }
+        } catch (e: Exception) {
+            OmniLog.e(TAG, "save task notification setting failed: ${e.message}")
+            result.error("SAVE_TASK_NOTIFICATION_SETTING_FAILED", e.message, null)
+        }
+    }
+
+    fun showTaskCompletionNotification(
+        call: MethodCall,
+        result: MethodChannel.Result
+    ) {
+        try {
+            val title = call.argument<String>("title") ?: "Task completed"
+            val message = call.argument<String>("message") ?: "Tap to view details."
+            val conversationId = when (val raw = call.argument<Any>("conversationId")) {
+                is Number -> raw.toLong()
+                is String -> raw.toLongOrNull()
+                else -> null
+            }
+            val conversationMode = call.argument<String>("conversationMode")
+            TaskRuntimeSettings.notifyTaskFinished(
+                context = context,
+                title = title,
+                message = message,
+                conversationId = conversationId,
+                conversationMode = conversationMode
+            )
+            result.success("SUCCESS")
+        } catch (e: Exception) {
+            OmniLog.e(TAG, "show task completion notification failed: ${e.message}")
+            result.error("SHOW_TASK_NOTIFICATION_FAILED", e.message, null)
+        }
+    }
+
     /**
      * 完成对话
      */
@@ -5768,6 +5869,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val mode = (call.argument<String>("mode") ?: "normal").trim().ifEmpty { "normal" }
         currentConversationId = if (conversationId > 0) conversationId else null
         currentConversationMode = mode
+        TaskRuntimeSettings.setVisibleConversation(context, currentConversationId, currentConversationMode)
         mainJob.launch(Dispatchers.Main) {
             result.success("SUCCESS")
         }
