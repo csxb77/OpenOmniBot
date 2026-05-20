@@ -166,7 +166,7 @@ object AgentSystemPrompt {
 
                 工具使用规则：
                 - 需要应用包名或确认安装状态时，优先调用 `context_apps_query`。
-                - 需要日期、时间、时区信息时，调用 `context_time_now`。
+                - 需要当前日期、时间、星期或时区信息时，使用本轮自动注入的 `[time_context]`，不要再寻找当前时间查询工具。
                 - 设备自动化使用 `vlm_task`。
                 - 调用任意工具时都必须提供简洁的 `tool_title`，用于聊天界面展示，建议 4-12 个字，并使用与用户相同的语言。
                 - 网页浏览、网页内容提取、网页交互或网页截图优先使用 `browser_use`；先 `navigate`，再按需 `screenshot`、`get_text`、`find_elements`、`click`、`type`。
@@ -230,7 +230,7 @@ object AgentSystemPrompt {
 
                 Tool usage rules:
                 - When you need an app package name or need to confirm installation status, prefer `context_apps_query`.
-                - When you need date, time, or timezone information, call `context_time_now`.
+                - When you need the current date, time, weekday, or timezone, use this turn's injected `[time_context]`; do not look for a current-time query tool.
                 - Use `vlm_task` for on-device automation.
                 - Every tool call must include a concise `tool_title` for the chat UI. Keep it brief, roughly 4-12 words, and use the same language as the user.
                 - Prefer `browser_use` for web browsing, extraction, interaction, and screenshots. Start with `navigate`, then use `screenshot`, `get_text`, `find_elements`, `click`, or `type` as needed.

@@ -60,8 +60,6 @@ class SharedHelper(
         "未找到匹配的已安装应用。" to "No matching installed apps found.",
         "查询已安装应用失败" to "Failed to query installed apps",
         "浏览器操作失败" to "Browser action failed",
-        "正在查询当前时间" to "Querying current time",
-        "查询当前时间失败" to "Failed to query current time",
         "请提供继续执行所需的信息。" to "Please provide the information required to continue.",
         "视觉执行失败" to "Vision task failed",
         "视觉任务已完成" to "Vision task completed",
@@ -209,8 +207,6 @@ class SharedHelper(
         englishTextMap[text]?.let { return it }
 
         when {
-            text.startsWith("当前时间：") ->
-                return "Current time: ${text.removePrefix("当前时间：")}"
             text.startsWith("终端会话已启动：") ->
                 return "Terminal session started: ${text.removePrefix("终端会话已启动：")}"
             text.startsWith("终端会话不存在或不属于当前 workspace：") ->

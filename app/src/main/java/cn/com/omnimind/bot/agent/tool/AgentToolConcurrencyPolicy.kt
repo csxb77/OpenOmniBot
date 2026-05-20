@@ -36,7 +36,6 @@ object AgentToolConcurrencyPolicy {
         "file_search",
         "file_stat",
         "context_apps_query",
-        "context_time_now",
         "memory_search",
         "memory_load",
         "skills_list",

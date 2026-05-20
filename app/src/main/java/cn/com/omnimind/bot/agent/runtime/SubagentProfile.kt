@@ -62,7 +62,7 @@ object SubagentProfileRegistry {
                 "file_read", "file_list", "file_search", "file_stat",
                 "file_write", "file_edit", "file_move",
                 // 上下文
-                "context_apps_query", "context_time_now",
+                "context_apps_query",
                 // 记忆(读+写)
                 "memory_search", "memory_load",
                 "memory_write_daily", "memory_upsert_longterm",
@@ -95,7 +95,7 @@ object SubagentProfileRegistry {
                 // 文件只读
                 "file_read", "file_list", "file_search", "file_stat",
                 // 上下文
-                "context_apps_query", "context_time_now",
+                "context_apps_query",
                 // 记忆只读
                 "memory_search", "memory_load",
                 // 技能
@@ -122,9 +122,7 @@ object SubagentProfileRegistry {
                 "memory_write_daily", "memory_upsert_longterm",
                 "memory_rollup_day",
                 // 文件只读(辅助查证)
-                "file_read", "file_list", "file_search", "file_stat",
-                // 上下文
-                "context_time_now"
+                "file_read", "file_list", "file_search", "file_stat"
             )
         )
     )
