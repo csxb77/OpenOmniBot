@@ -5,8 +5,10 @@ import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.activity.MainActivity
+import cn.com.omnimind.bot.activity.StartupThemeResolver
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
+import cn.com.omnimind.bot.share.SharedOpenPreferenceStore
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -81,6 +83,37 @@ class AppStateChannel {
                 SharedOpenDraftStore.clearPending(appContext)
                 result.success(true)
             }
+            "getSharedOpenMode" -> {
+                val appContext = context?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                result.success(SharedOpenPreferenceStore.getOpenMode(appContext))
+            }
+            "getSharedOpenModes" -> {
+                val appContext = context?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                result.success(SharedOpenPreferenceStore.getOpenModes(appContext))
+            }
+            "setSharedOpenMode" -> {
+                val appContext = context?.applicationContext
+                val mode = call.argument<String>("mode")
+                val target = call.argument<String>("target")?.trim()?.lowercase()
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                val saved = when (target) {
+                    "image" -> SharedOpenPreferenceStore.setImageOpenMode(appContext, mode.orEmpty())
+                    "file" -> SharedOpenPreferenceStore.setFileOpenMode(appContext, mode.orEmpty())
+                    else -> SharedOpenPreferenceStore.setOpenMode(appContext, mode.orEmpty())
+                }
+                result.success(saved)
+            }
             "applyLanguagePreference" -> {
                 val appContext = context?.applicationContext
                 if (appContext == null) {
@@ -98,6 +131,20 @@ class AppStateChannel {
                 }.onFailure {
                     OmniLog.w(TAG, "Failed to refresh quick log widget language: ${it.message}")
                 }
+                result.success(true)
+            }
+            "applyThemeMode" -> {
+                val appContext = context?.applicationContext
+                val mode = call.argument<String>("mode")
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                if (mode == null) {
+                    result.error("INVALID_ARGUMENT", "mode is required", null)
+                    return
+                }
+                StartupThemeResolver.applyApplicationNightMode(appContext, mode)
                 result.success(true)
             }
             else -> {

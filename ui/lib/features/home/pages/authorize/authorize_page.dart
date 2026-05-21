@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ui/features/home/pages/authorize/widgets/permission_section.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
-import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/common_app_bar.dart';
 
@@ -60,7 +59,10 @@ class _AuthorizePageState extends State<AuthorizePage>
       final brand = (deviceInfo?['brand'] as String?)?.toLowerCase() ?? 'other';
       if (!mounted) return;
 
-      final specs = PermissionService.loadSpecs(brand: brand);
+      final specs = PermissionService.loadSpecs(
+        brand: brand,
+        includeOptionalAdvanced: true,
+      );
       final loadedPermissions = PermissionService.specsToPermissionData(
         specs,
         context: context,
@@ -80,7 +82,10 @@ class _AuthorizePageState extends State<AuthorizePage>
       debugPrint('获取设备品牌失败: $e');
       if (!mounted) return;
 
-      final specs = PermissionService.loadSpecs(brand: 'other');
+      final specs = PermissionService.loadSpecs(
+        brand: 'other',
+        includeOptionalAdvanced: true,
+      );
       final fallbackPermissions = PermissionService.specsToPermissionData(
         specs,
         context: context,
@@ -115,9 +120,7 @@ class _AuthorizePageState extends State<AuthorizePage>
     );
   }
 
-  void _appendSpecialPermissionsIfNeeded(
-    List<PermissionData> permissions,
-  ) {
+  void _appendSpecialPermissionsIfNeeded(List<PermissionData> permissions) {
     for (final requiredId in _requiredPermissionIds) {
       final exists = permissions.any((item) => item.id == requiredId);
       if (exists) {
@@ -146,9 +149,7 @@ class _AuthorizePageState extends State<AuthorizePage>
     if (LegacyTextLocalizer.isEnglish) {
       return 'Continue requires only: ${labels.join(', ')}';
     }
-    return LegacyTextLocalizer.localize(
-      '继续任务仅要求：${labels.join('、')}',
-    );
+    return LegacyTextLocalizer.localize('继续任务仅要求：${labels.join('、')}');
   }
 
   @override

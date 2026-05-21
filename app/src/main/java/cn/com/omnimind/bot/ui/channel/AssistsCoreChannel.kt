@@ -36,7 +36,7 @@ class AssistsCoreChannel {
             AssistsCoreManager.bindMainEngineChannel(channel!!)
         }
         channel!!.setMethodCallHandler { call, result ->
-            OmniLog.e(TAG, "setMethodCallHandler " + call.method)            
+            OmniLog.d(TAG, "setMethodCallHandler " + call.method)
             when (call.method) {
                 "createCompanionTask" -> {
                     assistsCoreManager!!.createCompanionTask( call, result)
@@ -64,6 +64,9 @@ class AssistsCoreChannel {
                 "agentSkillInstallBuiltin" -> {
                     assistsCoreManager!!.agentSkillInstallBuiltin(call, result)
                 }
+                "agentSkillSyncOfficialRepository" -> {
+                    assistsCoreManager!!.agentSkillSyncOfficialRepository(call, result)
+                }
                 "getModelProviderConfig" -> {
                     assistsCoreManager!!.getModelProviderConfig(call, result)
                 }
@@ -72,6 +75,12 @@ class AssistsCoreChannel {
                 }
                 "listRecentAiRequestLogs" -> {
                     assistsCoreManager!!.listRecentAiRequestLogs(call, result)
+                }
+                "listRuntimeLogs" -> {
+                    assistsCoreManager!!.listRuntimeLogs(call, result)
+                }
+                "clearRuntimeLogs" -> {
+                    assistsCoreManager!!.clearRuntimeLogs(call, result)
                 }
                 "saveModelProviderProfile" -> {
                     assistsCoreManager!!.saveModelProviderProfile(call, result)
@@ -180,7 +189,7 @@ class AssistsCoreChannel {
                 }
 
                 "cancelChatTask" -> {
-                    OmniLog.e(TAG, "cancelChatTask")
+                    OmniLog.d(TAG, "cancelChatTask")
                     assistsCoreManager!!.cancelChatTask( call, result)
                 }
 

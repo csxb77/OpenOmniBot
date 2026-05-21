@@ -5,16 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:flutter_switch/flutter_switch.dart';
 import 'package:ui/core/router/go_router_manager.dart';
+import 'package:ui/features/local_model/local_model_feature.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/assists_core_service.dart';
-import 'package:ui/services/hide_from_recents_service.dart';
 import 'package:ui/services/mcp_server_service.dart';
 import 'package:ui/services/special_permission.dart';
-import 'package:ui/services/storage_service.dart';
 import 'package:ui/services/workspace_memory_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
-import 'package:ui/utils/cache_util.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
 
@@ -26,9 +24,6 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  bool vibrationEnabled = true;
-  bool hideFromRecentsEnabled = false;
-  bool _autoBackToChatAfterTaskEnabled = true;
   bool _mcpEnabled = false;
   bool _mcpLoaded = false;
   bool _mcpBusy = false;
@@ -40,15 +35,6 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    _autoBackToChatAfterTaskEnabled =
-        StorageService.getBool(
-          StorageService.kAutoBackToChatAfterTaskKey,
-          defaultValue: true,
-        ) ??
-        true;
-    _loadVibrationState();
-    _loadHideFromRecentsState();
-    _loadAutoBackToChatAfterTaskState();
     _loadMcpServerState();
     _loadWorkspaceMemoryState();
     _configChangedSubscription = AssistsMessageService
@@ -65,91 +51,6 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _configChangedSubscription?.cancel();
     super.dispose();
-  }
-
-  Future<void> _loadVibrationState() async {
-    try {
-      final enabled = await CacheUtil.getBool(
-        'app_vibrate',
-        defaultValue: true,
-      );
-      setState(() {
-        vibrationEnabled = enabled;
-      });
-      debugPrint('Vibration state loaded: $vibrationEnabled');
-    } catch (e) {
-      debugPrint('Error loading vibration state: $e');
-    }
-  }
-
-  Future<void> _loadHideFromRecentsState() async {
-    try {
-      final enabled =
-          StorageService.getBool('hide_from_recents', defaultValue: false) ??
-          false;
-      setState(() {
-        hideFromRecentsEnabled = enabled;
-      });
-    } catch (e) {
-      debugPrint('Error loading hide from recents state: $e');
-    }
-  }
-
-  Future<void> _onHideFromRecentsChanged(bool value) async {
-    setState(() {
-      hideFromRecentsEnabled = value;
-    });
-
-    final success = await HideFromRecentsService.setExcludeFromRecents(value);
-    if (!success) {
-      if (!mounted) return;
-      setState(() {
-        hideFromRecentsEnabled = !value;
-      });
-      showToast(
-        context.l10n.settingsHideRecentsFailed,
-        type: ToastType.error,
-      );
-    }
-  }
-
-  Future<void> _loadAutoBackToChatAfterTaskState() async {
-    try {
-      final enabled = await StorageService.isAutoBackToChatAfterTaskEnabled();
-      if (!mounted) return;
-      if (_autoBackToChatAfterTaskEnabled == enabled) return;
-      setState(() {
-        _autoBackToChatAfterTaskEnabled = enabled;
-      });
-    } catch (e) {
-      debugPrint('Error loading auto back to chat setting: $e');
-    }
-  }
-
-  Future<void> _onAutoBackToChatAfterTaskChanged(bool value) async {
-    try {
-      await StorageService.setAutoBackToChatAfterTaskEnabled(value);
-      final synced =
-          await AssistsMessageService.setAutoBackToChatAfterTaskEnabled(value);
-      if (!synced) {
-        throw Exception('native_sync_failed');
-      }
-      if (!mounted) return;
-      setState(() {
-        _autoBackToChatAfterTaskEnabled = value;
-      });
-      showToast(
-        value
-            ? context.l10n.settingsAutoBackEnabledToast
-            : context.l10n.settingsAutoBackDisabledToast,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      showToast(
-        context.l10n.settingsSaveFailed,
-        type: ToastType.error,
-      );
-    }
   }
 
   Future<void> _loadMcpServerState() async {
@@ -207,20 +108,17 @@ class _SettingsPageState extends State<SettingsPage> {
         final endpoint = info?.endpoint ?? '';
         if (endpoint.isNotEmpty) {
           showToast(
-          context.l10n.settingsMcpEnabledToast(endpoint),
-          type: ToastType.success,
-        );
+            context.l10n.settingsMcpEnabledToast(endpoint),
+            type: ToastType.success,
+          );
         }
       } else {
-        showToast(
-          context.l10n.settingsMcpDisabledToast,
-        );
+        showToast(context.l10n.settingsMcpDisabledToast);
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
       showToast(
-        e.message ??
-            context.l10n.settingsMcpToggleFailed,
+        e.message ?? context.l10n.settingsMcpToggleFailed,
         type: ToastType.error,
       );
       setState(() {
@@ -228,10 +126,7 @@ class _SettingsPageState extends State<SettingsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      showToast(
-        context.l10n.settingsMcpToggleFailed,
-        type: ToastType.error,
-      );
+      showToast(context.l10n.settingsMcpToggleFailed, type: ToastType.error);
       setState(() {
         _mcpEnabled = !enable;
       });
@@ -267,7 +162,9 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 8),
               Text(context.l10n.settingsMcpToken),
               SelectableText(
-                info.token.isEmpty ? context.l10n.settingsNotGenerated : info.token,
+                info.token.isEmpty
+                    ? context.l10n.settingsNotGenerated
+                    : info.token,
               ),
               const SizedBox(height: 12),
               Row(
@@ -276,9 +173,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: info.endpoint));
                       Navigator.of(context).pop();
-                      showToast(
-                        context.l10n.settingsCopiedAddress,
-                      );
+                      showToast(context.l10n.settingsCopiedAddress);
                     },
                     child: Text(context.l10n.settingsCopyAddress),
                   ),
@@ -286,9 +181,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: info.token));
                       Navigator.of(context).pop();
-                      showToast(
-                        context.l10n.settingsCopiedToken,
-                      );
+                      showToast(context.l10n.settingsCopiedToken);
                     },
                     child: Text(context.l10n.settingsCopyToken),
                   ),
@@ -301,9 +194,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         setState(() {
                           _mcpInfo = refreshed ?? _mcpInfo;
                         });
-                        showToast(
-                          context.l10n.settingsTokenRefreshed,
-                        );
+                        showToast(context.l10n.settingsTokenRefreshed);
                       } catch (_) {
                         showToast(
                           context.l10n.settingsTokenRefreshFailed,
@@ -378,15 +269,15 @@ class _SettingsPageState extends State<SettingsPage> {
               GoRouterManager.push('/home/scene_model_setting');
             },
           ),
-          _SettingItem(
-            icon: Icons.memory_outlined,
-            iconSvg: 'assets/home/local_model_cpu_icon.svg',
-            title: context.l10n.settingsLocalModelsTitle,
-            subtitle: context.l10n.settingsLocalModelsSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/local_models?tab=service');
-            },
-          ),
+          if (localModelFeature.enabled)
+            _SettingItem(
+              icon: Icons.memory_outlined,
+              title: context.l10n.settingsLocalModelsTitle,
+              subtitle: context.l10n.settingsLocalModelsSubtitle,
+              onTap: () {
+                GoRouterManager.push('/home/local_models?tab=service');
+              },
+            ),
           _SettingItem(
             icon: Icons.cloud_sync_outlined,
             iconSvg: 'assets/home/mem0_cloud_setting_icon.svg',
@@ -438,29 +329,11 @@ class _SettingsPageState extends State<SettingsPage> {
               GoRouterManager.push('/home/termux_setting');
             },
           ),
-          _SettingItem(
-            icon: Icons.visibility_off_outlined,
-            iconSvg: 'assets/home/hide_recents_setting_icon.svg',
-            title: context.l10n.settingsHideRecentsTitle,
-            subtitle: context.l10n.settingsHideRecentsSubtitle,
-            trailing: _buildSwitchTrailing(
-              value: hideFromRecentsEnabled,
-              onToggle: _onHideFromRecentsChanged,
-            ),
-          ),
         ],
       ),
       _SettingSection(
         label: context.l10n.settingsSectionExperienceAppearance,
         items: [
-          _SettingItem(
-            icon: Icons.alarm_outlined,
-            title: context.l10n.settingsAlarmTitle,
-            subtitle: context.l10n.settingsAlarmSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/alarm_setting');
-            },
-          ),
           _SettingItem(
             icon: Icons.wallpaper_outlined,
             title: context.l10n.settingsAppearanceTitle,
@@ -470,35 +343,28 @@ class _SettingsPageState extends State<SettingsPage> {
             },
           ),
           _SettingItem(
-            icon: Icons.vibration,
-            iconSvg: 'assets/home/vibration_icon.svg',
-            title: context.l10n.settingsVibrationTitle,
-            subtitle: context.l10n.settingsVibrationSubtitle,
-            trailing: _buildSwitchTrailing(
-              value: vibrationEnabled,
-              onToggle: (val) async {
-                await CacheUtil.cacheBool('app_vibrate', val);
-                setState(() {
-                  vibrationEnabled = val;
-                });
-              },
-            ),
-          ),
-          _SettingItem(
-            icon: Icons.chat_outlined,
-            iconSvg: 'assets/home/auto_back_chat_setting_icon.svg',
-            title: context.l10n.settingsAutoBackTitle,
-            subtitle: context.l10n.settingsAutoBackSubtitle,
-            trailing: _buildSwitchTrailing(
-              value: _autoBackToChatAfterTaskEnabled,
-              onToggle: _onAutoBackToChatAfterTaskChanged,
-            ),
+            icon: Icons.more_horiz_rounded,
+            iconSvg: 'assets/home/misc_blocks_setting_icon.svg',
+            title: context.trLegacy('杂项'),
+            subtitle: context.trLegacy('首页、后台隐藏、闹钟、振动与打开方式'),
+            onTap: () {
+              GoRouterManager.push('/home/experience_misc_setting');
+            },
           ),
         ],
       ),
       _SettingSection(
         label: context.l10n.settingsSectionPermissionInfo,
         items: [
+          _SettingItem(
+            icon: Icons.admin_panel_settings_outlined,
+            iconSvg: 'assets/home/app_permission_authorize_icon.svg',
+            title: context.l10n.authorizePageTitle,
+            subtitle: context.trLegacy('查看并配置无障碍、悬浮窗、Shizuku 等权限'),
+            onTap: () {
+              GoRouterManager.push('/home/authorize_setting');
+            },
+          ),
           _SettingItem(
             icon: Icons.security,
             iconSvg: 'assets/home/companion_permission_setting_icon.svg',
@@ -512,9 +378,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 }
               } catch (e) {
                 debugPrint('Failed to request installed apps permission: $e');
-                showToast(
-                  context.l10n.settingsInstalledAppsPermissionFailed,
-                );
+                showToast(context.l10n.settingsInstalledAppsPermissionFailed);
               }
             },
           ),

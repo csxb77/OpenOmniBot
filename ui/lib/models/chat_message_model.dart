@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:ui/models/chat_link_preview.dart';
+
 /// AI聊天消息模型
 ///
 /// 支持不同类型的消息：用户消息、AI回复消息，以及卡片类型消息
@@ -30,6 +32,10 @@ class ChatMessageModel {
   /// 是否为总结中状态
   final bool isSummarizing;
 
+  /// 原生流式排序元数据
+  final Map<String, dynamic>? streamMeta;
+  final String? reasoningContent;
+
   /// 创建时间
   final DateTime createAt;
 
@@ -42,6 +48,8 @@ class ChatMessageModel {
     this.isFirst = false,
     this.isError = false,
     this.isSummarizing = false,
+    this.streamMeta,
+    this.reasoningContent,
     DateTime? createAt,
   }) : createAt = createAt ?? DateTime.now();
 
@@ -72,6 +80,18 @@ class ChatMessageModel {
   /// 获取数据库ID（用于本地存储和渲染key）
   int? get dbId => _asNullableInt(content?['dbId']);
 
+  List<ChatLinkPreview> get linkPreviews {
+    final raw = content?['linkPreviews'];
+    if (raw is! List) {
+      return const <ChatLinkPreview>[];
+    }
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item.cast<String, dynamic>()))
+        .map(ChatLinkPreview.fromJson)
+        .toList();
+  }
+
   /// 从JSON创建
   factory ChatMessageModel.fromJson(Map<String, dynamic> json) {
     final normalizedContent = _normalizeDynamic(json['content']);
@@ -93,6 +113,12 @@ class ChatMessageModel {
       isFirst: json['isFirst'] as bool? ?? false,
       isError: json['isError'] as bool? ?? false,
       isSummarizing: json['isSummarizing'] as bool? ?? false,
+      streamMeta: _normalizeDynamic(json['streamMeta']) is Map<String, dynamic>
+          ? _normalizeDynamic(json['streamMeta']) as Map<String, dynamic>
+          : null,
+      reasoningContent: _normalizeOptionalString(
+        json['reasoning_content'] ?? json['reasoningContent'],
+      ),
       createAt: _parseCreateAt(json['createAt']),
     );
   }
@@ -108,6 +134,8 @@ class ChatMessageModel {
       'isFirst': isFirst,
       'isError': isError,
       'isSummarizing': isSummarizing,
+      if (streamMeta != null) 'streamMeta': streamMeta,
+      if (reasoningContent != null) 'reasoning_content': reasoningContent,
       'createAt': createAt.toIso8601String(),
     };
   }
@@ -128,6 +156,7 @@ class ChatMessageModel {
     String text, {
     String? id,
     bool isLoading = false,
+    String? reasoningContent,
   }) {
     final messageId = id ?? DateTime.now().millisecondsSinceEpoch.toString();
     return ChatMessageModel(
@@ -136,6 +165,7 @@ class ChatMessageModel {
       user: 2, // AI
       content: {'text': text, 'id': messageId},
       isLoading: isLoading,
+      reasoningContent: _normalizeOptionalString(reasoningContent),
     );
   }
 
@@ -143,6 +173,7 @@ class ChatMessageModel {
   factory ChatMessageModel.cardMessage(
     Map<String, dynamic> cardData, {
     String? id,
+    Map<String, dynamic>? streamMeta,
   }) {
     final messageId = id ?? DateTime.now().millisecondsSinceEpoch.toString();
     return ChatMessageModel(
@@ -150,6 +181,7 @@ class ChatMessageModel {
       type: 2, // 卡片消息
       user: 3, // 系统
       content: {'cardData': cardData, 'id': messageId},
+      streamMeta: streamMeta,
     );
   }
 
@@ -163,6 +195,8 @@ class ChatMessageModel {
     bool? isFirst,
     bool? isError,
     bool? isSummarizing,
+    Map<String, dynamic>? streamMeta,
+    String? reasoningContent,
     DateTime? createAt,
   }) {
     return ChatMessageModel(
@@ -174,6 +208,8 @@ class ChatMessageModel {
       isFirst: isFirst ?? this.isFirst,
       isError: isError ?? this.isError,
       isSummarizing: isSummarizing ?? this.isSummarizing,
+      streamMeta: streamMeta ?? this.streamMeta,
+      reasoningContent: reasoningContent ?? this.reasoningContent,
       createAt: createAt ?? this.createAt,
     );
   }
@@ -201,6 +237,11 @@ class ChatMessageModel {
       }
     }
     return null;
+  }
+
+  static String? _normalizeOptionalString(dynamic raw) {
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
   }
 
   static DateTime _parseCreateAt(dynamic raw) {

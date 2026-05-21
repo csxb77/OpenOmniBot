@@ -3,28 +3,27 @@ package cn.com.omnimind.bot
 import BaseApplication
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.baselib.llm.LocalModelProviderBridge
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentAiCapabilityConfigSync
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.SkillIndexService
 import cn.com.omnimind.bot.agent.WorkspaceMemoryRollupScheduler
 import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
+import cn.com.omnimind.bot.activity.StartupThemeResolver
+import cn.com.omnimind.bot.localmodel.LocalModelFeatureInstaller
 import cn.com.omnimind.bot.mcp.McpServerManager
-import cn.com.omnimind.bot.omniinfer.OmniInferLocalRuntime
-import cn.com.omnimind.bot.omniinfer.OmniInferMnnModelsManager
-import cn.com.omnimind.bot.omniinfer.OmniInferModelsManager
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.update.AppUpdateManager
 import cn.com.omnimind.bot.util.NestedBackgroundStateUtil
-import com.omniinfer.server.OmniInferServer
+import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import com.rk.resources.Res
 import com.tencent.mmkv.MMKV
 import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineGroup
 import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.plugins.GeneratedPluginRegistrant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +75,7 @@ class App : BaseApplication() {
                 .setDartEntrypoint(dartEntrypoint)
 
             val engine = getFlutterEngineGroup().createAndRunEngine(options)
+            GeneratedPluginRegistrant.registerWith(engine)
 
             OmniLog.d(
                 "AppStartup",
@@ -95,34 +95,16 @@ class App : BaseApplication() {
             "App super.onCreate cost: ${System.currentTimeMillis() - appStartTime}ms"
         )
         instance = this
+        StartupThemeResolver.applyStoredApplicationNightMode(this)
         AppLocaleManager.applyAppLocale(this)
         com.rk.libcommons.application = this
         Res.application = this
 
         MMKV.initialize(this)
+        setupUncaughtExceptionHandler()
 
         DatabaseHelper.init(this)
-        OmniInferServer.init(this)
-        OmniInferLocalRuntime.setContext(this)
-        LocalModelProviderBridge.setDelegate(
-            object : LocalModelProviderBridge.Delegate {
-                override suspend fun prepareForRequest(
-                    profileId: String?,
-                    apiBase: String?,
-                    modelId: String,
-                ): Boolean {
-                    val ggufReady = runCatching {
-                        OmniInferModelsManager.ensureModelReady(modelId)
-                    }.getOrDefault(false)
-                    if (ggufReady) {
-                        return true
-                    }
-                    return runCatching {
-                        OmniInferMnnModelsManager.ensureModelReady(modelId)
-                    }.getOrDefault(false)
-                }
-            }
-        )
+        LocalModelFeatureInstaller.install(this)
 
         val nestedStart = System.currentTimeMillis()
         NestedBackgroundStateUtil.init(this)
@@ -154,6 +136,9 @@ class App : BaseApplication() {
         runCatching {
             QuickLogWidgetUpdater.updateAll(this)
         }
+        runCatching {
+            ShizukuCapabilityManager.get(this)
+        }
 
         initSDKsAfterPrivacyConsent()
         McpServerManager.restoreIfEnabled(this)
@@ -166,6 +151,28 @@ class App : BaseApplication() {
             "AppStartup",
             "App onCreate total cost: ${System.currentTimeMillis() - appStartTime}ms"
         )
+    }
+
+    private fun setupUncaughtExceptionHandler() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                OmniLog.storeCrashLog(
+                    tag = "UncaughtException",
+                    message = "Thread: ${thread.name}",
+                    throwable = throwable,
+                )
+            } catch (_: Throwable) {
+                // Preserve the original crash path even if crash-log persistence fails.
+            } finally {
+                if (defaultHandler != null) {
+                    defaultHandler.uncaughtException(thread, throwable)
+                } else {
+                    android.os.Process.killProcess(android.os.Process.myPid())
+                    kotlin.system.exitProcess(10)
+                }
+            }
+        }
     }
 
     fun initSDKsAfterPrivacyConsent() {

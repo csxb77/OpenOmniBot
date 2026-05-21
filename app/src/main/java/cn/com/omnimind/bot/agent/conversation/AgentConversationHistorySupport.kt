@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.database.AgentConversationEntry
+import cn.com.omnimind.baselib.database.AgentConversationEntryRecord
 import cn.com.omnimind.baselib.llm.AssistantToolCall
 import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
@@ -10,6 +11,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.time.Instant
 
 internal object AgentConversationHistorySupport {
     private data class ThinkingEntryRef(
@@ -32,9 +34,26 @@ internal object AgentConversationHistorySupport {
         val messagesToCompact: List<ChatCompletionMessage>
     )
 
+    data class MaterializedEntry(
+        val entry: AgentConversationEntry,
+        val needsRepair: Boolean
+    )
+
     private const val MAX_TOOL_SUMMARY_CHARS = 240
     private const val MAX_TOOL_PREVIEW_CHARS = 800
     private const val MAX_TOOL_TERMINAL_CHARS = 1200
+    private const val MAX_DISPLAY_INLINE_CHARS = 600
+    private const val MAX_DISPLAY_TOOL_JSON_CHARS = 2 * 1024
+    private const val MAX_DISPLAY_TOOL_TERMINAL_CHARS = 8 * 1024
+    private const val MAX_DISPLAY_THINKING_CHARS = 8 * 1024
+    private const val MAX_DISPLAY_CARD_JSON_CHARS = 64 * 1024
+    private const val MAX_DISPLAY_LIST_ITEMS = 8
+    internal const val MAX_STORAGE_ENTRY_PAYLOAD_CHARS = 32 * 1024
+    internal const val MAX_STORAGE_SUMMARY_CHARS = 2 * 1024
+    private const val MAX_STORAGE_TOOL_JSON_CHARS = 4 * 1024
+    private const val MAX_STORAGE_TOOL_TERMINAL_CHARS = 8 * 1024
+    private const val MAX_STORAGE_MESSAGE_TEXT_CHARS = 24 * 1024
+    private const val DISPLAY_TRUNCATION_NOTICE = "[Earlier content omitted]\n"
     private const val LEGACY_CONTEXT_SUMMARY_SYSTEM_PREFIX = """
 以下是同一会话较早历史的压缩总结。它替代了压缩点之前的原始消息，请在后续对话中将其视为既有上下文。
 如果总结与压缩点之后的新消息冲突，应以后续原始消息为准。
@@ -44,6 +63,159 @@ internal object AgentConversationHistorySupport {
         "<context-summary> The following is a summary of the earlier conversation that was compacted to save context space."
 
     private val gson = Gson()
+
+    fun buildTextMessagePayload(
+        messageId: String,
+        user: Int,
+        text: String,
+        attachments: List<Map<String, Any?>> = emptyList(),
+        reasoningContent: String? = null,
+        isError: Boolean,
+        streamMeta: Map<String, Any?>?,
+        createdAt: Long
+    ): Map<String, Any?> {
+        val safeText = AgentTextSanitizer.sanitizeUtf16(text)
+        val safeReasoning = AgentTextSanitizer.sanitizeUtf16(reasoningContent.orEmpty())
+            .trim()
+            .takeIf { it.isNotBlank() }
+        val historyAttachments = AgentImageAttachmentSupport
+            .prepareAttachments(attachments)
+            .historyAttachments
+        val content = linkedMapOf<String, Any?>(
+            "text" to safeText,
+            "id" to messageId
+        )
+        if (historyAttachments.isNotEmpty()) {
+            content["attachments"] = historyAttachments
+        }
+        return linkedMapOf(
+            "id" to messageId,
+            "type" to 1,
+            "user" to user,
+            "content" to content,
+            "isLoading" to false,
+            "isFirst" to false,
+            "isError" to isError,
+            "isSummarizing" to false,
+            "streamMeta" to streamMeta,
+            "createAt" to Instant.ofEpochMilli(createdAt).toString()
+        ).apply {
+            if (user == 2 && safeReasoning != null) {
+                put("reasoning_content", safeReasoning)
+            }
+        }.filterValues { it != null }
+    }
+
+    fun buildCardMessagePayload(
+        messageId: String,
+        cardData: Map<String, Any?>,
+        isError: Boolean,
+        streamMeta: Map<String, Any?>?,
+        createdAt: Long
+    ): Map<String, Any?> {
+        return linkedMapOf(
+            "id" to messageId,
+            "type" to 2,
+            "user" to 3,
+            "content" to linkedMapOf(
+                "cardData" to cardData,
+                "id" to messageId
+            ),
+            "isLoading" to false,
+            "isFirst" to false,
+            "isError" to isError,
+            "isSummarizing" to false,
+            "streamMeta" to streamMeta,
+            "createAt" to Instant.ofEpochMilli(createdAt).toString()
+        ).filterValues { it != null }
+    }
+
+    private fun readReasoningContent(payload: Map<String, Any?>): String? {
+        return AgentTextSanitizer.sanitizeUtf16(
+            payload["reasoning_content"]?.toString()
+                ?: payload["reasoningContent"]?.toString()
+                ?: ""
+        ).trim().takeIf { it.isNotBlank() }
+    }
+
+    fun materializeRecord(record: AgentConversationEntryRecord): MaterializedEntry {
+        val normalizedSummary = normalizeStoredSummary(record.summary, record.entryType)
+        val baseEntry = record.toEntry().copy(summary = normalizedSummary)
+        if (!record.payloadTruncated && !record.summaryTruncated) {
+            return MaterializedEntry(baseEntry, false)
+        }
+        if (!record.payloadTruncated) {
+            return MaterializedEntry(
+                prepareEntryForStorage(baseEntry),
+                true
+            )
+        }
+        val recoveredEntry = when (record.entryType) {
+            AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
+                buildStorageSafeGenericToolEntry(
+                    entry = baseEntry.copy(payloadJson = ""),
+                    originalPayloadLength = record.payloadOriginalLength
+                )
+            }
+
+            AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD -> {
+                buildRecoveredUiCardEntry(
+                    entry = baseEntry.copy(payloadJson = ""),
+                    originalPayloadLength = record.payloadOriginalLength
+                )
+            }
+
+            AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+            AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE -> {
+                buildRecoveredTextEntry(
+                    entry = baseEntry.copy(payloadJson = ""),
+                    originalPayloadLength = record.payloadOriginalLength
+                )
+            }
+
+            else -> baseEntry.copy(payloadJson = "")
+        }
+        return MaterializedEntry(recoveredEntry, true)
+    }
+
+    fun prepareEntryForStorage(entry: AgentConversationEntry): AgentConversationEntry {
+        val normalizedSummary = normalizeStoredSummary(entry.summary, entry.entryType)
+        val normalizedEntry = entry.copy(summary = normalizedSummary)
+        return when (entry.entryType) {
+            AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
+                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
+                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
+                ) {
+                    normalizedEntry
+                } else {
+                    buildStorageSafeToolEntry(normalizedEntry)
+                }
+            }
+
+            AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD -> {
+                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
+                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
+                ) {
+                    normalizedEntry
+                } else {
+                    buildStorageSafeUiCardEntry(normalizedEntry)
+                }
+            }
+
+            AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+            AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE -> {
+                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
+                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
+                ) {
+                    normalizedEntry
+                } else {
+                    buildStorageSafeTextEntry(normalizedEntry)
+                }
+            }
+
+            else -> normalizedEntry
+        }
+    }
 
     fun buildPromptSeedFromEntries(
         entries: List<AgentConversationEntry>,
@@ -307,6 +479,26 @@ internal object AgentConversationHistorySupport {
             return incoming[key] ?: existing[key]
         }
 
+        fun mergeMapList(key: String): List<Map<String, Any?>> {
+            val merged = linkedMapOf<String, Map<String, Any?>>()
+            fun addAll(items: List<Map<String, Any?>>) {
+                for (item in items) {
+                    val identity = item["id"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: listOf(
+                            item["seq"],
+                            item["kind"],
+                            item["taskIndex"],
+                            item["summary"],
+                            item["toolName"]
+                        ).joinToString("|") { it?.toString().orEmpty() }
+                    merged[identity] = item
+                }
+            }
+            addAll(toListOfStringAnyMap(existing[key]))
+            addAll(toListOfStringAnyMap(incoming[key]))
+            return merged.values.toList()
+        }
+
         val toolType = chooseText("toolType", "builtin")
         val existingTerminalOutput = rawText(existing, "terminalOutput")
         val terminalOutputDelta = rawText(incoming, "terminalOutputDelta")
@@ -321,9 +513,11 @@ internal object AgentConversationHistorySupport {
         } else {
             chooseText("terminalOutput")
         }
+        val reasoningContent = readReasoningContent(incoming) ?: readReasoningContent(existing)
 
         return linkedMapOf<String, Any?>(
             "taskId" to chooseAny("taskId"),
+            "streamMeta" to chooseAny("streamMeta"),
             "cardId" to chooseText("cardId"),
             "toolName" to chooseText("toolName"),
             "displayName" to chooseText("displayName"),
@@ -332,7 +526,10 @@ internal object AgentConversationHistorySupport {
             "serverName" to chooseAny("serverName"),
             "status" to chooseText("status", fallbackStatus),
             "summary" to chooseText("summary", fallbackSummary),
+            "reasoning_content" to reasoningContent,
             "progress" to chooseText("progress"),
+            "subagentStatusText" to chooseText("subagentStatusText"),
+            "subagentEvents" to mergeMapList("subagentEvents"),
             "args" to chooseText("args"),
             "argsJson" to chooseText("argsJson"),
             "resultPreviewJson" to chooseText("resultPreviewJson"),
@@ -374,7 +571,8 @@ internal object AgentConversationHistorySupport {
         return listOf(
             ChatCompletionMessage(
                 role = "assistant",
-                content = content
+                content = content,
+                reasoningContent = readReasoningContent(payload)
             )
         )
     }
@@ -402,6 +600,9 @@ internal object AgentConversationHistorySupport {
 
     private fun buildToolReplayMessages(entry: AgentConversationEntry): List<ChatCompletionMessage> {
         val payload = readMap(entry.payloadJson)
+        if (parseBoolean(payload["historyOmitted"], default = false)) {
+            return emptyList()
+        }
         val toolName = payload["toolName"]?.toString()?.trim().orEmpty()
         if (toolName.isEmpty()) return emptyList()
 
@@ -409,6 +610,7 @@ internal object AgentConversationHistorySupport {
         val argsJson = payload["argsJson"]?.toString()?.trim()?.ifEmpty { null } ?: "{}"
         val assistantMessage = ChatCompletionMessage(
             role = "assistant",
+            reasoningContent = readReasoningContent(payload),
             toolCalls = listOf(
                 AssistantToolCall(
                     id = toolCallId,
@@ -507,6 +709,168 @@ internal object AgentConversationHistorySupport {
         return gson.toJson(content.filterValues { value -> value != null })
     }
 
+    fun buildDisplaySafeToolCardData(
+        entry: AgentConversationEntry,
+        payload: Map<String, Any?>
+    ): Map<String, Any?> {
+        val messageId = entry.entryId
+        val status = entry.status.ifBlank {
+            payload["status"]?.toString()?.trim().orEmpty()
+                .ifBlank { AgentConversationHistoryRepository.STATUS_SUCCESS }
+        }
+        val toolType = payload["toolType"]?.toString()?.trim().orEmpty()
+            .ifEmpty { "builtin" }
+        val terminalOutput = payload["terminalOutput"]?.toString().orEmpty()
+        val argsJson = payload["argsJson"]?.toString().orEmpty()
+        val resultPreviewJson = payload["resultPreviewJson"]?.toString().orEmpty()
+        val rawResultJson = payload["rawResultJson"]?.toString().orEmpty()
+        val safeArgsJson = compactJsonText(argsJson, MAX_DISPLAY_TOOL_JSON_CHARS)
+        val safeResultPreviewJson = compactJsonText(
+            resultPreviewJson,
+            MAX_DISPLAY_TOOL_JSON_CHARS
+        )
+        val safeRawResultJson = compactJsonText(rawResultJson, MAX_DISPLAY_TOOL_JSON_CHARS)
+        val safeTerminalOutput = trimTailText(
+            terminalOutput,
+            MAX_DISPLAY_TOOL_TERMINAL_CHARS
+        )
+        val safeReasoningContent = trimText(
+            readReasoningContent(payload).orEmpty(),
+            MAX_STORAGE_MESSAGE_TEXT_CHARS
+        ).trim().takeIf { it.isNotBlank() }
+        val payloadCompacted =
+            safeArgsJson.length < AgentTextSanitizer.sanitizeUtf16(argsJson).trim().length ||
+                safeResultPreviewJson.length <
+                AgentTextSanitizer.sanitizeUtf16(resultPreviewJson).trim().length ||
+                safeRawResultJson.length <
+                AgentTextSanitizer.sanitizeUtf16(rawResultJson).trim().length ||
+                safeTerminalOutput.length <
+                AgentTextSanitizer.sanitizeUtf16(terminalOutput).trim().length
+
+        return linkedMapOf<String, Any?>(
+            "type" to "agent_tool_summary",
+            "taskId" to payload["taskId"],
+            "cardId" to payload["cardId"]?.toString().orEmpty().ifEmpty { messageId },
+            "toolName" to trimText(payload["toolName"]?.toString().orEmpty(), MAX_DISPLAY_INLINE_CHARS),
+            "displayName" to trimText(
+                payload["displayName"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "toolTitle" to trimText(
+                payload["toolTitle"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "toolType" to toolType,
+            "serverName" to compactDisplayScalar(payload["serverName"]),
+            "status" to status,
+            "summary" to trimText(
+                payload["summary"]?.toString().orEmpty().ifEmpty { entry.summary },
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "reasoning_content" to safeReasoningContent,
+            "progress" to trimText(
+                payload["progress"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "subagentStatusText" to trimText(
+                payload["subagentStatusText"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "subagentEvents" to compactDisplayList(payload["subagentEvents"]),
+            "argsJson" to safeArgsJson,
+            "resultPreviewJson" to safeResultPreviewJson,
+            "rawResultJson" to safeRawResultJson,
+            "terminalOutput" to safeTerminalOutput,
+            "terminalOutputDelta" to "",
+            "terminalSessionId" to compactDisplayScalar(payload["terminalSessionId"]),
+            "terminalStreamState" to trimText(
+                payload["terminalStreamState"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "interruptedBy" to trimText(
+                payload["interruptedBy"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "interruptionReason" to trimText(
+                payload["interruptionReason"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "timedOut" to parseBoolean(payload["timedOut"], default = false),
+            "workspaceId" to compactDisplayScalar(payload["workspaceId"]),
+            "artifacts" to compactDisplayList(payload["artifacts"]),
+            "actions" to compactDisplayList(payload["actions"]),
+            "success" to (
+                payload["success"]
+                    ?: (status == AgentConversationHistoryRepository.STATUS_SUCCESS)
+                ),
+            "showScheduleAction" to (toolType == "schedule"),
+            "showAlarmAction" to (toolType == "alarm"),
+            "isHistorical" to true,
+            "historyRenderMode" to "compact",
+            "payloadCompacted" to payloadCompacted,
+            "argsJsonOriginalLength" to originalLengthIfCompacted(argsJson, safeArgsJson),
+            "resultPreviewJsonOriginalLength" to originalLengthIfCompacted(
+                resultPreviewJson,
+                safeResultPreviewJson
+            ),
+            "rawResultJsonOriginalLength" to originalLengthIfCompacted(
+                rawResultJson,
+                safeRawResultJson
+            ),
+            "terminalOutputOriginalLength" to originalLengthIfCompacted(
+                terminalOutput,
+                safeTerminalOutput
+            )
+        ).filterValues { value -> value != null }
+    }
+
+    fun buildDisplaySafeUiCardMessage(
+        entry: AgentConversationEntry,
+        payload: Map<String, Any?>
+    ): Map<String, Any?> {
+        val messageId = payload["id"]?.toString()?.trim().orEmpty()
+            .ifEmpty { entry.entryId }
+        val content = toStringAnyMap(payload["content"])
+        val contentId = content["id"]?.toString()?.trim().orEmpty()
+            .ifEmpty { messageId }
+        val cardData = toStringAnyMap(content["cardData"])
+        val safeCardData = buildDisplaySafeUiCardData(
+            entry = entry,
+            cardData = cardData,
+            originalPayloadLength = entry.payloadJson.length
+        )
+        val safeContent = linkedMapOf<String, Any?>(
+            "cardData" to safeCardData,
+            "id" to contentId
+        )
+        content["dbId"]?.let { safeContent["dbId"] = it }
+
+        return linkedMapOf(
+            "id" to messageId,
+            "type" to (parseInt(payload["type"]) ?: 2),
+            "user" to (parseInt(payload["user"]) ?: 3),
+            "content" to safeContent,
+            "isLoading" to false,
+            "isFirst" to parseBoolean(payload["isFirst"], default = false),
+            "isError" to parseBoolean(payload["isError"], default = false),
+            "isSummarizing" to false,
+            "streamMeta" to compactDisplayStreamMeta(payload["streamMeta"]),
+            "createAt" to (payload["createAt"] ?: entry.createdAt)
+        ).filterValues { value -> value != null }
+    }
+
+    fun compactDisplayStreamMeta(value: Any?): Map<String, Any?>? {
+        val raw = toStringAnyMap(value)
+        if (raw.isEmpty()) return null
+        val safe = linkedMapOf<String, Any?>()
+        listOf("seq", "roundIndex", "kind", "parentTaskId", "entryId", "isFinal").forEach { key ->
+            raw[key]?.let { candidate ->
+                safe[key] = compactDisplayScalar(candidate)
+            }
+        }
+        return safe.takeIf { it.isNotEmpty() }
+    }
+
     fun restoreToolPayloadFromUiMessage(
         message: Map<String, Any?>
     ): Map<String, Any?>? {
@@ -524,6 +888,7 @@ internal object AgentConversationHistorySupport {
 
         val rawPayload = linkedMapOf<String, Any?>(
             "taskId" to cardData["taskId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+            "streamMeta" to toStringAnyMap(message["streamMeta"]).takeIf { it.isNotEmpty() },
             "cardId" to cardData["cardId"]?.toString()?.trim().orEmpty(),
             "toolName" to toolName,
             "displayName" to cardData["displayName"]?.toString()?.trim().orEmpty(),
@@ -532,7 +897,10 @@ internal object AgentConversationHistorySupport {
             "serverName" to cardData["serverName"],
             "status" to cardData["status"]?.toString()?.trim().orEmpty(),
             "summary" to cardData["summary"]?.toString()?.trim().orEmpty(),
+            "reasoning_content" to cardData["reasoning_content"]?.toString().orEmpty(),
             "progress" to cardData["progress"]?.toString()?.trim().orEmpty(),
+            "subagentStatusText" to cardData["subagentStatusText"]?.toString()?.trim().orEmpty(),
+            "subagentEvents" to toListOfStringAnyMap(cardData["subagentEvents"]),
             "args" to cardData["argsJson"]?.toString().orEmpty(),
             "argsJson" to cardData["argsJson"]?.toString().orEmpty(),
             "resultPreviewJson" to cardData["resultPreviewJson"]?.toString().orEmpty(),
@@ -576,6 +944,9 @@ internal object AgentConversationHistorySupport {
         val text = AgentTextSanitizer.sanitizeUtf16(content["text"]?.toString().orEmpty())
         val attachments = toListOfStringAnyMap(content["attachments"])
         val imageBlocks = attachments.mapNotNull { attachment ->
+            if (!shouldSendAttachmentToModel(attachment)) {
+                return@mapNotNull null
+            }
             val imageUrl = resolveImageAttachmentUrl(attachment)
             if (imageUrl.isBlank()) {
                 null
@@ -606,22 +977,19 @@ internal object AgentConversationHistorySupport {
         return JsonArray(blocks)
     }
 
-    private fun resolveImageAttachmentUrl(attachment: Map<String, Any?>): String {
-        val dataUrl = attachment["dataUrl"]?.toString()?.trim().orEmpty()
-        if (dataUrl.startsWith("data:")) return dataUrl
-        val remoteUrl = attachment["url"]?.toString()?.trim().orEmpty()
-        return if (
-            remoteUrl.startsWith("https://") ||
-            remoteUrl.startsWith("http://") ||
-            remoteUrl.startsWith("data:")
-        ) {
-            remoteUrl
-        } else {
-            ""
+    private fun shouldSendAttachmentToModel(attachment: Map<String, Any?>): Boolean {
+        return when (val raw = attachment["sendToModel"]) {
+            is Boolean -> raw
+            is String -> !raw.equals("false", ignoreCase = true)
+            else -> true
         }
     }
 
-    private fun readMap(json: String): Map<String, Any?> {
+    private fun resolveImageAttachmentUrl(attachment: Map<String, Any?>): String {
+        return AgentImageAttachmentSupport.resolveImageAttachmentUrl(attachment)
+    }
+
+    fun readMap(json: String): Map<String, Any?> {
         if (json.isBlank()) return emptyMap()
         return runCatching {
             gson.fromJson<Map<String, Any?>>(
@@ -654,12 +1022,729 @@ internal object AgentConversationHistorySupport {
         }
     }
 
+    private fun buildDisplaySafeUiCardData(
+        entry: AgentConversationEntry,
+        cardData: Map<String, Any?>,
+        originalPayloadLength: Int
+    ): Map<String, Any?> {
+        val type = cardData["type"]?.toString()?.trim().orEmpty()
+        if (type.isEmpty()) {
+            return buildHistoryOmittedCardData(
+                originalType = "",
+                originalPayloadLength = originalPayloadLength,
+                summary = entry.summary.ifBlank { "历史过程卡片已折叠" }
+            )
+        }
+
+        if (type == "deep_thinking") {
+            return buildDisplaySafeDeepThinkingCardData(
+                entry = entry,
+                cardData = cardData,
+                originalPayloadLength = originalPayloadLength
+            )
+        }
+
+        val compact = toStringAnyMap(compactDisplayValue(cardData, depth = 0))
+        val withHistoryMeta = linkedMapOf<String, Any?>().apply {
+            putAll(compact)
+            put("type", type)
+            put("isHistorical", true)
+            put("historyRenderMode", "compact")
+        }
+        if (gson.toJson(withHistoryMeta).length <= MAX_DISPLAY_CARD_JSON_CHARS) {
+            return withHistoryMeta
+        }
+
+        return buildHistoryOmittedCardData(
+            originalType = type,
+            originalPayloadLength = originalPayloadLength,
+            summary = cardData["summary"]?.toString()?.trim().orEmpty()
+                .ifEmpty { entry.summary.ifBlank { "历史过程卡片已折叠" } }
+        )
+    }
+
+    private fun buildDisplaySafeDeepThinkingCardData(
+        entry: AgentConversationEntry,
+        cardData: Map<String, Any?>,
+        originalPayloadLength: Int
+    ): Map<String, Any?> {
+        val thinking = cardData["thinkingContent"]?.toString().orEmpty()
+        val safeThinking = trimTailText(thinking, MAX_DISPLAY_THINKING_CHARS)
+        val rawStage = parseInt(cardData["stage"]) ?: 4
+        val displayStage = if (rawStage == 5) 5 else 4
+        val originalThinkingLength = AgentTextSanitizer.sanitizeUtf16(thinking).trim().length
+        val safeThinkingLength = AgentTextSanitizer.sanitizeUtf16(safeThinking).trim().length
+
+        return linkedMapOf<String, Any?>(
+            "type" to "deep_thinking",
+            "taskID" to (
+                cardData["taskID"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: extractTaskIdFromEntryId(entry.entryId)
+                ),
+            "cardId" to cardData["cardId"]?.toString()?.trim().orEmpty()
+                .ifEmpty { entry.entryId },
+            "thinkingContent" to safeThinking,
+            "thinkingContentTruncated" to (
+                parseBoolean(cardData["thinkingContentTruncated"], default = false) ||
+                    safeThinkingLength < originalThinkingLength
+                ),
+            "thinkingOriginalLength" to (
+                parseInt(cardData["thinkingOriginalLength"]) ?: originalThinkingLength
+                ),
+            "thinkingTruncateMode" to if (safeThinkingLength < originalThinkingLength) {
+                "head_omitted"
+            } else {
+                cardData["thinkingTruncateMode"]?.toString()?.trim().orEmpty()
+                    .ifEmpty { "none" }
+            },
+            "stage" to displayStage,
+            "isLoading" to false,
+            "startTime" to parseLong(cardData["startTime"]),
+            "endTime" to (
+                parseLong(cardData["endTime"])
+                    ?: maxOf(entry.createdAt, entry.updatedAt)
+                ),
+            "isExecutable" to parseBoolean(cardData["isExecutable"], default = false),
+            "isCollapsible" to true,
+            "isHistorical" to true,
+            "historyRenderMode" to "compact",
+            "payloadCompacted" to (
+                safeThinkingLength < originalThinkingLength ||
+                    originalPayloadLength > MAX_DISPLAY_CARD_JSON_CHARS
+                ),
+            "originalPayloadLength" to originalPayloadLength.takeIf {
+                it > MAX_DISPLAY_CARD_JSON_CHARS
+            }
+        ).filterValues { value -> value != null }
+    }
+
+    private fun buildHistoryOmittedCardData(
+        originalType: String,
+        originalPayloadLength: Int,
+        summary: String
+    ): Map<String, Any?> {
+        return linkedMapOf(
+            "type" to "history_omitted_card",
+            "originalType" to originalType.takeIf { it.isNotEmpty() },
+            "summary" to trimText(
+                summary.ifBlank { "历史过程卡片已折叠，核心对话内容仍然保留。" },
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "originalPayloadLength" to originalPayloadLength.takeIf { it > 0 },
+            "isHistorical" to true,
+            "historyRenderMode" to "omitted"
+        ).filterValues { value -> value != null }
+    }
+
+    private fun buildStorageSafeToolEntry(entry: AgentConversationEntry): AgentConversationEntry {
+        val payload = readMap(entry.payloadJson)
+        if (payload.isEmpty()) {
+            return buildStorageSafeGenericToolEntry(
+                entry = entry,
+                originalPayloadLength = entry.payloadJson.length
+            )
+        }
+        val normalizedStatus = payload["status"]?.toString()?.trim()
+            ?.ifEmpty { null }
+            ?: entry.status
+        val normalizedSummary = normalizeStoredSummary(
+            payload["summary"]?.toString().orEmpty().ifBlank { entry.summary },
+            entry.entryType
+        )
+        val safeReasoningContent = trimText(
+            readReasoningContent(payload).orEmpty(),
+            MAX_STORAGE_MESSAGE_TEXT_CHARS
+        ).trim().takeIf { it.isNotBlank() }
+        val safePayload = linkedMapOf<String, Any?>(
+            "taskId" to compactDisplayScalar(payload["taskId"]),
+            "streamMeta" to compactDisplayStreamMeta(payload["streamMeta"]),
+            "cardId" to payload["cardId"]?.toString()?.trim().orEmpty().ifEmpty { entry.entryId },
+            "toolName" to trimText(payload["toolName"]?.toString().orEmpty(), MAX_DISPLAY_INLINE_CHARS),
+            "displayName" to trimText(
+                payload["displayName"]?.toString().orEmpty().ifBlank { "工具调用" },
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "toolTitle" to trimText(
+                payload["toolTitle"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "toolType" to payload["toolType"]?.toString()?.trim().orEmpty().ifEmpty { "builtin" },
+            "serverName" to compactDisplayScalar(payload["serverName"]),
+            "status" to normalizedStatus,
+            "reasoning_content" to safeReasoningContent,
+            "summary" to normalizedSummary.ifBlank { "工具调用结果已压缩保存" },
+            "progress" to trimText(
+                payload["progress"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "subagentStatusText" to trimText(
+                payload["subagentStatusText"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "subagentEvents" to compactDisplayList(payload["subagentEvents"]),
+            "args" to compactJsonText(payload["args"]?.toString().orEmpty(), MAX_STORAGE_TOOL_JSON_CHARS),
+            "argsJson" to compactJsonText(
+                payload["argsJson"]?.toString().orEmpty(),
+                MAX_STORAGE_TOOL_JSON_CHARS
+            ),
+            "resultPreviewJson" to compactJsonText(
+                payload["resultPreviewJson"]?.toString().orEmpty(),
+                MAX_STORAGE_TOOL_JSON_CHARS
+            ),
+            "rawResultJson" to compactJsonText(
+                payload["rawResultJson"]?.toString().orEmpty(),
+                MAX_STORAGE_TOOL_JSON_CHARS
+            ),
+            "terminalOutput" to trimTailText(
+                payload["terminalOutput"]?.toString().orEmpty(),
+                MAX_STORAGE_TOOL_TERMINAL_CHARS
+            ),
+            "terminalOutputDelta" to "",
+            "terminalSessionId" to compactDisplayScalar(payload["terminalSessionId"]),
+            "terminalStreamState" to trimText(
+                payload["terminalStreamState"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "interruptedBy" to trimText(
+                payload["interruptedBy"]?.toString().orEmpty(),
+                MAX_DISPLAY_INLINE_CHARS
+            ),
+            "interruptionReason" to trimText(
+                payload["interruptionReason"]?.toString().orEmpty(),
+                MAX_TOOL_SUMMARY_CHARS
+            ),
+            "timedOut" to parseBoolean(payload["timedOut"], default = false),
+            "workspaceId" to compactDisplayScalar(payload["workspaceId"]),
+            "artifacts" to compactDisplayList(payload["artifacts"]),
+            "actions" to compactDisplayList(payload["actions"]),
+            "success" to parseBoolean(
+                payload["success"],
+                default = normalizedStatus == AgentConversationHistoryRepository.STATUS_SUCCESS
+            ),
+            "payloadCompacted" to true,
+            "originalPayloadLength" to entry.payloadJson.length.takeIf { it > 0 }
+        ).filterValues { value -> value != null }
+        val encoded = gson.toJson(safePayload)
+        if (encoded.length > MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+            return buildStorageSafeGenericToolEntry(
+                entry = entry.copy(status = normalizedStatus, summary = normalizedSummary),
+                originalPayloadLength = entry.payloadJson.length
+            )
+        }
+        return entry.copy(
+            status = normalizedStatus,
+            summary = normalizedSummary,
+            payloadJson = encoded
+        )
+    }
+
+    private fun buildStorageSafeGenericToolEntry(
+        entry: AgentConversationEntry,
+        originalPayloadLength: Int
+    ): AgentConversationEntry {
+        val normalizedStatus = entry.status.trim()
+            .ifEmpty { AgentConversationHistoryRepository.STATUS_SUCCESS }
+        val normalizedSummary = normalizeStoredSummary(
+            entry.summary.ifBlank { "工具调用历史已折叠" },
+            entry.entryType
+        )
+        val fallbackPayload = linkedMapOf<String, Any?>(
+            "cardId" to entry.entryId,
+            "toolName" to "",
+            "displayName" to "工具调用历史",
+            "toolType" to "builtin",
+            "status" to normalizedStatus,
+            "summary" to normalizedSummary,
+            "resultPreviewJson" to gson.toJson(
+                mapOf(
+                    "omitted" to true,
+                    "originalLength" to originalPayloadLength
+                )
+            ),
+            "rawResultJson" to "",
+            "terminalOutput" to "",
+            "success" to (normalizedStatus == AgentConversationHistoryRepository.STATUS_SUCCESS),
+            "payloadCompacted" to true,
+            "historyOmitted" to true,
+            "originalPayloadLength" to originalPayloadLength.takeIf { it > 0 }
+        ).filterValues { value -> value != null }
+        return entry.copy(
+            status = normalizedStatus,
+            summary = normalizedSummary,
+            payloadJson = gson.toJson(fallbackPayload)
+        )
+    }
+
+    private fun buildStorageSafeUiCardEntry(entry: AgentConversationEntry): AgentConversationEntry {
+        val payload = readMap(entry.payloadJson)
+        if (payload.isEmpty()) {
+            return buildRecoveredUiCardEntry(
+                entry = entry,
+                originalPayloadLength = entry.payloadJson.length
+            )
+        }
+        val storageSafePayload = buildStorageSafeUiCardPayload(entry, payload)
+        val encoded = gson.toJson(storageSafePayload)
+        return if (encoded.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+            entry.copy(payloadJson = encoded)
+        } else {
+            buildRecoveredUiCardEntry(
+                entry = entry,
+                originalPayloadLength = entry.payloadJson.length
+            )
+        }
+    }
+
+    private fun buildRecoveredUiCardEntry(
+        entry: AgentConversationEntry,
+        originalPayloadLength: Int
+    ): AgentConversationEntry {
+        val summary = normalizeStoredSummary(
+            entry.summary.ifBlank { "历史过程卡片已折叠" },
+            entry.entryType
+        )
+        val payload = buildCardMessagePayload(
+            messageId = entry.entryId,
+            cardData = buildHistoryOmittedCardData(
+                originalType = "",
+                originalPayloadLength = originalPayloadLength,
+                summary = summary
+            ),
+            isError = entry.status == AgentConversationHistoryRepository.STATUS_ERROR,
+            streamMeta = null,
+            createdAt = entry.createdAt
+        )
+        return entry.copy(
+            summary = summary,
+            payloadJson = gson.toJson(payload)
+        )
+    }
+
+    private fun buildStorageSafeUiCardPayload(
+        entry: AgentConversationEntry,
+        payload: Map<String, Any?>
+    ): Map<String, Any?> {
+        val messageId = payload["id"]?.toString()?.trim().orEmpty()
+            .ifEmpty { entry.entryId }
+        val content = toStringAnyMap(payload["content"])
+        val contentId = content["id"]?.toString()?.trim().orEmpty()
+            .ifEmpty { messageId }
+        val cardData = toStringAnyMap(content["cardData"])
+        val safeCardData = buildStorageSafeUiCardData(
+            entry = entry,
+            cardData = cardData,
+            originalPayloadLength = entry.payloadJson.length
+        )
+        val safeContent = linkedMapOf<String, Any?>(
+            "cardData" to safeCardData,
+            "id" to contentId
+        )
+        content["dbId"]?.let { safeContent["dbId"] = it }
+
+        return linkedMapOf(
+            "id" to messageId,
+            "type" to (parseInt(payload["type"]) ?: 2),
+            "user" to (parseInt(payload["user"]) ?: 3),
+            "content" to safeContent,
+            "isLoading" to parseBoolean(payload["isLoading"], default = false),
+            "isFirst" to parseBoolean(payload["isFirst"], default = false),
+            "isError" to parseBoolean(payload["isError"], default = false),
+            "isSummarizing" to parseBoolean(payload["isSummarizing"], default = false),
+            "streamMeta" to compactDisplayStreamMeta(payload["streamMeta"]),
+            "createAt" to (payload["createAt"] ?: entry.createdAt)
+        ).filterValues { value -> value != null }
+    }
+
+    private fun buildStorageSafeUiCardData(
+        entry: AgentConversationEntry,
+        cardData: Map<String, Any?>,
+        originalPayloadLength: Int
+    ): Map<String, Any?> {
+        val type = cardData["type"]?.toString()?.trim().orEmpty()
+        if (type.isEmpty()) {
+            return buildHistoryOmittedCardData(
+                originalType = "",
+                originalPayloadLength = originalPayloadLength,
+                summary = entry.summary.ifBlank { "历史过程卡片已折叠" }
+            )
+        }
+        if (type == "deep_thinking") {
+            return buildStorageSafeDeepThinkingCardData(
+                entry = entry,
+                cardData = cardData,
+                originalPayloadLength = originalPayloadLength
+            )
+        }
+
+        val compact = toStringAnyMap(compactDisplayValue(cardData, depth = 0))
+        val normalized = linkedMapOf<String, Any?>().apply {
+            putAll(compact)
+            put("type", type)
+        }
+        if (gson.toJson(normalized).length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+            return normalized
+        }
+
+        return buildHistoryOmittedCardData(
+            originalType = type,
+            originalPayloadLength = originalPayloadLength,
+            summary = cardData["summary"]?.toString()?.trim().orEmpty()
+                .ifEmpty { entry.summary.ifBlank { "历史过程卡片已折叠" } }
+        )
+    }
+
+    private fun buildStorageSafeDeepThinkingCardData(
+        entry: AgentConversationEntry,
+        cardData: Map<String, Any?>,
+        originalPayloadLength: Int
+    ): Map<String, Any?> {
+        val thinking = cardData["thinkingContent"]?.toString().orEmpty()
+        val safeThinking = trimTailText(thinking, MAX_DISPLAY_THINKING_CHARS)
+        val originalThinkingLength = AgentTextSanitizer.sanitizeUtf16(thinking).trim().length
+        val safeThinkingLength = AgentTextSanitizer.sanitizeUtf16(safeThinking).trim().length
+
+        return linkedMapOf<String, Any?>(
+            "type" to "deep_thinking",
+            "taskID" to (
+                cardData["taskID"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: extractTaskIdFromEntryId(entry.entryId)
+                ),
+            "cardId" to cardData["cardId"]?.toString()?.trim().orEmpty()
+                .ifEmpty { entry.entryId },
+            "thinkingContent" to safeThinking,
+            "thinkingContentTruncated" to (
+                parseBoolean(cardData["thinkingContentTruncated"], default = false) ||
+                    safeThinkingLength < originalThinkingLength
+                ),
+            "thinkingOriginalLength" to (
+                parseInt(cardData["thinkingOriginalLength"]) ?: originalThinkingLength
+                ),
+            "thinkingTruncateMode" to if (safeThinkingLength < originalThinkingLength) {
+                "head_omitted"
+            } else {
+                cardData["thinkingTruncateMode"]?.toString()?.trim().orEmpty()
+                    .ifEmpty { "none" }
+            },
+            "stage" to (parseInt(cardData["stage"]) ?: 1),
+            "isLoading" to parseBoolean(cardData["isLoading"], default = false),
+            "startTime" to parseLong(cardData["startTime"]),
+            "endTime" to parseLong(cardData["endTime"]),
+            "isExecutable" to parseBoolean(cardData["isExecutable"], default = false),
+            "isCollapsible" to parseBoolean(cardData["isCollapsible"], default = true),
+            "payloadCompacted" to (
+                safeThinkingLength < originalThinkingLength ||
+                    originalPayloadLength > MAX_STORAGE_ENTRY_PAYLOAD_CHARS
+                ),
+            "originalPayloadLength" to originalPayloadLength.takeIf {
+                it > MAX_STORAGE_ENTRY_PAYLOAD_CHARS
+            }
+        ).filterValues { value -> value != null }
+    }
+
+    private fun buildStorageSafeTextEntry(entry: AgentConversationEntry): AgentConversationEntry {
+        val payload = readMap(entry.payloadJson)
+        if (payload.isEmpty()) {
+            return buildRecoveredTextEntry(
+                entry = entry,
+                originalPayloadLength = entry.payloadJson.length
+            )
+        }
+        val messageId = payload["id"]?.toString()?.trim().orEmpty().ifEmpty { entry.entryId }
+        val content = toStringAnyMap(payload["content"])
+        val safeText = trimText(
+            content["text"]?.toString().orEmpty().ifBlank { entry.summary },
+            MAX_STORAGE_MESSAGE_TEXT_CHARS
+        )
+        val safeReasoningContent = if (
+            entry.entryType == AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE
+        ) {
+            trimText(
+                payload["reasoning_content"]?.toString()
+                    ?: payload["reasoningContent"]?.toString()
+                    ?: "",
+                MAX_STORAGE_MESSAGE_TEXT_CHARS
+            ).trim().takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+        val safeStreamMeta = compactDisplayStreamMeta(payload["streamMeta"])
+        val safeAttachments = compactDisplayList(content["attachments"])
+        fun buildPayload(attachments: List<Map<String, Any?>>): Map<String, Any?> {
+            return buildTextMessagePayload(
+                messageId = messageId,
+                user = if (entry.entryType == AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE) {
+                    1
+                } else {
+                    2
+                },
+                text = safeText,
+                attachments = attachments,
+                reasoningContent = safeReasoningContent,
+                isError = parseBoolean(
+                    payload["isError"],
+                    default = entry.status == AgentConversationHistoryRepository.STATUS_ERROR
+                ),
+                streamMeta = safeStreamMeta,
+                createdAt = entry.createdAt
+            )
+        }
+        var storagePayload = buildPayload(safeAttachments)
+        var encoded = gson.toJson(storagePayload)
+        if (encoded.length > MAX_STORAGE_ENTRY_PAYLOAD_CHARS && safeAttachments.isNotEmpty()) {
+            storagePayload = buildPayload(emptyList())
+            encoded = gson.toJson(storagePayload)
+        }
+        if (encoded.length > MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+            return buildRecoveredTextEntry(
+                entry = entry.copy(summary = safeText),
+                originalPayloadLength = entry.payloadJson.length,
+                reasoningContent = safeReasoningContent
+            )
+        }
+        return entry.copy(
+            summary = normalizeStoredSummary(entry.summary.ifBlank { safeText }, entry.entryType),
+            payloadJson = encoded
+        )
+    }
+
+    private fun buildRecoveredTextEntry(
+        entry: AgentConversationEntry,
+        originalPayloadLength: Int,
+        reasoningContent: String? = null
+    ): AgentConversationEntry {
+        val summary = normalizeStoredSummary(
+            entry.summary.ifBlank { "历史消息内容过大，已压缩保存。" },
+            entry.entryType
+        )
+        val safeText = trimText(
+            if (summary.isBlank()) {
+                "历史消息内容过大，已压缩保存。"
+            } else {
+                summary
+            },
+            MAX_STORAGE_MESSAGE_TEXT_CHARS
+        )
+        val safeReasoningContent = if (
+            entry.entryType == AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE
+        ) {
+            fitReasoningContentToRecoveredTextPayload(
+                messageId = entry.entryId,
+                text = safeText,
+                isError = entry.status == AgentConversationHistoryRepository.STATUS_ERROR,
+                createdAt = entry.createdAt,
+                reasoningContent = trimText(
+                    reasoningContent.orEmpty(),
+                    MAX_STORAGE_MESSAGE_TEXT_CHARS
+                ).trim().takeIf { it.isNotBlank() }
+            )
+        } else {
+            null
+        }
+        val payload = buildTextMessagePayload(
+            messageId = entry.entryId,
+            user = if (entry.entryType == AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE) {
+                1
+            } else {
+                2
+            },
+            text = safeText,
+            attachments = emptyList(),
+            reasoningContent = safeReasoningContent,
+            isError = entry.status == AgentConversationHistoryRepository.STATUS_ERROR,
+            streamMeta = mapOf(
+                "payloadCompacted" to true,
+                "originalPayloadLength" to originalPayloadLength
+            ),
+            createdAt = entry.createdAt
+        )
+        return entry.copy(
+            summary = summary.ifBlank { safeText },
+            payloadJson = gson.toJson(payload)
+        )
+    }
+
+    private fun fitReasoningContentToRecoveredTextPayload(
+        messageId: String,
+        text: String,
+        isError: Boolean,
+        createdAt: Long,
+        reasoningContent: String?
+    ): String? {
+        val normalizedReasoning = reasoningContent?.trim()?.takeIf { it.isNotBlank() } ?: return null
+
+        fun encodedLength(candidate: String?): Int {
+            return gson.toJson(
+                buildTextMessagePayload(
+                    messageId = messageId,
+                    user = 2,
+                    text = text,
+                    attachments = emptyList(),
+                    reasoningContent = candidate,
+                    isError = isError,
+                    streamMeta = mapOf(
+                        "payloadCompacted" to true,
+                        "originalPayloadLength" to MAX_STORAGE_ENTRY_PAYLOAD_CHARS + 1
+                    ),
+                    createdAt = createdAt
+                )
+            ).length
+        }
+
+        if (encodedLength(normalizedReasoning) <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+            return normalizedReasoning
+        }
+
+        var low = 0
+        var high = normalizedReasoning.length
+        var best: String? = null
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            val candidate = normalizedReasoning.take(mid).trimEnd().takeIf { it.isNotBlank() }
+            if (encodedLength(candidate) <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS) {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return best
+    }
+
+    private fun normalizeStoredSummary(summary: String, entryType: String): String {
+        val fallback = when (entryType) {
+            AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> "工具调用历史"
+            AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD -> "过程卡片"
+            AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE -> "助手消息"
+            else -> ""
+        }
+        return trimText(summary.trim().ifEmpty { fallback }, MAX_STORAGE_SUMMARY_CHARS)
+    }
+
+    private fun compactJsonText(raw: String, maxChars: Int): String {
+        val normalized = AgentTextSanitizer.sanitizeUtf16(raw).trim()
+        if (normalized.isEmpty() || normalized.length <= maxChars) {
+            return normalized
+        }
+
+        val compactJson = runCatching {
+            val decoded = readMap(normalized)
+            if (decoded.isEmpty() && normalized != "{}") {
+                null
+            } else {
+                compactDisplayValue(decoded, depth = 0)
+            }
+        }.getOrNull()?.let { compactMap ->
+            gson.toJson(compactMap)
+        }
+
+        if (!compactJson.isNullOrBlank() && compactJson.length <= maxChars) {
+            return compactJson
+        }
+
+        val envelope = linkedMapOf<String, Any?>(
+            "omitted" to true,
+            "originalLength" to normalized.length,
+            "preview" to trimText(normalized, (maxChars / 2).coerceAtLeast(160))
+        )
+        val encoded = gson.toJson(envelope)
+        if (encoded.length <= maxChars) {
+            return encoded
+        }
+        return gson.toJson(
+            mapOf(
+                "omitted" to true,
+                "originalLength" to normalized.length
+            )
+        )
+    }
+
+    private fun compactDisplayValue(value: Any?, depth: Int): Any? {
+        if (value == null) return null
+        if (value is Boolean || value is Number) return value
+        if (value is String) return trimText(value, MAX_DISPLAY_INLINE_CHARS)
+        if (depth >= 4) return "[nested content omitted]"
+
+        if (value is Map<*, *>) {
+            val result = linkedMapOf<String, Any?>()
+            val entries = value.entries.toList()
+            entries.take(24).forEach { (key, rawValue) ->
+                val normalizedKey = key?.toString()?.trim().orEmpty()
+                if (normalizedKey.isEmpty()) return@forEach
+                result[normalizedKey] = compactDisplayValue(rawValue, depth + 1)
+            }
+            if (entries.size > 24) {
+                result["_omittedKeys"] = entries.size - 24
+            }
+            return result.filterValues { it != null }
+        }
+
+        if (value is List<*>) {
+            val compactItems = value
+                .take(MAX_DISPLAY_LIST_ITEMS)
+                .mapNotNull { item -> compactDisplayValue(item, depth + 1) }
+                .toMutableList()
+            if (value.size > MAX_DISPLAY_LIST_ITEMS) {
+                compactItems += mapOf("_omittedItems" to value.size - MAX_DISPLAY_LIST_ITEMS)
+            }
+            return compactItems
+        }
+
+        return trimText(value.toString(), MAX_DISPLAY_INLINE_CHARS)
+    }
+
+    private fun compactDisplayScalar(value: Any?): Any? {
+        return when (value) {
+            null -> null
+            is Boolean -> value
+            is Number -> value
+            else -> trimText(value.toString(), MAX_DISPLAY_INLINE_CHARS)
+        }
+    }
+
+    private fun compactDisplayList(value: Any?): List<Map<String, Any?>> {
+        if (value !is List<*>) return emptyList()
+        return value
+            .take(MAX_DISPLAY_LIST_ITEMS)
+            .mapNotNull { item ->
+                toStringAnyMap(compactDisplayValue(item, depth = 0))
+                    .takeIf { it.isNotEmpty() }
+            }
+    }
+
+    private fun originalLengthIfCompacted(raw: String, compacted: String): Int? {
+        val originalLength = AgentTextSanitizer.sanitizeUtf16(raw).trim().length
+        val compactedLength = AgentTextSanitizer.sanitizeUtf16(compacted).trim().length
+        return originalLength.takeIf { originalLength > compactedLength }
+    }
+
     private fun trimText(value: String, maxChars: Int): String {
         val normalized = AgentTextSanitizer.sanitizeUtf16(value).trim()
         if (normalized.length <= maxChars) {
             return normalized
         }
         return AgentTextSanitizer.sanitizeUtf16(normalized.take(maxChars)).trimEnd() + "..."
+    }
+
+    private fun trimTailText(
+        value: String,
+        maxChars: Int,
+        notice: String = DISPLAY_TRUNCATION_NOTICE
+    ): String {
+        val normalized = AgentTextSanitizer.sanitizeUtf16(value).trim()
+        if (normalized.length <= maxChars) {
+            return normalized
+        }
+        val bodyLimit = (maxChars - notice.length).coerceAtLeast(0)
+        if (bodyLimit == 0) {
+            return notice.take(maxChars)
+        }
+        val runes = normalized.codePoints().toArray()
+        val tail = if (runes.size <= bodyLimit) {
+            normalized
+        } else {
+            String(runes.copyOfRange(runes.size - bodyLimit, runes.size), 0, bodyLimit)
+        }
+        return notice + tail
     }
 
     private fun normalizeStaleThinkingEntries(

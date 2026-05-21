@@ -13,7 +13,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       ConversationHistoryService.upsertConversationUiCard(
         conversationId,
         entryId: message.id,
-        cardData: Map<String, dynamic>.from(cardData!),
+        cardData: buildPersistentDeepThinkingCardData(
+          Map<String, dynamic>.from(cardData!),
+        ),
         createdAtMillis: message.createAt.millisecondsSinceEpoch,
         mode: activeConversationModeValue,
       ),
@@ -127,6 +129,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String? thinkingContent,
     bool? isLoading,
     int? stage,
+    Map<String, dynamic>? streamMeta,
   }) {
     final loadingIndex = _messages.indexWhere((msg) => msg.id == taskID);
     if (loadingIndex != -1) {
@@ -156,10 +159,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           user: 3,
           content: {'cardData': cardData, 'id': thinkingCardId},
           createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
+          streamMeta: ensureAgentStreamMessageMeta(
+            streamMeta,
+            entryId: thinkingCardId,
+          ),
         ),
       );
     });
-    _persistDeepThinkingCardIfNeeded(_messages.first);
   }
 
   @override
@@ -169,6 +175,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String? thinkingContent,
     bool? isLoading,
     int? stage,
+    Map<String, dynamic>? streamMeta,
     bool lockCompleted = true,
   }) {
     final thinkingCardId = cardId ?? '$taskID-thinking';
@@ -199,9 +206,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       cardData['endTime'] = endTime;
 
       content['cardData'] = cardData;
-      _messages[index] = existing.copyWith(content: content);
+      _messages[index] = existing.copyWith(
+        content: content,
+        streamMeta: ensureAgentStreamMessageMeta(
+          streamMeta ?? existing.streamMeta,
+          entryId: thinkingCardId,
+        ),
+      );
     });
-    _persistDeepThinkingCardIfNeeded(_messages[index]);
   }
 
   @override
@@ -321,11 +333,117 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     );
   }
 
+  bool _hasConfiguredNormalChatProviderModel({
+    List<ModelProviderProfileSummary>? profiles,
+    Map<String, List<ProviderModelOption>>? modelOptionsByProfileId,
+    List<SceneCatalogItem>? sceneCatalog,
+  }) {
+    final profileSource = profiles ?? _modelProviderProfiles;
+    final optionsSource = modelOptionsByProfileId ?? _modelOptionsByProfileId;
+    final catalogSource = sceneCatalog ?? _sceneCatalog;
+    final configuredProfileIds = profileSource
+        .where((profile) => profile.configured)
+        .map((profile) => profile.id)
+        .toSet();
+    if (configuredProfileIds.isEmpty) {
+      return false;
+    }
+
+    for (final profileId in configuredProfileIds) {
+      final models =
+          optionsSource[profileId] ?? const <ProviderModelOption>[];
+      if (models.any((model) => model.id.trim().isNotEmpty)) {
+        return true;
+      }
+    }
+
+    for (final scene in catalogSource) {
+      final providerProfileId = scene.effectiveProviderProfileId.trim();
+      if (!scene.providerConfigured ||
+          !configuredProfileIds.contains(providerProfileId)) {
+        continue;
+      }
+      if (scene.effectiveModel.trim().isNotEmpty) {
+        return true;
+      }
+    }
+
+    final override = _activeConversationModelOverrideSelection;
+    return override != null &&
+        configuredProfileIds.contains(override.providerProfileId) &&
+        override.modelId.trim().isNotEmpty;
+  }
+
+  @override
+  Future<bool> _ensureNormalChatModelConfigurationForSend() async {
+    if (_activeMode != ChatPageMode.normal || _isOpenClawSurface) {
+      return true;
+    }
+    if (_hasConfiguredNormalChatProviderModel()) {
+      return true;
+    }
+    if (_isCheckingSendModelConfiguration) {
+      return false;
+    }
+
+    _isCheckingSendModelConfiguration = true;
+    try {
+      final results = await Future.wait<dynamic>([
+        ModelProviderConfigService.loadModelGroups(),
+        SceneModelConfigService.getSceneCatalog(),
+      ]);
+      if (!mounted) {
+        return false;
+      }
+
+      final groups = results[0] as List<ProviderModelGroup>;
+      final catalog = results[1] as List<SceneCatalogItem>;
+      final profiles = groups.map((group) => group.profile).toList();
+      final source = <String, List<ProviderModelOption>>{
+        for (final group in groups)
+          group.profile.id: List<ProviderModelOption>.from(group.models),
+      };
+      final mergedOptions = _mergeChatModelOptions(
+        profiles: profiles,
+        source: source,
+        sceneCatalog: catalog,
+        overrideSelection: _activeConversationModelOverrideSelection,
+      );
+      final hasConfiguredModel = _hasConfiguredNormalChatProviderModel(
+        profiles: profiles,
+        modelOptionsByProfileId: mergedOptions,
+        sceneCatalog: catalog,
+      );
+
+      setState(() {
+        _modelProviderProfiles = profiles;
+        _modelOptionsByProfileId = mergedOptions;
+        _sceneCatalog = catalog;
+      });
+      if (hasConfiguredModel) {
+        return true;
+      }
+    } catch (e) {
+      debugPrint('检查聊天模型配置失败: $e');
+    } finally {
+      _isCheckingSendModelConfiguration = false;
+    }
+
+    if (mounted) {
+      showToast(
+        LegacyTextLocalizer.localize('请先配置ai服务商和模型'),
+        type: ToastType.warning,
+      );
+    }
+    return false;
+  }
+
   @override
   Future<void> _sendMessage({String? text}) async {
     final messageText = (text ?? _messageController.text).trim();
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
+    if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
     final attachments = _pendingAttachments
         .map((item) => item.toMap())
@@ -371,6 +489,15 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return;
     }
 
+    if (_isOmniInferLocalModelSelected &&
+        activeConversationModeValue != ConversationMode.chatOnly) {
+      showToast(
+        LegacyTextLocalizer.localize('本地模型仅支持纯聊天模式，请开启新的纯聊天对话后再使用本地模型'),
+        type: ToastType.warning,
+      );
+      return;
+    }
+
     if (runSlashCommand) {
       final handledSlash = await _tryHandleSlashCommand(messageText);
       if (handledSlash) return;
@@ -381,15 +508,22 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _showOpenClawCommandPanel(expand: true);
       return;
     }
+    if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
     _inputFocusNode.unfocus();
     final messageIds = addUserMessage(messageText, attachments: attachments);
+    _syncUserMessageLinkPreviews(messageIds.userMessageId);
     if (restoreInputValue != null && mounted) {
       _messageController.value = restoreInputValue;
     }
 
     if (_isOpenClawSurface) {
       await _sendChatMessage(messageIds.aiMessageId);
+      return;
+    }
+
+    if (_activeConversationMode == ChatPageMode.codex) {
+      await _sendCodexMessage(messageIds.aiMessageId, messageText);
       return;
     }
 
@@ -416,6 +550,138 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _currentDispatchTaskId == messageIds.aiMessageId) {
       handleAgentError('统一 Agent 启动失败，请检查模型提供商与场景模型配置。');
     }
+  }
+
+  void _syncUserMessageLinkPreviews(String messageId) {
+    final index = _messages.indexWhere((msg) => msg.id == messageId);
+    if (index == -1) {
+      return;
+    }
+
+    final message = _messages[index];
+    if (message.type != 1 || message.user != 1) {
+      return;
+    }
+
+    final content = Map<String, dynamic>.from(message.content ?? const {});
+    final nextPreviews = LinkPreviewService.instance.reconcilePreviewMaps(
+      text: message.text ?? '',
+      existing: content['linkPreviews'],
+    );
+    if (_previewMapListsEqual(content['linkPreviews'], nextPreviews)) {
+      return;
+    }
+
+    setState(() {
+      if (nextPreviews.isEmpty) {
+        content.remove('linkPreviews');
+      } else {
+        content['linkPreviews'] = nextPreviews;
+      }
+      _messages[index] = message.copyWith(content: content);
+    });
+
+    // 用户消息也先展示 loading 卡片，抓取完成后再回填真实预览。
+    for (final previewMap in nextPreviews) {
+      final preview = ChatLinkPreview.fromJson(previewMap);
+      if (preview.status != ChatLinkPreview.statusLoading ||
+          preview.url.isEmpty) {
+        continue;
+      }
+      unawaited(_resolveUserMessageLinkPreview(messageId, preview.url));
+    }
+  }
+
+  Future<void> _resolveUserMessageLinkPreview(
+    String messageId,
+    String url,
+  ) async {
+    final resolved = await LinkPreviewService.instance.loadPreview(url);
+    if (!mounted) {
+      return;
+    }
+
+    var didUpdate = false;
+    setState(() {
+      final index = _messages.indexWhere((msg) => msg.id == messageId);
+      if (index == -1) {
+        return;
+      }
+
+      final message = _messages[index];
+      final content = Map<String, dynamic>.from(message.content ?? const {});
+      final rawPreviews = content['linkPreviews'];
+      if (rawPreviews is! List) {
+        return;
+      }
+
+      final updatedPreviews = rawPreviews
+          .whereType<Map>()
+          .map(
+            (item) => Map<String, dynamic>.from(item.cast<String, dynamic>()),
+          )
+          .map((previewMap) {
+            final preview = ChatLinkPreview.fromJson(previewMap);
+            if (preview.url != url ||
+                preview.status != ChatLinkPreview.statusLoading) {
+              return previewMap;
+            }
+            didUpdate = true;
+            return resolved.toJson();
+          })
+          .toList();
+      if (!didUpdate) {
+        return;
+      }
+
+      content['linkPreviews'] = updatedPreviews;
+      _messages[index] = message.copyWith(content: content);
+    });
+
+    if (!didUpdate) {
+      return;
+    }
+
+    final conversationId = _currentConversationId;
+    if (conversationId != null) {
+      await ConversationHistoryService.saveConversationMessages(
+        conversationId,
+        List<ChatMessageModel>.from(_messages),
+        mode: activeConversationModeValue,
+      );
+    }
+  }
+
+  bool _previewMapListsEqual(dynamic left, List<Map<String, dynamic>> right) {
+    if (left is! List) {
+      return right.isEmpty;
+    }
+    final normalizedLeft = left
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item.cast<String, dynamic>()))
+        .toList();
+    if (normalizedLeft.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < normalizedLeft.length; index += 1) {
+      if (!_previewMapEquals(normalizedLeft[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _previewMapEquals(
+    Map<String, dynamic> left,
+    Map<String, dynamic> right,
+  ) {
+    return left['url'] == right['url'] &&
+        left['domain'] == right['domain'] &&
+        left['siteName'] == right['siteName'] &&
+        left['title'] == right['title'] &&
+        left['description'] == right['description'] &&
+        left['imageUrl'] == right['imageUrl'] &&
+        left['status'] == right['status'];
   }
 
   @override
@@ -587,7 +853,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _registerActiveTaskBinding(aiMessageId);
 
       final userMessage = latestUserUtterance();
-      final attachments = await _latestUserAttachments();
+      final attachments = _latestUserAgentAttachments();
 
       final success = await AssistsMessageService.createAgentTask(
         taskId: aiMessageId,
@@ -636,6 +902,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final normalized = raw
           .whereType<Map>()
           .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
+          .where(_attachmentShouldSendToModel)
           .toList();
       for (final item in normalized) {
         if (!_isImageAttachmentMap(item)) continue;
@@ -647,6 +914,21 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return normalized;
     }
     return const [];
+  }
+
+  bool _attachmentShouldSendToModel(Map<String, dynamic> attachment) {
+    final raw = attachment['sendToModel'];
+    if (raw is bool) return raw;
+    if (raw is String) return raw.toLowerCase() != 'false';
+    return true;
+  }
+
+  List<Map<String, dynamic>> _latestUserAgentAttachments() {
+    for (final message in _messages) {
+      if (message.user != 1) continue;
+      return buildAgentRuntimeAttachmentsFromMessageContent(message.content);
+    }
+    return const <Map<String, dynamic>>[];
   }
 
   @override
@@ -710,7 +992,28 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   void _onCancelTask() {
     try {
+      if (_activeConversationMode == ChatPageMode.codex) {
+        unawaited(_interruptCodexTurn());
+        final taskId =
+            _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
+        if (taskId != null) {
+          _runtimeCoordinator.unregisterTask(taskId);
+          _upsertCancelledAgentRunMessage(taskId);
+          _collapseAgentRunTrace(taskId);
+        }
+        setState(() {
+          _isAiResponding = false;
+          _isContextCompressing = false;
+          _isCheckingExecutableTask = false;
+          _isExecutingTask = false;
+          _isInputAreaVisible = true;
+          _currentDispatchTaskId = null;
+          _messages.removeWhere((msg) => msg.isLoading);
+        });
+        return;
+      }
       if (_currentDispatchTaskId != null ||
+          _activeRuntime?.lastAgentTaskId != null ||
           _isCheckingExecutableTask ||
           _isExecutingTask) {
         _cancelDispatchTask();
@@ -741,12 +1044,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   void _cancelDispatchTask() {
-    final taskId = _currentDispatchTaskId;
+    final taskId = _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
     interruptActiveToolCard();
     AssistsMessageService.cancelRunningTask(taskId: taskId);
     if (taskId != null) {
+      _updateThinkingCardToCancelled(taskId);
+      _upsertCancelledAgentRunMessage(taskId);
+      _collapseAgentRunTrace(taskId);
       _runtimeCoordinator.unregisterTask(taskId);
-      removeThinkingCard(taskId);
     }
     clearAgentStreamSessionState();
     resetDispatchState();
@@ -756,12 +1061,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   void _onCancelTaskFromCard(String taskId) {
     try {
       interruptActiveToolCard();
-      if (_isDeepThinking) {
-        AssistsMessageService.cancelRunningTask(taskId: taskId);
-      }
       AssistsMessageService.cancelRunningTask(taskId: taskId);
       _runtimeCoordinator.unregisterTask(taskId);
       _updateThinkingCardToCancelled(taskId);
+      _upsertCancelledAgentRunMessage(taskId);
+      _collapseAgentRunTrace(taskId);
       clearAgentStreamSessionState();
       resetDispatchState();
       setState(() {
@@ -780,16 +1084,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   void _updateThinkingCardToCancelled(String taskId) {
-    final thinkingCards = _messages
-        .where(
-          (msg) =>
-              msg.id == '$taskId-thinking' ||
-              msg.id.startsWith('$taskId-thinking-'),
-        )
-        .toList();
-    if (thinkingCards.isEmpty) return;
-
-    final thinkingCard = thinkingCards.first;
+    final thinkingCard = resolveAgentThinkingCardForTask(
+      _messages,
+      taskId: taskId,
+      preferredCardId: _activeRuntime?.activeThinkingCardId,
+    );
+    if (thinkingCard == null) return;
     final thinkingCardId = thinkingCard.id;
     final index = _messages.indexWhere((msg) => msg.id == thinkingCardId);
     if (index == -1) return;
@@ -809,6 +1109,72 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       );
     });
     _persistDeepThinkingCardIfNeeded(_messages[index]);
+  }
+
+  @override
+  void _collapseAgentRunTrace(String taskId) {
+    final normalizedTaskId = taskId.trim();
+    if (normalizedTaskId.isEmpty) {
+      return;
+    }
+    final expandedTaskIds = _expandedAgentRunTaskIdsForMode(_activeMode);
+    if (!expandedTaskIds.contains(normalizedTaskId)) {
+      return;
+    }
+    final nextTaskIds = Set<String>.from(expandedTaskIds)
+      ..remove(normalizedTaskId);
+    _updateExpandedAgentRunTaskIds(_activeMode, nextTaskIds);
+  }
+
+  void _upsertCancelledAgentRunMessage(String taskId) {
+    final normalizedTaskId = taskId.trim();
+    if (normalizedTaskId.isEmpty) {
+      return;
+    }
+    final messageId = '$normalizedTaskId-cancelled';
+    final text = LegacyTextLocalizer.localize('任务已取消');
+    final streamMeta = ensureAgentStreamMessageMeta(
+      null,
+      seq: 1000000000,
+      roundIndex: 1000000000,
+      kind: 'text_snapshot',
+      parentTaskId: normalizedTaskId,
+      entryId: messageId,
+      isFinal: true,
+    );
+    final content = <String, dynamic>{
+      'text': text,
+      'id': messageId,
+      'renderMarkdown': false,
+    };
+    final existingIndex = _messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    setState(() {
+      if (existingIndex == -1) {
+        _messages.insert(
+          0,
+          ChatMessageModel(
+            id: messageId,
+            type: 1,
+            user: 2,
+            content: content,
+            streamMeta: streamMeta,
+          ),
+        );
+      } else {
+        _messages[existingIndex] = _messages[existingIndex].copyWith(
+          content: content,
+          isLoading: false,
+          isError: false,
+          streamMeta: streamMeta,
+        );
+      }
+    });
+    if (_currentConversationId != null) {
+      _syncRuntimeSnapshotForMode(_activeMode);
+    }
+    unawaited(saveConversation());
   }
 
   @override

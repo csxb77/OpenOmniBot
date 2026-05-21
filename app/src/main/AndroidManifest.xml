@@ -35,7 +35,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><!--后台服务权限-->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" /><!--后台服务数据更新权限-->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" /><!--录音权限-->
     <!-- 悬浮窗权限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Android 10及以上后台启动权限 -->
@@ -98,6 +97,7 @@
         <activity
             android:name=".activity.LauncherActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.OmnibotApp.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -111,6 +111,7 @@
             android:exported="true"
             android:label="@string/omni_app_name"
             android:launchMode="singleTask"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.OmnibotApp.Splash" />
 
         <activity
@@ -230,6 +231,13 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity="" />
+        <activity
+            android:name="cn.com.omnimind.bot.agent.BrowserFileChooserRequestActivity"
+            android:exported="false"
+            android:theme="@style/Theme.OmnibotApp.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
         <!-- MCP 文件接收入口，用于“打开方式/分享”接收文件 -->
         <activity
             android:name=".activity.McpFileReceiverActivity"
@@ -277,6 +285,12 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

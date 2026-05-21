@@ -6,6 +6,15 @@ import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 void main() {
   const resolver = HdPadPaneLayoutResolver();
 
+  test('requires a tablet-sized landscape viewport for HD pad mode', () {
+    expect(isHdPadLandscapeViewport(const Size(932, 430)), isFalse);
+    expect(isHdPadLandscapeViewport(const Size(844, 390)), isFalse);
+    expect(isHdPadLandscapeViewport(const Size(959, 600)), isFalse);
+    expect(isHdPadLandscapeViewport(const Size(768, 1024)), isFalse);
+    expect(isHdPadLandscapeViewport(const Size(960, 600)), isTrue);
+    expect(isHdPadLandscapeViewport(const Size(1024, 768)), isTrue);
+  });
+
   test('uses defaults within supported width', () {
     final layout = resolver.resolve(1200);
 
@@ -77,6 +86,36 @@ void main() {
     );
   });
 
+  test('supports collapsing the right pane while keeping the left pane', () {
+    final layout = resolver.resolve(
+      1200,
+      preferredLeftWidth: 260,
+      preferredRightWidth: 360,
+      collapseRightPane: true,
+    );
+
+    expect(layout.leftWidth, HdPadPaneLayoutResolver.defaultLeftWidth);
+    expect(layout.rightWidth, 0);
+    expect(
+      layout.centerWidth,
+      1200 -
+          HdPadPaneLayoutResolver.dividerHitWidth -
+          HdPadPaneLayoutResolver.defaultLeftWidth,
+    );
+  });
+
+  test('supports collapsing both side panes', () {
+    final layout = resolver.resolve(
+      1200,
+      collapseLeftPane: true,
+      collapseRightPane: true,
+    );
+
+    expect(layout.leftWidth, 0);
+    expect(layout.rightWidth, 0);
+    expect(layout.centerWidth, 1200);
+  });
+
   test('resolves overlay anchor from current keyboard spacing', () {
     final geometry = resolveChatPaneOverlayAnchorGeometry(
       viewportSize: const Size(420, 900),
@@ -89,6 +128,40 @@ void main() {
     expect(geometry.rect.width, 372);
     expect(geometry.rect.top, 640);
     expect(geometry.rect.height, 96);
+  });
+
+  test('adds composer clearance only when soft keyboard is visible', () {
+    expect(
+      resolveChatComposerKeyboardSpacer(
+        shouldLiftComposerForKeyboard: true,
+        bottomInset: 320,
+      ),
+      320 + kChatKeyboardComposerClearance,
+    );
+    expect(
+      resolveChatComposerKeyboardSpacer(
+        shouldLiftComposerForKeyboard: false,
+        bottomInset: 320,
+      ),
+      0,
+    );
+    expect(
+      resolveChatComposerKeyboardSpacer(
+        shouldLiftComposerForKeyboard: true,
+        bottomInset: 0,
+      ),
+      0,
+    );
+  });
+
+  test('ramps composer clearance out as the soft keyboard finishes hiding', () {
+    expect(
+      resolveChatComposerKeyboardSpacer(
+        shouldLiftComposerForKeyboard: true,
+        bottomInset: 4,
+      ),
+      8,
+    );
   });
 
   test('clamps overlay anchor when keyboard spacing exceeds viewport', () {

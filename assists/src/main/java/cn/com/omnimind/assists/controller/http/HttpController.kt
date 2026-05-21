@@ -11,6 +11,7 @@ import cn.com.omnimind.baselib.llm.AiRequestLogStore
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.database.TokenUsageRecord
 import cn.com.omnimind.baselib.llm.LocalModelProviderBridge
@@ -25,6 +26,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonArray as KxJsonArray
@@ -56,6 +58,21 @@ object HttpController {
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
+    private const val LOCAL_BACKEND_MAX_COMPLETION_TOKENS = 4096
+
+    data class ChatCompletionRouteInfo(
+        val requestedModel: String,
+        val resolvedModel: String,
+        val apiBase: String?,
+        val providerProfileId: String?,
+        val providerProfileName: String?,
+        val routeTag: String?,
+        val bindingApplied: Boolean,
+        val bindingProfileMissing: Boolean,
+        val overrideApplied: Boolean,
+        val protocolType: String = "openai_compatible",
+        val requiresReasoningEcho: Boolean = false
+    )
 
     private data class ResolvedSceneRequest(
         val requestedModel: String,
@@ -91,6 +108,22 @@ object HttpController {
         val code: Int? = null,
         val message: String
     )
+
+    fun resolveChatCompletionRouteInfo(
+        modelOrScene: String,
+        explicitApiBase: String? = null,
+        explicitApiKey: String? = null,
+        explicitModel: String? = null,
+        explicitProtocolType: String? = null
+    ): ChatCompletionRouteInfo {
+        return resolveSceneRequest(
+            modelOrScene = modelOrScene,
+            explicitApiBase = explicitApiBase,
+            explicitApiKey = explicitApiKey,
+            explicitModel = explicitModel,
+            explicitProtocolType = explicitProtocolType
+        ).toRouteInfo()
+    }
 
     private val openClawStreamClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -353,13 +386,16 @@ object HttpController {
         val reasoningTokens = details?.optInt("reasoning_tokens", 0) ?: 0
         val textTokens = details?.optInt("text_tokens", 0) ?: 0
 
+        val promptDetails = usageObj.optJSONObject("prompt_tokens_details")
+        val cachedTokens = promptDetails?.optInt("cached_tokens", 0) ?: 0
+
         val isLocal = LocalModelProviderBridge.isBuiltinLocalProvider(null, seed.url)
 
         OmniLog.i(
             TAG,
             "[TokenUsage] recording: model=${seed.model}, isLocal=$isLocal, " +
                 "prompt=$promptTokens, completion=$completionTokens, " +
-                "reasoning=$reasoningTokens, text=$textTokens, " +
+                "reasoning=$reasoningTokens, text=$textTokens, cached=$cachedTokens, " +
                 "stream=${seed.stream}, url=${seed.url}"
         )
 
@@ -374,6 +410,7 @@ object HttpController {
                         completionTokens = completionTokens,
                         reasoningTokens = reasoningTokens,
                         textTokens = textTokens,
+                        cachedTokens = cachedTokens,
                         createdAt = System.currentTimeMillis()
                     )
                 )
@@ -388,6 +425,25 @@ object HttpController {
         OmniLog.i(
             TAG,
             "scene_profile scene=${profile.sceneId} model=${resolved.resolvedModel} transport=${resolved.effectiveTransport.wireValue} parser=${resolved.responseParser.wireValue} source=${profile.modelSource.wireValue} config_source=${profile.configSource.wireValue} override_group=${profile.overrideGroup.orEmpty()} custom_api_base=${resolved.customApiBaseApplied} binding_applied=${resolved.bindingApplied} binding_profile=${resolved.providerProfileId.orEmpty()} binding_profile_missing=${resolved.bindingProfileMissing} override_applied=${resolved.overrideApplied} override_model=${resolved.overrideModel.orEmpty()}"
+        )
+    }
+
+    private fun ResolvedSceneRequest.toRouteInfo(): ChatCompletionRouteInfo {
+        return ChatCompletionRouteInfo(
+            requestedModel = requestedModel,
+            resolvedModel = resolvedModel,
+            apiBase = apiBase,
+            providerProfileId = providerProfileId,
+            providerProfileName = providerProfileName,
+            routeTag = routeTag,
+            bindingApplied = bindingApplied,
+            bindingProfileMissing = bindingProfileMissing,
+            overrideApplied = overrideApplied,
+            protocolType = protocolType,
+            requiresReasoningEcho = DeepSeekProvider.shouldUseOfficialAdapter(
+                protocolType = protocolType,
+                apiBase = apiBase
+            )
         )
     }
 
@@ -415,9 +471,7 @@ object HttpController {
         val explicitKey = explicitApiKey?.trim()?.takeIf { it.isNotEmpty() }
         val explicitResolvedModel = explicitModel?.trim()?.takeIf { it.isNotEmpty() }
         val explicitProtocol = explicitProtocolType
-            ?.trim()
-            ?.lowercase()
-            ?.takeIf { it == "openai_compatible" || it == "anthropic" }
+            ?.let(DeepSeekProvider::normalizeProtocolType)
         val providerConfig = if (explicitBase == null) {
             ModelProviderConfigStore.getConfig()
         } else {
@@ -457,7 +511,7 @@ object HttpController {
         }
         val protocolType = when {
             explicitProtocol != null -> explicitProtocol
-            explicitBase != null -> "openai_compatible"
+            explicitBase != null -> DeepSeekProvider.normalizeProtocolType(null)
             bindingApplied -> boundProfile?.protocolType?.ifEmpty { "openai_compatible" } ?: "openai_compatible"
             else -> ModelProviderConfigStore.getEditingProfile().protocolType.ifEmpty { "openai_compatible" }
         }
@@ -1196,6 +1250,9 @@ object HttpController {
                 role = message["role"]?.toString().orEmpty().ifBlank { "user" },
                 content = parseChatMessageContent(message["content"]),
                 toolCalls = parseAssistantToolCalls(message["tool_calls"] ?: message["toolCalls"]),
+                reasoningContent = parseOptionalText(
+                    message["reasoning_content"] ?: message["reasoningContent"]
+                ),
                 toolCallId = parseOptionalText(message["tool_call_id"] ?: message["toolCallId"]),
                 name = parseOptionalText(message["name"])
             )
@@ -1470,6 +1527,117 @@ object HttpController {
         }.toString()
     }
 
+    private fun buildOpenAICompatibleRequestBody(
+        requestBodyJson: String,
+        resolvedModel: String,
+        includeLegacyMirrors: Boolean,
+        mirrorLegacyTokenFields: Boolean = true,
+        protocolType: String,
+        apiBase: String?
+    ): String {
+        val baseBody = buildRequestBodyWithResolvedModel(
+            requestBodyJson = requestBodyJson,
+            resolvedModel = resolvedModel,
+            includeLegacyMirrors = includeLegacyMirrors,
+            mirrorLegacyTokenFields = mirrorLegacyTokenFields
+        )
+        val localReadyBody = applyLocalBackendMaxCompletionTokens(
+            requestBodyJson = baseBody,
+            apiBase = apiBase
+        )
+        val protocolReadyBody = if (DeepSeekProvider.shouldUseOfficialAdapter(protocolType, apiBase)) {
+            applyOfficialDeepSeekThinkingMode(localReadyBody)
+        } else {
+            localReadyBody
+        }
+        return stripAnthropicOnlyFieldsForOpenAiCompatible(protocolReadyBody)
+    }
+
+    private fun applyLocalBackendMaxCompletionTokens(
+        requestBodyJson: String,
+        apiBase: String?
+    ): String {
+        if (!LocalModelProviderBridge.isBuiltinLocalProvider(null, apiBase)) {
+            return requestBodyJson
+        }
+        return JSONObject(requestBodyJson).apply {
+            put("max_completion_tokens", LOCAL_BACKEND_MAX_COMPLETION_TOKENS)
+            remove("max_tokens")
+        }.toString()
+    }
+
+    private fun applyOfficialDeepSeekThinkingMode(requestBodyJson: String): String {
+        val payload = runCatching {
+            completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
+        }.getOrNull() ?: return requestBodyJson
+        val explicitThinkingType = (payload["thinking"] as? KxJsonObject)
+            ?.get("type")
+            .let { it as? JsonPrimitive }
+            ?.contentOrNull
+            ?.trim()
+            ?.lowercase()
+            ?.takeIf { it == "enabled" || it == "disabled" }
+        val enableThinking = when (val raw = payload["enable_thinking"]) {
+            is JsonPrimitive -> raw.booleanOrNull
+                ?: raw.contentOrNull?.trim()?.toBooleanStrictOrNull()
+            else -> null
+        }
+        val rawReasoningEffort = payload["reasoning_effort"]
+            .let { it as? JsonPrimitive }
+            ?.contentOrNull
+            .orEmpty()
+            .trim()
+            .lowercase()
+            .takeIf { it.isNotEmpty() }
+        val thinkingType = explicitThinkingType
+            ?: when {
+                enableThinking == false || rawReasoningEffort == "no" -> "disabled"
+                else -> "enabled"
+            }
+
+        val updated = payload.toMutableMap()
+        updated.remove("enable_thinking")
+        payload["max_completion_tokens"]?.let { maxCompletionTokens ->
+            if (!updated.containsKey("max_tokens")) {
+                updated["max_tokens"] = maxCompletionTokens
+            }
+            updated.remove("max_completion_tokens")
+        }
+        updated["thinking"] = buildJsonObject {
+            put("type", JsonPrimitive(thinkingType))
+        }
+
+        if (thinkingType == "enabled") {
+            DeepSeekProvider.mapReasoningEffortForOfficialApi(rawReasoningEffort)?.let {
+                updated["reasoning_effort"] = JsonPrimitive(it)
+            } ?: updated.remove("reasoning_effort")
+            updated.remove("temperature")
+            updated.remove("top_p")
+        } else {
+            updated.remove("reasoning_effort")
+        }
+        return KxJsonObject(updated).toString()
+    }
+
+    private fun stripAnthropicOnlyFieldsForOpenAiCompatible(requestBodyJson: String): String {
+        val payload = runCatching {
+            completionJson.parseToJsonElement(requestBodyJson)
+        }.getOrNull() ?: return requestBodyJson
+        return stripAnthropicOnlyFields(payload).toString()
+    }
+
+    private fun stripAnthropicOnlyFields(payload: JsonElement): JsonElement {
+        return when (payload) {
+            is KxJsonObject -> KxJsonObject(
+                payload
+                    .filterKeys { it != "cache_control" }
+                    .mapValues { (_, value) -> stripAnthropicOnlyFields(value) }
+            )
+            is KxJsonArray -> KxJsonArray(payload.map(::stripAnthropicOnlyFields))
+            else -> payload
+        }
+    }
+
     private suspend fun postOpenAIStreamRequestAsFlow(
         chatRequest: ChatCompletionRequest,
         apiBase: String?,
@@ -1502,7 +1670,13 @@ object HttpController {
         }
         val base = normalizeApiBase(apiBase ?: "")
             ?: throw IllegalArgumentException("Invalid apiBase")
-        val requestJson = encodeChatCompletionRequest(chatRequest.copy(stream = true))
+        val requestJson = buildOpenAICompatibleRequestBody(
+            requestBodyJson = completionJson.encodeToString(chatRequest.copy(stream = true)),
+            resolvedModel = chatRequest.model,
+            includeLegacyMirrors = false,
+            protocolType = protocolType,
+            apiBase = base
+        )
         val requestBody = requestJson.toRequestBody("application/json".toMediaType())
         val request = buildOpenAIRequestBuilder(
             url = buildOpenAIChatCompletionsUrl(base),
@@ -1548,12 +1722,15 @@ object HttpController {
         }
         val base = normalizeApiBase(resolved.apiBase ?: "")
             ?: throw IllegalArgumentException("Invalid apiBase")
-        val requestBody = buildRequestBodyWithResolvedModel(
+        val preparedRequestJson = buildOpenAICompatibleRequestBody(
             requestBodyJson = requestBodyJson,
             resolvedModel = resolved.resolvedModel,
             includeLegacyMirrors = false,
-            mirrorLegacyTokenFields = false
-        ).toRequestBody("application/json".toMediaType())
+            mirrorLegacyTokenFields = false,
+            protocolType = resolved.protocolType,
+            apiBase = base
+        )
+        val requestBody = preparedRequestJson.toRequestBody("application/json".toMediaType())
         val request = buildOpenAIRequestBuilder(
             url = buildOpenAIChatCompletionsUrl(base),
             requestBody = requestBody,
@@ -1572,12 +1749,7 @@ object HttpController {
                     protocolType = resolved.protocolType,
                     url = buildOpenAIChatCompletionsUrl(base),
                     stream = true,
-                    requestJson = buildRequestBodyWithResolvedModel(
-                        requestBodyJson = requestBodyJson,
-                        resolvedModel = resolved.resolvedModel,
-                        includeLegacyMirrors = false,
-                        mirrorLegacyTokenFields = false
-                    )
+                    requestJson = preparedRequestJson
                 )
             )
         )
@@ -2024,7 +2196,13 @@ object HttpController {
                 )
             }
 
-            val requestJson = encodeChatCompletionRequest(variant.request)
+            val requestJson = buildOpenAICompatibleRequestBody(
+                requestBodyJson = completionJson.encodeToString(variant.request),
+                resolvedModel = variant.request.model,
+                includeLegacyMirrors = false,
+                protocolType = resolved.protocolType,
+                apiBase = base
+            )
             OmniLog.d(TAG, "=== OpenAI Request Debug ===")
             OmniLog.d(TAG, "URL: $url")
             OmniLog.d(TAG, "Model: ${variant.request.model}, hasApiKey=${!resolved.apiKey.isNullOrBlank()}, variant=${variant.name}")
@@ -2114,11 +2292,16 @@ object HttpController {
         val url = buildOpenAIChatCompletionsUrl(normalizedApiBase)
 
         return@withContext try {
-            val requestJson = JSONObject().apply {
+            val isOfficialDeepSeek = DeepSeekProvider.isOfficialBaseUrl(normalizedApiBase)
+            val baseRequestJson = JSONObject().apply {
                 put("model", normalizedModel)
                 put("stream", false)
-                put("temperature", 0)
                 put("max_tokens", 1)
+                if (isOfficialDeepSeek) {
+                    put("enable_thinking", false)
+                } else {
+                    put("temperature", 0)
+                }
                 put(
                     "messages",
                     JSONArray().put(
@@ -2129,8 +2312,15 @@ object HttpController {
                     )
                 )
             }
+            val requestJson = buildOpenAICompatibleRequestBody(
+                requestBodyJson = baseRequestJson.toString(),
+                resolvedModel = normalizedModel,
+                includeLegacyMirrors = false,
+                protocolType = DeepSeekProvider.normalizeProtocolType(null),
+                apiBase = normalizedApiBase
+            )
 
-            val requestBody = requestJson.toString().toRequestBody("application/json".toMediaType())
+            val requestBody = requestJson.toRequestBody("application/json".toMediaType())
             val response = OkHttpClient().newCall(
                 buildOpenAIRequestBuilder(url, requestBody, apiKey).build()
             ).execute()

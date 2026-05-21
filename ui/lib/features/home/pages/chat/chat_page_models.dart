@@ -133,8 +133,8 @@ class ObservableChatMessageList extends ChangeNotifier
   }
 
   @override
-  void add(ChatMessageModel value) {
-    insert(length, value);
+  void add(ChatMessageModel element) {
+    insert(length, element);
   }
 
   @override
@@ -296,6 +296,532 @@ class ObservableChatMessageList extends ChangeNotifier
   }
 }
 
+String _browserString(dynamic value) => (value ?? '').toString();
+
+int? _browserInt(dynamic value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(_browserString(value));
+}
+
+double? _browserDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(_browserString(value));
+}
+
+bool _browserBool(dynamic value, {bool fallback = false}) {
+  if (value is bool) return value;
+  final text = _browserString(value).trim().toLowerCase();
+  if (text == 'true' || text == '1') return true;
+  if (text == 'false' || text == '0') return false;
+  return fallback;
+}
+
+Map<String, dynamic> _browserMap(dynamic raw) {
+  if (raw is! Map) return const <String, dynamic>{};
+  return raw.map((key, value) => MapEntry(key.toString(), value));
+}
+
+List<Map<String, dynamic>> _browserMapList(dynamic raw) {
+  if (raw is! Iterable) return const <Map<String, dynamic>>[];
+  return raw.map(_browserMap).toList(growable: false);
+}
+
+List<String> _browserStringList(dynamic raw) {
+  if (raw is! Iterable) return const <String>[];
+  return raw.map((item) => _browserString(item)).toList(growable: false);
+}
+
+class AgentBrowserTab {
+  const AgentBrowserTab({
+    required this.tabId,
+    required this.url,
+    required this.title,
+    this.userAgentProfile,
+    this.isActive = false,
+    this.isLoading = false,
+    this.hasSslError = false,
+    this.riskChallengeDetected = false,
+    this.riskChallengeKind,
+    this.recommendedNextAction,
+  });
+
+  final int tabId;
+  final String url;
+  final String title;
+  final String? userAgentProfile;
+  final bool isActive;
+  final bool isLoading;
+  final bool hasSslError;
+  final bool riskChallengeDetected;
+  final String? riskChallengeKind;
+  final String? recommendedNextAction;
+
+  factory AgentBrowserTab.fromMap(Map<dynamic, dynamic> raw) {
+    return AgentBrowserTab(
+      tabId: _browserInt(raw['tabId']) ?? 0,
+      url: _browserString(raw['url']),
+      title: _browserString(raw['title']),
+      userAgentProfile: raw['userAgentProfile']?.toString(),
+      isActive: _browserBool(raw['isActive']),
+      isLoading: _browserBool(raw['isLoading']),
+      hasSslError: _browserBool(raw['hasSslError']),
+      riskChallengeDetected: _browserBool(raw['riskChallengeDetected']),
+      riskChallengeKind: raw['riskChallengeKind']?.toString(),
+      recommendedNextAction: raw['recommendedNextAction']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'tabId': tabId,
+    'url': url,
+    'title': title,
+    'userAgentProfile': userAgentProfile,
+    'isActive': isActive,
+    'isLoading': isLoading,
+    'hasSslError': hasSslError,
+    'riskChallengeDetected': riskChallengeDetected,
+    'riskChallengeKind': riskChallengeKind,
+    'recommendedNextAction': recommendedNextAction,
+  };
+}
+
+class AgentBrowserHistoryEntry {
+  const AgentBrowserHistoryEntry({
+    required this.url,
+    required this.title,
+    this.index,
+    this.isCurrent = false,
+    this.createdAt,
+    this.updatedAt,
+    this.visitedAt,
+  });
+
+  final String url;
+  final String title;
+  final int? index;
+  final bool isCurrent;
+  final int? createdAt;
+  final int? updatedAt;
+  final int? visitedAt;
+
+  factory AgentBrowserHistoryEntry.fromMap(Map<dynamic, dynamic> raw) {
+    return AgentBrowserHistoryEntry(
+      url: _browserString(raw['url']),
+      title: _browserString(raw['title']),
+      index: _browserInt(raw['index']),
+      isCurrent: _browserBool(raw['isCurrent']),
+      createdAt: _browserInt(raw['createdAt']),
+      updatedAt: _browserInt(raw['updatedAt']),
+      visitedAt: _browserInt(raw['visitedAt']),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'url': url,
+    'title': title,
+    'index': index,
+    'isCurrent': isCurrent,
+    'createdAt': createdAt,
+    'updatedAt': updatedAt,
+    'visitedAt': visitedAt,
+  };
+}
+
+class BrowserDownloadSummary {
+  const BrowserDownloadSummary({
+    this.activeCount = 0,
+    this.failedCount = 0,
+    this.overallProgress,
+    this.latestCompletedFileName,
+  });
+
+  final int activeCount;
+  final int failedCount;
+  final double? overallProgress;
+  final String? latestCompletedFileName;
+
+  factory BrowserDownloadSummary.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserDownloadSummary(
+      activeCount: _browserInt(raw['activeCount']) ?? 0,
+      failedCount: _browserInt(raw['failedCount']) ?? 0,
+      overallProgress: _browserDouble(raw['overallProgress']),
+      latestCompletedFileName: raw['latestCompletedFileName']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'activeCount': activeCount,
+    'failedCount': failedCount,
+    'overallProgress': overallProgress,
+    'latestCompletedFileName': latestCompletedFileName,
+  };
+}
+
+class BrowserDownloadItem {
+  const BrowserDownloadItem({
+    required this.id,
+    required this.fileName,
+    required this.url,
+    required this.destinationPath,
+    required this.status,
+    this.mimeType,
+    this.progress,
+    this.downloadedBytes = 0,
+    this.totalBytes = 0,
+    this.errorMessage,
+    this.canPause = false,
+    this.canResume = false,
+    this.canCancel = false,
+    this.canRetry = false,
+    this.canDelete = false,
+    this.canDeleteFile = false,
+    this.canOpenFile = false,
+    this.canOpenLocation = false,
+    this.supportsResume = false,
+  });
+
+  final String id;
+  final String fileName;
+  final String url;
+  final String destinationPath;
+  final String status;
+  final String? mimeType;
+  final double? progress;
+  final int downloadedBytes;
+  final int totalBytes;
+  final String? errorMessage;
+  final bool canPause;
+  final bool canResume;
+  final bool canCancel;
+  final bool canRetry;
+  final bool canDelete;
+  final bool canDeleteFile;
+  final bool canOpenFile;
+  final bool canOpenLocation;
+  final bool supportsResume;
+
+  factory BrowserDownloadItem.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserDownloadItem(
+      id: _browserString(raw['id']),
+      fileName: _browserString(raw['fileName']),
+      url: _browserString(raw['url']),
+      destinationPath: _browserString(raw['destinationPath']),
+      status: _browserString(raw['status']),
+      mimeType: raw['mimeType']?.toString(),
+      progress: _browserDouble(raw['progress']),
+      downloadedBytes: _browserInt(raw['downloadedBytes']) ?? 0,
+      totalBytes: _browserInt(raw['totalBytes']) ?? 0,
+      errorMessage: raw['errorMessage']?.toString(),
+      canPause: _browserBool(raw['canPause']),
+      canResume: _browserBool(raw['canResume']),
+      canCancel: _browserBool(raw['canCancel']),
+      canRetry: _browserBool(raw['canRetry']),
+      canDelete: _browserBool(raw['canDelete']),
+      canDeleteFile: _browserBool(raw['canDeleteFile']),
+      canOpenFile: _browserBool(raw['canOpenFile']),
+      canOpenLocation: _browserBool(raw['canOpenLocation']),
+      supportsResume: _browserBool(raw['supportsResume']),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'id': id,
+    'fileName': fileName,
+    'url': url,
+    'destinationPath': destinationPath,
+    'status': status,
+    'mimeType': mimeType,
+    'progress': progress,
+    'downloadedBytes': downloadedBytes,
+    'totalBytes': totalBytes,
+    'errorMessage': errorMessage,
+    'canPause': canPause,
+    'canResume': canResume,
+    'canCancel': canCancel,
+    'canRetry': canRetry,
+    'canDelete': canDelete,
+    'canDeleteFile': canDeleteFile,
+    'canOpenFile': canOpenFile,
+    'canOpenLocation': canOpenLocation,
+    'supportsResume': supportsResume,
+  };
+}
+
+class BrowserExternalOpenPrompt {
+  const BrowserExternalOpenPrompt({
+    required this.requestId,
+    required this.title,
+    required this.target,
+  });
+
+  final String requestId;
+  final String title;
+  final String target;
+
+  factory BrowserExternalOpenPrompt.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserExternalOpenPrompt(
+      requestId: _browserString(raw['requestId']),
+      title: _browserString(raw['title']),
+      target: _browserString(raw['target']),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'requestId': requestId,
+    'title': title,
+    'target': target,
+  };
+}
+
+class BrowserDialogPrompt {
+  const BrowserDialogPrompt({
+    required this.requestId,
+    required this.type,
+    required this.message,
+    this.url,
+    this.defaultValue,
+  });
+
+  final String requestId;
+  final String type;
+  final String message;
+  final String? url;
+  final String? defaultValue;
+
+  factory BrowserDialogPrompt.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserDialogPrompt(
+      requestId: _browserString(raw['requestId']),
+      type: _browserString(raw['type']),
+      message: _browserString(raw['message']),
+      url: raw['url']?.toString(),
+      defaultValue: raw['defaultValue']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'requestId': requestId,
+    'type': type,
+    'message': message,
+    'url': url,
+    'defaultValue': defaultValue,
+  };
+}
+
+class BrowserPermissionPrompt {
+  const BrowserPermissionPrompt({
+    required this.requestId,
+    required this.kind,
+    required this.origin,
+    this.resources = const <String>[],
+  });
+
+  final String requestId;
+  final String kind;
+  final String origin;
+  final List<String> resources;
+
+  factory BrowserPermissionPrompt.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserPermissionPrompt(
+      requestId: _browserString(raw['requestId']),
+      kind: _browserString(raw['kind']),
+      origin: _browserString(raw['origin']),
+      resources: _browserStringList(raw['resources']),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'requestId': requestId,
+    'kind': kind,
+    'origin': origin,
+    'resources': resources,
+  };
+}
+
+class BrowserUserscriptItem {
+  const BrowserUserscriptItem({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.version,
+    required this.enabled,
+    this.blockedGrants = const <String>[],
+    this.grants = const <String>[],
+    this.matches = const <String>[],
+    this.includes = const <String>[],
+    this.excludes = const <String>[],
+    this.runAt,
+    this.sourceUrl,
+  });
+
+  final int id;
+  final String name;
+  final String description;
+  final String version;
+  final bool enabled;
+  final List<String> blockedGrants;
+  final List<String> grants;
+  final List<String> matches;
+  final List<String> includes;
+  final List<String> excludes;
+  final String? runAt;
+  final String? sourceUrl;
+
+  factory BrowserUserscriptItem.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserUserscriptItem(
+      id: _browserInt(raw['id']) ?? 0,
+      name: _browserString(raw['name']),
+      description: _browserString(raw['description']),
+      version: _browserString(raw['version']),
+      enabled: _browserBool(raw['enabled'], fallback: true),
+      blockedGrants: _browserStringList(raw['blockedGrants']),
+      grants: _browserStringList(raw['grants']),
+      matches: _browserStringList(raw['matches']),
+      includes: _browserStringList(raw['includes']),
+      excludes: _browserStringList(raw['excludes']),
+      runAt: raw['runAt']?.toString(),
+      sourceUrl: raw['sourceUrl']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'id': id,
+    'name': name,
+    'description': description,
+    'version': version,
+    'enabled': enabled,
+    'blockedGrants': blockedGrants,
+    'grants': grants,
+    'matches': matches,
+    'includes': includes,
+    'excludes': excludes,
+    'runAt': runAt,
+    'sourceUrl': sourceUrl,
+  };
+}
+
+class BrowserUserscriptMenuCommand {
+  const BrowserUserscriptMenuCommand({
+    required this.commandId,
+    required this.scriptId,
+    required this.title,
+  });
+
+  final String commandId;
+  final int scriptId;
+  final String title;
+
+  factory BrowserUserscriptMenuCommand.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserUserscriptMenuCommand(
+      commandId: _browserString(raw['commandId']),
+      scriptId: _browserInt(raw['scriptId']) ?? 0,
+      title: _browserString(raw['title']),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'commandId': commandId,
+    'scriptId': scriptId,
+    'title': title,
+  };
+}
+
+class BrowserUserscriptInstallPreview {
+  const BrowserUserscriptInstallPreview({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.version,
+    required this.isUpdate,
+    this.blockedGrants = const <String>[],
+    this.grants = const <String>[],
+    this.matches = const <String>[],
+    this.includes = const <String>[],
+    this.excludes = const <String>[],
+    this.runAt,
+    this.sourceUrl,
+  });
+
+  final int id;
+  final String name;
+  final String description;
+  final String version;
+  final bool isUpdate;
+  final List<String> blockedGrants;
+  final List<String> grants;
+  final List<String> matches;
+  final List<String> includes;
+  final List<String> excludes;
+  final String? runAt;
+  final String? sourceUrl;
+
+  factory BrowserUserscriptInstallPreview.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserUserscriptInstallPreview(
+      id: _browserInt(raw['id']) ?? 0,
+      name: _browserString(raw['name']),
+      description: _browserString(raw['description']),
+      version: _browserString(raw['version']),
+      isUpdate: _browserBool(raw['isUpdate']),
+      blockedGrants: _browserStringList(raw['blockedGrants']),
+      grants: _browserStringList(raw['grants']),
+      matches: _browserStringList(raw['matches']),
+      includes: _browserStringList(raw['includes']),
+      excludes: _browserStringList(raw['excludes']),
+      runAt: raw['runAt']?.toString(),
+      sourceUrl: raw['sourceUrl']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'id': id,
+    'name': name,
+    'description': description,
+    'version': version,
+    'isUpdate': isUpdate,
+    'blockedGrants': blockedGrants,
+    'grants': grants,
+    'matches': matches,
+    'includes': includes,
+    'excludes': excludes,
+    'runAt': runAt,
+    'sourceUrl': sourceUrl,
+  };
+}
+
+class BrowserUserscriptSummary {
+  const BrowserUserscriptSummary({
+    this.installedScripts = const <BrowserUserscriptItem>[],
+    this.currentPageMenuCommands = const <BrowserUserscriptMenuCommand>[],
+    this.pendingInstall,
+  });
+
+  final List<BrowserUserscriptItem> installedScripts;
+  final List<BrowserUserscriptMenuCommand> currentPageMenuCommands;
+  final BrowserUserscriptInstallPreview? pendingInstall;
+
+  factory BrowserUserscriptSummary.fromMap(Map<dynamic, dynamic> raw) {
+    return BrowserUserscriptSummary(
+      installedScripts: _browserMapList(raw['installedScripts'])
+          .map(BrowserUserscriptItem.fromMap)
+          .toList(growable: false),
+      currentPageMenuCommands: _browserMapList(raw['currentPageMenuCommands'])
+          .map(BrowserUserscriptMenuCommand.fromMap)
+          .toList(growable: false),
+      pendingInstall: raw['pendingInstall'] == null
+          ? null
+          : BrowserUserscriptInstallPreview.fromMap(
+              _browserMap(raw['pendingInstall']),
+            ),
+    );
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'installedScripts': installedScripts.map((item) => item.toMap()).toList(),
+    'currentPageMenuCommands':
+        currentPageMenuCommands.map((item) => item.toMap()).toList(),
+    'pendingInstall': pendingInstall?.toMap(),
+  };
+}
+
 class ChatBrowserSessionSnapshot {
   const ChatBrowserSessionSnapshot({
     required this.available,
@@ -304,6 +830,27 @@ class ChatBrowserSessionSnapshot {
     required this.currentUrl,
     required this.title,
     this.userAgentProfile,
+    this.isBookmarked = false,
+    this.canGoBack = false,
+    this.canGoForward = false,
+    this.isLoading = false,
+    this.hasSslError = false,
+    this.isDesktopMode = false,
+    this.riskChallengeDetected = false,
+    this.riskChallengeKind,
+    this.recommendedNextAction,
+    this.throttleDelayMs,
+    this.activeDownloadCount = 0,
+    this.tabs = const <AgentBrowserTab>[],
+    this.bookmarks = const <AgentBrowserHistoryEntry>[],
+    this.history = const <AgentBrowserHistoryEntry>[],
+    this.sessionHistory = const <AgentBrowserHistoryEntry>[],
+    this.downloads = const <BrowserDownloadItem>[],
+    this.downloadSummary = const BrowserDownloadSummary(),
+    this.externalOpenPrompt,
+    this.pendingDialog,
+    this.permissionPrompt,
+    this.userscriptSummary = const BrowserUserscriptSummary(),
   });
 
   final bool available;
@@ -312,6 +859,27 @@ class ChatBrowserSessionSnapshot {
   final String currentUrl;
   final String title;
   final String? userAgentProfile;
+  final bool isBookmarked;
+  final bool canGoBack;
+  final bool canGoForward;
+  final bool isLoading;
+  final bool hasSslError;
+  final bool isDesktopMode;
+  final bool riskChallengeDetected;
+  final String? riskChallengeKind;
+  final String? recommendedNextAction;
+  final int? throttleDelayMs;
+  final int activeDownloadCount;
+  final List<AgentBrowserTab> tabs;
+  final List<AgentBrowserHistoryEntry> bookmarks;
+  final List<AgentBrowserHistoryEntry> history;
+  final List<AgentBrowserHistoryEntry> sessionHistory;
+  final List<BrowserDownloadItem> downloads;
+  final BrowserDownloadSummary downloadSummary;
+  final BrowserExternalOpenPrompt? externalOpenPrompt;
+  final BrowserDialogPrompt? pendingDialog;
+  final BrowserPermissionPrompt? permissionPrompt;
+  final BrowserUserscriptSummary userscriptSummary;
 
   bool matchesWorkspace(String? candidateWorkspaceId) {
     final normalizedCandidate = candidateWorkspaceId?.trim() ?? '';
@@ -328,6 +896,27 @@ class ChatBrowserSessionSnapshot {
     String? currentUrl,
     String? title,
     String? userAgentProfile,
+    bool? isBookmarked,
+    bool? canGoBack,
+    bool? canGoForward,
+    bool? isLoading,
+    bool? hasSslError,
+    bool? isDesktopMode,
+    bool? riskChallengeDetected,
+    String? riskChallengeKind,
+    String? recommendedNextAction,
+    int? throttleDelayMs,
+    int? activeDownloadCount,
+    List<AgentBrowserTab>? tabs,
+    List<AgentBrowserHistoryEntry>? bookmarks,
+    List<AgentBrowserHistoryEntry>? history,
+    List<AgentBrowserHistoryEntry>? sessionHistory,
+    List<BrowserDownloadItem>? downloads,
+    BrowserDownloadSummary? downloadSummary,
+    BrowserExternalOpenPrompt? externalOpenPrompt,
+    BrowserDialogPrompt? pendingDialog,
+    BrowserPermissionPrompt? permissionPrompt,
+    BrowserUserscriptSummary? userscriptSummary,
   }) {
     return ChatBrowserSessionSnapshot(
       available: available ?? this.available,
@@ -336,6 +925,29 @@ class ChatBrowserSessionSnapshot {
       currentUrl: currentUrl ?? this.currentUrl,
       title: title ?? this.title,
       userAgentProfile: userAgentProfile ?? this.userAgentProfile,
+      isBookmarked: isBookmarked ?? this.isBookmarked,
+      canGoBack: canGoBack ?? this.canGoBack,
+      canGoForward: canGoForward ?? this.canGoForward,
+      isLoading: isLoading ?? this.isLoading,
+      hasSslError: hasSslError ?? this.hasSslError,
+      isDesktopMode: isDesktopMode ?? this.isDesktopMode,
+      riskChallengeDetected:
+          riskChallengeDetected ?? this.riskChallengeDetected,
+      riskChallengeKind: riskChallengeKind ?? this.riskChallengeKind,
+      recommendedNextAction:
+          recommendedNextAction ?? this.recommendedNextAction,
+      throttleDelayMs: throttleDelayMs ?? this.throttleDelayMs,
+      activeDownloadCount: activeDownloadCount ?? this.activeDownloadCount,
+      tabs: tabs ?? this.tabs,
+      bookmarks: bookmarks ?? this.bookmarks,
+      history: history ?? this.history,
+      sessionHistory: sessionHistory ?? this.sessionHistory,
+      downloads: downloads ?? this.downloads,
+      downloadSummary: downloadSummary ?? this.downloadSummary,
+      externalOpenPrompt: externalOpenPrompt ?? this.externalOpenPrompt,
+      pendingDialog: pendingDialog ?? this.pendingDialog,
+      permissionPrompt: permissionPrompt ?? this.permissionPrompt,
+      userscriptSummary: userscriptSummary ?? this.userscriptSummary,
     );
   }
 
@@ -347,21 +959,86 @@ class ChatBrowserSessionSnapshot {
       'currentUrl': currentUrl,
       'title': title,
       'userAgentProfile': userAgentProfile,
+      'isBookmarked': isBookmarked,
+      'canGoBack': canGoBack,
+      'canGoForward': canGoForward,
+      'isLoading': isLoading,
+      'hasSslError': hasSslError,
+      'isDesktopMode': isDesktopMode,
+      'riskChallengeDetected': riskChallengeDetected,
+      'riskChallengeKind': riskChallengeKind,
+      'recommendedNextAction': recommendedNextAction,
+      'throttleDelayMs': throttleDelayMs,
+      'activeDownloadCount': activeDownloadCount,
+      'tabs': tabs.map((item) => item.toMap()).toList(),
+      'bookmarks': bookmarks.map((item) => item.toMap()).toList(),
+      'history': history.map((item) => item.toMap()).toList(),
+      'sessionHistory': sessionHistory.map((item) => item.toMap()).toList(),
+      'downloads': downloads.map((item) => item.toMap()).toList(),
+      'downloadSummary': downloadSummary.toMap(),
+      'externalOpenPrompt': externalOpenPrompt?.toMap(),
+      'pendingDialog': pendingDialog?.toMap(),
+      'permissionPrompt': permissionPrompt?.toMap(),
+      'userscriptSummary': userscriptSummary.toMap(),
     };
   }
 
   factory ChatBrowserSessionSnapshot.fromMap(Map<dynamic, dynamic> raw) {
-    final activeTabIdRaw = raw['activeTabId'];
-    final activeTabId = activeTabIdRaw is num
-        ? activeTabIdRaw.toInt()
-        : int.tryParse(activeTabIdRaw?.toString() ?? '');
+    final normalized = _browserMap(raw);
     return ChatBrowserSessionSnapshot(
-      available: raw['available'] == true,
-      workspaceId: (raw['workspaceId'] ?? '').toString(),
-      activeTabId: activeTabId,
-      currentUrl: (raw['currentUrl'] ?? '').toString(),
-      title: (raw['title'] ?? '').toString(),
-      userAgentProfile: raw['userAgentProfile']?.toString(),
+      available: _browserBool(normalized['available']),
+      workspaceId: _browserString(normalized['workspaceId']),
+      activeTabId: _browserInt(normalized['activeTabId']),
+      currentUrl: _browserString(normalized['currentUrl']),
+      title: _browserString(normalized['title']),
+      userAgentProfile: normalized['userAgentProfile']?.toString(),
+      isBookmarked: _browserBool(normalized['isBookmarked']),
+      canGoBack: _browserBool(normalized['canGoBack']),
+      canGoForward: _browserBool(normalized['canGoForward']),
+      isLoading: _browserBool(normalized['isLoading']),
+      hasSslError: _browserBool(normalized['hasSslError']),
+      isDesktopMode: _browserBool(normalized['isDesktopMode']),
+      riskChallengeDetected: _browserBool(normalized['riskChallengeDetected']),
+      riskChallengeKind: normalized['riskChallengeKind']?.toString(),
+      recommendedNextAction: normalized['recommendedNextAction']?.toString(),
+      throttleDelayMs: _browserInt(normalized['throttleDelayMs']),
+      activeDownloadCount: _browserInt(normalized['activeDownloadCount']) ?? 0,
+      tabs: _browserMapList(normalized['tabs'])
+          .map(AgentBrowserTab.fromMap)
+          .toList(growable: false),
+      bookmarks: _browserMapList(normalized['bookmarks'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      history: _browserMapList(normalized['history'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      sessionHistory: _browserMapList(normalized['sessionHistory'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      downloads: _browserMapList(normalized['downloads'])
+          .map(BrowserDownloadItem.fromMap)
+          .toList(growable: false),
+      downloadSummary: BrowserDownloadSummary.fromMap(
+        _browserMap(normalized['downloadSummary']),
+      ),
+      externalOpenPrompt: normalized['externalOpenPrompt'] == null
+          ? null
+          : BrowserExternalOpenPrompt.fromMap(
+              _browserMap(normalized['externalOpenPrompt']),
+            ),
+      pendingDialog: normalized['pendingDialog'] == null
+          ? null
+          : BrowserDialogPrompt.fromMap(
+              _browserMap(normalized['pendingDialog']),
+            ),
+      permissionPrompt: normalized['permissionPrompt'] == null
+          ? null
+          : BrowserPermissionPrompt.fromMap(
+              _browserMap(normalized['permissionPrompt']),
+            ),
+      userscriptSummary: BrowserUserscriptSummary.fromMap(
+        _browserMap(normalized['userscriptSummary']),
+      ),
     );
   }
 
@@ -369,14 +1046,11 @@ class ChatBrowserSessionSnapshot {
     required Map<String, dynamic> payload,
     required String workspaceId,
   }) {
-    final activeTabIdRaw = payload['activeTabId'] ?? payload['tabId'];
-    final activeTabId = activeTabIdRaw is num
-        ? activeTabIdRaw.toInt()
-        : int.tryParse(activeTabIdRaw?.toString() ?? '');
-    final currentUrl =
-        (payload['currentUrl'] ?? payload['finalUrl'] ?? payload['url'] ?? '')
-            .toString();
-    final title = (payload['pageTitle'] ?? payload['title'] ?? '').toString();
+    final activeTabId = _browserInt(payload['activeTabId'] ?? payload['tabId']);
+    final currentUrl = _browserString(
+      payload['currentUrl'] ?? payload['finalUrl'] ?? payload['url'],
+    );
+    final title = _browserString(payload['pageTitle'] ?? payload['title']);
     return ChatBrowserSessionSnapshot(
       available: true,
       workspaceId: workspaceId,
@@ -384,6 +1058,10 @@ class ChatBrowserSessionSnapshot {
       currentUrl: currentUrl,
       title: title,
       userAgentProfile: payload['userAgentProfile']?.toString(),
+      riskChallengeDetected: _browserBool(payload['riskChallengeDetected']),
+      riskChallengeKind: payload['riskChallengeKind']?.toString(),
+      recommendedNextAction: payload['recommendedNextAction']?.toString(),
+      throttleDelayMs: _browserInt(payload['throttleDelayMs']),
     );
   }
 
@@ -431,6 +1109,40 @@ class HdPadPaneLayout {
   final double rightWidth;
 }
 
+const double kHdPadMinShortestSide = 600;
+const double kHdPadMinLandscapeWidth = 960;
+const double kChatKeyboardComposerClearance = 10.0;
+
+double resolveChatComposerKeyboardSpacer({
+  required bool shouldLiftComposerForKeyboard,
+  required double bottomInset,
+  double keyboardClearance = kChatKeyboardComposerClearance,
+}) {
+  if (!shouldLiftComposerForKeyboard) {
+    return 0.0;
+  }
+  final normalizedBottomInset = bottomInset.isFinite
+      ? math.max(0.0, bottomInset)
+      : 0.0;
+  if (normalizedBottomInset <= 0) {
+    return 0.0;
+  }
+  final normalizedClearance = keyboardClearance.isFinite
+      ? math.max(0.0, keyboardClearance)
+      : 0.0;
+  final closingClearance = math.min(
+    normalizedClearance,
+    normalizedBottomInset,
+  );
+  return normalizedBottomInset + closingClearance;
+}
+
+bool isHdPadLandscapeViewport(Size size) {
+  return size.width > size.height &&
+      size.shortestSide >= kHdPadMinShortestSide &&
+      size.width >= kHdPadMinLandscapeWidth;
+}
+
 class HdPadPaneLayoutResolver {
   const HdPadPaneLayoutResolver();
 
@@ -448,40 +1160,45 @@ class HdPadPaneLayoutResolver {
     double? preferredLeftWidth,
     double? preferredRightWidth,
     bool collapseLeftPane = false,
+    bool collapseRightPane = false,
   }) {
-    final dividerCount = collapseLeftPane ? 1 : 2;
+    final showLeftPane = !collapseLeftPane;
+    final showRightPane = !collapseRightPane;
+    final dividerCount = (showLeftPane ? 1 : 0) + (showRightPane ? 1 : 0);
     final availableWidth = math.max(
       0,
       totalWidth - dividerHitWidth * dividerCount,
     );
 
-    var leftWidth = collapseLeftPane
-        ? 0.0
-        : (preferredLeftWidth ?? defaultLeftWidth).clamp(
-            minLeftWidth,
-            maxLeftWidth,
-          );
-    var rightWidth = (preferredRightWidth ?? defaultRightWidth).clamp(
-      minRightWidth,
-      maxRightWidth,
-    );
+    var leftWidth = showLeftPane
+        ? (preferredLeftWidth ?? defaultLeftWidth)
+              .clamp(minLeftWidth, maxLeftWidth)
+              .toDouble()
+        : 0.0;
+    var rightWidth = showRightPane
+        ? (preferredRightWidth ?? defaultRightWidth)
+              .clamp(minRightWidth, maxRightWidth)
+              .toDouble()
+        : 0.0;
 
-    if (!collapseLeftPane) {
+    if (showLeftPane) {
       final maxLeftBySpace = math.max(
         minLeftWidth,
         availableWidth - rightWidth - minCenterWidth,
       );
-      leftWidth = leftWidth.clamp(minLeftWidth, maxLeftBySpace);
+      leftWidth = leftWidth.clamp(minLeftWidth, maxLeftBySpace).toDouble();
     }
 
-    final maxRightBySpace = math.max(
-      minRightWidth,
-      availableWidth - leftWidth - minCenterWidth,
-    );
-    rightWidth = rightWidth.clamp(minRightWidth, maxRightBySpace);
+    if (showRightPane) {
+      final maxRightBySpace = math.max(
+        minRightWidth,
+        availableWidth - leftWidth - minCenterWidth,
+      );
+      rightWidth = rightWidth.clamp(minRightWidth, maxRightBySpace).toDouble();
+    }
 
     var centerWidth = availableWidth - leftWidth - rightWidth;
-    if (centerWidth < minCenterWidth) {
+    if (showRightPane && centerWidth < minCenterWidth) {
       final rightFlexible = rightWidth - minRightWidth;
       if (rightFlexible > 0) {
         final delta = math.min(minCenterWidth - centerWidth, rightFlexible);
@@ -489,7 +1206,7 @@ class HdPadPaneLayoutResolver {
         centerWidth += delta;
       }
     }
-    if (!collapseLeftPane && centerWidth < minCenterWidth) {
+    if (showLeftPane && centerWidth < minCenterWidth) {
       final leftFlexible = leftWidth - minLeftWidth;
       if (leftFlexible > 0) {
         final delta = math.min(minCenterWidth - centerWidth, leftFlexible);
@@ -500,7 +1217,7 @@ class HdPadPaneLayoutResolver {
 
     return HdPadPaneLayout(
       leftWidth: leftWidth,
-      centerWidth: centerWidth,
+      centerWidth: math.max(0, centerWidth),
       rightWidth: centerWidth.isNegative ? 0 : rightWidth,
     );
   }

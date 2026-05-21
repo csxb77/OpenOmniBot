@@ -13,6 +13,7 @@ local.properties
 /misc
 
 .claude/
+.codex/
 .vscode/
 .codex/
 .agents/
@@ -27,4 +28,5 @@ release.jks
 testbot/build
 
 log.txt
+
 output/

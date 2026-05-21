@@ -18,17 +18,15 @@ const List<Color> _kDarkComposerFlowGradientColors = <Color>[
   Color(0xFF8C775D),
 ];
 
-mixin _ChatInputAreaComposerMixin
-    on _ChatInputAreaStateBase, _ChatInputAreaRecordingMixin {
+mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final palette = context.omniPalette;
     final composer = switch ((
       widget.useLargeComposerStyle,
       widget.useFrostedGlass,
     )) {
-      (true, _) => SafeArea(child: _buildLargeComposerShell(theme)),
+      (true, _) => SafeArea(child: _buildLargeComposerShell()),
       (false, true) => SafeArea(
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -48,7 +46,7 @@ mixin _ChatInputAreaComposerMixin
                       )
                     : null,
               ),
-              child: _buildInputContent(theme),
+              child: _buildInputContent(),
             ),
           ),
         ),
@@ -87,7 +85,7 @@ mixin _ChatInputAreaComposerMixin
                     ? Border.all(color: palette.borderSubtle)
                     : null,
               ),
-              child: _buildInputContent(theme),
+              child: _buildInputContent(),
             ),
           ),
         ),
@@ -103,71 +101,59 @@ mixin _ChatInputAreaComposerMixin
   }
 
   /// 构建输入框内容区域（按钮、文本框等）
-  Widget _buildInputContent(ThemeData theme) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _hasTextNotifier,
-      builder: (context, hasText, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: _isFocusedNotifier,
-          builder: (context, isFocused, _) {
-            final openClawButton = _buildOpenClawButton();
-            final hasPayload = hasText || widget.attachments.isNotEmpty;
-            return Row(
-              children: [
-                Expanded(child: _buildTextField()),
-                const SizedBox(width: 9),
-                _buildAnimatedButtonRow(
-                  theme: theme,
-                  hasText: hasPayload,
-                  isFocused: isFocused,
-                  openClawButton: openClawButton,
-                ),
-              ],
-            );
-          },
+  Widget _buildInputContent() {
+    return ValueListenableBuilder<_ComposerInteractionState>(
+      valueListenable: _composerStateNotifier,
+      builder: (context, composerState, _) {
+        final openClawButton = _buildOpenClawButton();
+        final hasPayload =
+            composerState.hasText || widget.attachments.isNotEmpty;
+        return Row(
+          children: [
+            Expanded(child: _buildTextField()),
+            const SizedBox(width: 9),
+            _buildAnimatedButtonRow(
+              hasText: hasPayload,
+              openClawButton: openClawButton,
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _buildLargeComposer(ThemeData theme) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: _hasTextNotifier,
-      builder: (context, hasText, _) {
-        return ValueListenableBuilder<bool>(
-          valueListenable: _isFocusedNotifier,
-          builder: (context, _, _) {
-            final hasPayload = hasText || widget.attachments.isNotEmpty;
+  Widget _buildLargeComposer() {
+    return ValueListenableBuilder<_ComposerInteractionState>(
+      valueListenable: _composerStateNotifier,
+      builder: (context, composerState, _) {
+        final hasPayload =
+            composerState.hasText || widget.attachments.isNotEmpty;
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.attachments.isNotEmpty) ...[
-                  _buildAttachmentPreview(),
-                  const SizedBox(height: 8),
-                ],
-                if ((widget.selectedModelOverrideId ?? '')
-                    .trim()
-                    .isNotEmpty) ...[
-                  _buildSelectedModelOverrideChip(),
-                  const SizedBox(height: 8),
-                ],
-                _buildTextField(multiline: true),
-                const SizedBox(height: 6),
-                _buildLargeActionRow(theme: theme, hasPayload: hasPayload),
-              ],
-            );
-          },
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.attachments.isNotEmpty) ...[
+              _buildAttachmentPreview(),
+              const SizedBox(height: 8),
+            ],
+            if ((widget.selectedModelOverrideId ?? '').trim().isNotEmpty) ...[
+              _buildSelectedModelOverrideChip(),
+              const SizedBox(height: 8),
+            ],
+            _buildTextField(
+              multiline: true,
+              expanded: composerState.expandsTextField,
+            ),
+            const SizedBox(height: 6),
+            _buildLargeActionRow(hasPayload: hasPayload),
+          ],
         );
       },
     );
   }
 
-  Widget _buildLargeActionRow({
-    required ThemeData theme,
-    required bool hasPayload,
-  }) {
+  Widget _buildLargeActionRow({required bool hasPayload}) {
     final contextUsageRatio = widget.contextUsageRatio;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -190,11 +176,18 @@ mixin _ChatInputAreaComposerMixin
           ),
           const SizedBox(width: 4),
         ],
+        if (_shouldShowCodexPermissionSelector) ...[
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: _buildCodexPermissionButton(iconSize: 20),
+          ),
+          const SizedBox(width: 4),
+        ],
         SizedBox(
           width: 28,
           height: 28,
-          child:
-              _buildMicButtonAnimated(theme: theme) ?? const SizedBox.shrink(),
+          child: _buildTerminalButton(iconSize: 22),
         ),
         const SizedBox(width: 6),
         SizedBox(
@@ -345,8 +338,8 @@ mixin _ChatInputAreaComposerMixin
     );
   }
 
-  Widget _buildLargeComposerShell(ThemeData theme) {
-    final content = RepaintBoundary(child: _buildLargeComposer(theme));
+  Widget _buildLargeComposerShell() {
+    final content = RepaintBoundary(child: _buildLargeComposer());
     final useFrostedGlass = widget.useFrostedGlass;
     final palette = context.omniPalette;
     return MouseRegion(
@@ -358,10 +351,11 @@ mixin _ChatInputAreaComposerMixin
         if (!_isComposerHovered) return;
         setState(() => _isComposerHovered = false);
       },
-      child: ValueListenableBuilder<bool>(
-        valueListenable: _isFocusedNotifier,
+      child: ValueListenableBuilder<_ComposerInteractionState>(
+        valueListenable: _composerStateNotifier,
         child: content,
-        builder: (context, focused, child) {
+        builder: (context, composerState, child) {
+          final focused = composerState.hasFocus;
           final inputSurfaceColor = context.isDarkTheme
               ? palette.surfacePrimary
               : const Color(0xFFF9FCFF);
@@ -376,7 +370,7 @@ mixin _ChatInputAreaComposerMixin
           const borderInset = 1.5;
           final innerRadius = math.max(0.0, shellRadius - borderInset);
           const contentPadding = EdgeInsets.fromLTRB(14, 8, 12, 8);
-          final shouldGlowStrong = focused || hovered || isRecording;
+          final shouldGlowStrong = focused || hovered;
           final innerBorderColor =
               (context.isDarkTheme ? palette.borderStrong : Colors.white)
                   .withValues(alpha: context.isDarkTheme ? 0.42 : 0.1);
@@ -430,7 +424,7 @@ mixin _ChatInputAreaComposerMixin
                         child: AnimatedSize(
                           duration: const Duration(milliseconds: 220),
                           curve: Curves.easeOutCubic,
-                          alignment: Alignment.topCenter,
+                          alignment: Alignment.bottomCenter,
                           child: child ?? const SizedBox.shrink(),
                         ),
                       ),
@@ -444,7 +438,7 @@ mixin _ChatInputAreaComposerMixin
                         progress: _composerFlowController,
                         interactive: shouldGlowStrong,
                         focused: focused,
-                        forceStrong: isRecording,
+                        forceStrong: false,
                         radius: shellRadius,
                         strokeWidth: 1.5,
                         gradientColors: context.isDarkTheme
@@ -637,9 +631,7 @@ mixin _ChatInputAreaComposerMixin
 
   /// 构建带动画的按钮行
   Widget _buildAnimatedButtonRow({
-    required ThemeData theme,
     required bool hasText,
-    required bool isFocused,
     required Widget? openClawButton,
   }) {
     final contextUsageRatio = widget.contextUsageRatio;
@@ -667,67 +659,200 @@ mixin _ChatInputAreaComposerMixin
           ),
           const SizedBox(width: 4),
         ],
+        if (_shouldShowCodexPermissionSelector) ...[
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: _buildCodexPermissionButton(iconSize: 18),
+          ),
+          const SizedBox(width: 2),
+        ],
         SizedBox(
           width: 24,
           height: 24,
-          child: _buildMicButtonAnimated(theme: theme),
+          child: _buildTerminalButton(iconSize: 20),
         ),
         const SizedBox(width: 2),
         // 发送/添加按钮
-        _buildSendButton(theme: theme, hasText: hasText, isFocused: isFocused),
+        _buildSendButton(hasText: hasText),
       ],
     );
   }
 
-  /// 构建带动画的麦克风按钮（点击开始/停止录音）
-  Widget? _buildMicButtonAnimated({required ThemeData theme}) {
-    return _buildMicControlButton(iconSize: 18);
-  }
+  bool get _shouldShowCodexPermissionSelector =>
+      widget.codexPermissionMode != null &&
+      widget.onCodexPermissionModeChanged != null;
 
-  Widget _buildMicControlButton({required double iconSize}) {
-    final recordingActive = isRecording;
-    final bgColor = recordingActive
-        ? const Color(0x1AE53935)
-        : Colors.transparent;
-    return IconButton(
+  Widget _buildCodexPermissionButton({required double iconSize}) {
+    final selected =
+        widget.codexPermissionMode ?? CodexPermissionMode.fullAccess;
+    final palette = context.omniPalette;
+    final selectedColor = context.isDarkTheme
+        ? palette.accentPrimary
+        : const Color(0xFF2F65D9);
+    final inactiveColor = context.isDarkTheme
+        ? palette.textSecondary
+        : const Color(0xFF5E6C84);
+
+    return PopupMenuButton<CodexPermissionMode>(
+      key: const ValueKey('chat-input-codex-permission-button'),
       padding: EdgeInsets.zero,
-      iconSize: iconSize,
-      icon: AnimatedContainer(
+      tooltip: _codexPermissionTooltip(),
+      position: PopupMenuPosition.over,
+      offset: const Offset(0, -8),
+      color: context.isDarkTheme ? palette.surfaceElevated : Colors.white,
+      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      constraints: const BoxConstraints(minWidth: 184),
+      onSelected: widget.onCodexPermissionModeChanged,
+      itemBuilder: (context) {
+        return CodexPermissionMode.values
+            .map((mode) {
+              final isSelected = mode == selected;
+              return PopupMenuItem<CodexPermissionMode>(
+                key: ValueKey(
+                  'chat-input-codex-permission-option-${mode.name}',
+                ),
+                value: mode,
+                height: 42,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildCodexPermissionIcon(
+                      mode,
+                      size: 18,
+                      color: isSelected ? selectedColor : inactiveColor,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _codexPermissionLabel(mode),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.2,
+                          color: context.isDarkTheme
+                              ? palette.textPrimary
+                              : const Color(0xFF232D3D),
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    AnimatedOpacity(
+                      duration: _buttonAnimationDuration,
+                      opacity: isSelected ? 1 : 0,
+                      child: Icon(
+                        Icons.check_rounded,
+                        size: 18,
+                        color: selectedColor,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            })
+            .toList(growable: false);
+      },
+      child: AnimatedContainer(
         duration: _buttonAnimationDuration,
         curve: _buttonAnimationCurve,
         width: 24,
         height: 24,
-        decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
-        child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
-          children: [
-            SizedBox(width: iconSize, height: iconSize, child: _micSvg),
-            if (recordingActive)
-              Positioned(
-                right: 2,
-                top: 2,
-                child: Container(
-                  width: 6,
-                  height: 6,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFE53935),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-          ],
+        decoration: BoxDecoration(
+          color: context.isDarkTheme
+              ? palette.surfaceSecondary.withValues(alpha: 0.72)
+              : const Color(0xFFEAF1FF),
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: _buildCodexPermissionIcon(
+            selected,
+            size: iconSize,
+            color: selectedColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _codexPermissionTooltip() {
+    return Localizations.localeOf(context).languageCode == 'en'
+        ? 'Codex permissions'
+        : 'Codex 权限';
+  }
+
+  String _codexPermissionLabel(CodexPermissionMode mode) {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    return switch (mode) {
+      CodexPermissionMode.defaultMode =>
+        english ? 'Default permissions' : '默认权限',
+      CodexPermissionMode.autoReview => english ? 'Auto review' : '自动审查',
+      CodexPermissionMode.fullAccess => english ? 'Full access' : '完全访问权限',
+    };
+  }
+
+  String _codexPermissionIconAsset(CodexPermissionMode mode) {
+    return switch (mode) {
+      CodexPermissionMode.defaultMode => _kCodexPermissionDefaultIconAsset,
+      CodexPermissionMode.autoReview => _kCodexPermissionAutoReviewIconAsset,
+      CodexPermissionMode.fullAccess => _kCodexPermissionFullAccessIconAsset,
+    };
+  }
+
+  Widget _buildCodexPermissionIcon(
+    CodexPermissionMode mode, {
+    required double size,
+    required Color color,
+  }) {
+    return SvgPicture.asset(
+      _codexPermissionIconAsset(mode),
+      width: size,
+      height: size,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
+  }
+
+  Widget _buildTerminalButton({required double iconSize}) {
+    return IconButton(
+      padding: EdgeInsets.zero,
+      tooltip: Localizations.localeOf(context).languageCode == 'en'
+          ? 'Open terminal'
+          : '打开终端',
+      iconSize: iconSize,
+      icon: SizedBox(
+        width: 24,
+        height: 24,
+        child: Center(
+          child: SizedBox(
+            width: iconSize,
+            height: iconSize,
+            child: _terminalSvg,
+          ),
         ),
       ),
       onPressed: () {
-        toggleRecording();
+        unawaited(openTerminalFromInput());
       },
     );
   }
 
-  /// 统一的输入框组件（录音模式和输入模式共用）
-  Widget _buildTextField({bool multiline = false}) {
+  /// 统一的输入框组件
+  Widget _buildTextField({bool multiline = false, bool expanded = false}) {
     final palette = context.omniPalette;
+    final useKeyboardNewline =
+        multiline &&
+        widget.useIndependentSendButton &&
+        StorageService.isIndependentChatSendButtonEnabled();
+    final keyboardType = useKeyboardNewline
+        ? TextInputType.multiline
+        : TextInputType.text;
+    final textInputAction = useKeyboardNewline
+        ? TextInputAction.newline
+        : TextInputAction.send;
     final textColor = context.isDarkTheme
         ? palette.textPrimary
         : const Color(0xFF353E53);
@@ -740,25 +865,32 @@ mixin _ChatInputAreaComposerMixin
       color: textColor,
       letterSpacing: 0.333,
     );
+    final minLines = multiline ? (expanded ? 2 : 1) : 1;
+    final maxLines = multiline ? 3 : 1;
     return GestureDetector(
       onTap: () {
-        if (isRecording) {
-          // 录音模式下点击，停止录音并切换到输入模式
-          _onTranscriptTap();
-        } else {
-          widget.focusNode.requestFocus();
-        }
+        widget.focusNode.requestFocus();
       },
       child: AbsorbPointer(
-        absorbing: isRecording || !widget.focusNode.hasFocus,
+        absorbing: !widget.focusNode.hasFocus,
         child: TextField(
           controller: widget.controller,
           focusNode: widget.focusNode,
           scrollController: _textFieldScrollController,
-          keyboardType: TextInputType.text,
-          minLines: 1,
-          maxLines: multiline ? 2 : 1,
+          keyboardType: keyboardType,
+          textInputAction: textInputAction,
+          minLines: minLines,
+          maxLines: maxLines,
           scrollPhysics: const ClampingScrollPhysics(),
+          onSubmitted: useKeyboardNewline
+              ? null
+              : (_) {
+                  if (widget.controller.text.trim().isNotEmpty) {
+                    widget.onSendMessage();
+                  } else {
+                    widget.focusNode.requestFocus();
+                  }
+                },
           textAlignVertical: multiline
               ? TextAlignVertical.top
               : TextAlignVertical.center,
@@ -767,13 +899,9 @@ mixin _ChatInputAreaComposerMixin
           contextMenuBuilder: (context, editableTextState) =>
               TextInputContextMenu(editableTextState: editableTextState),
           decoration: InputDecoration(
-            hintText: isRecording
-                ? (Localizations.localeOf(context).languageCode == 'en'
-                      ? 'Type or speak directly, I am listening'
-                      : '输入或直接说，我在听')
-                : (Localizations.localeOf(context).languageCode == 'en'
-                      ? 'Type your message'
-                      : '请输入内容'),
+            hintText: Localizations.localeOf(context).languageCode == 'en'
+                ? 'Type your message'
+                : '请输入内容',
             hintStyle: TextStyle(
               fontSize: multiline ? 15.0 : 14.0,
               color: hintColor,
@@ -837,11 +965,7 @@ mixin _ChatInputAreaComposerMixin
   }
 
   /// 右侧发送/添加按钮
-  Widget _buildSendButton({
-    required ThemeData theme,
-    required bool hasText,
-    required bool isFocused,
-  }) {
+  Widget _buildSendButton({required bool hasText}) {
     Widget icon;
     VoidCallback? onPressed;
     String iconKey;

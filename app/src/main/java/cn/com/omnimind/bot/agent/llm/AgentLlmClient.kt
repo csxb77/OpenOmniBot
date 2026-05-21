@@ -2,12 +2,19 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
+import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ChatCompletionTurn
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.LocalModelProviderBridge
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.ReasoningStreamUpdatePolicy
 import cn.com.omnimind.baselib.util.OmniLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -39,6 +46,11 @@ class HttpAgentLlmClient(
 ) : AgentLlmClient {
     private val tag = "HttpAgentLlmClient"
 
+    private companion object {
+        const val REASONING_UPDATE_INTERVAL_MS =
+            ReasoningStreamUpdatePolicy.DEFAULT_INTERVAL_MS
+    }
+
     private data class StreamRequestVariant(
         val name: String,
         val requestJson: String
@@ -60,7 +72,9 @@ class HttpAgentLlmClient(
         onContentUpdate: (suspend (String) -> Unit)?
     ): ChatCompletionTurn {
         val modelCandidates = buildModelCandidates(request.model)
-        val variants = buildRequestVariants(request)
+        val variants = buildRequestVariants(
+            sanitizeRequestForTarget(request)
+        )
         var lastFailure: StreamRequestFailure? = null
 
         for (modelIndex in modelCandidates.indices) {
@@ -142,37 +156,117 @@ class HttpAgentLlmClient(
     ): ChatCompletionTurn {
         val streamDone = CompletableDeferred<ChatCompletionTurn>()
         val completed = AtomicBoolean(false)
+        val routeInfo = HttpController.resolveChatCompletionRouteInfo(
+            modelOrScene = model,
+            explicitApiBase = modelOverride?.apiBase,
+            explicitApiKey = modelOverride?.apiKey,
+            explicitModel = modelOverride?.modelId,
+            explicitProtocolType = modelOverride?.protocolType
+        )
         val accumulator = AgentLlmStreamAccumulator(
             json = json,
             preferInlineThinkTags = LocalModelProviderBridge.isBuiltinLocalProvider(
                 modelOverride?.providerProfileId,
                 modelOverride?.apiBase
-            )
+            ),
+            includeReasoningInAssistantMessage = routeInfo?.requiresReasoningEcho == true
         )
         var lastReasoning = ""
+        var lastReasoningEmitLength = 0
+        var lastReasoningEmitAt = 0L
+        var reasoningEmitJob: Job? = null
+        val reasoningLock = Any()
         var lastContent = ""
         var eventSource: EventSource? = null
+        val emissionQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+        val emissionJob = scope.launch {
+            for (block in emissionQueue) {
+                runCatching { block.invoke() }
+                    .onFailure { OmniLog.w(tag, "stream emission failed: ${it.message}") }
+            }
+        }
+        var hasPublishedReasoningForTurn = false
 
-        fun emitReasoning() {
-            val reasoning = accumulator.currentReasoning()
-            if (reasoning.isBlank() || reasoning == lastReasoning) return
+        fun enqueueEmission(block: suspend () -> Unit) {
+            if (emissionQueue.isClosedForSend) {
+                return
+            }
+            emissionQueue.trySend(block)
+        }
+
+        fun dispatchReasoningSnapshot(reasoning: String) {
             lastReasoning = reasoning
+            hasPublishedReasoningForTurn = true
             if (onReasoningUpdate != null) {
-                scope.launch {
-                    runCatching { onReasoningUpdate.invoke(reasoning) }
-                        .onFailure { OmniLog.w(tag, "emit reasoning update failed: ${it.message}") }
+                enqueueEmission {
+                    onReasoningUpdate.invoke(reasoning)
                 }
+            }
+        }
+
+        fun collectReasoningSnapshotLocked(): String? {
+            val length = accumulator.currentReasoningLength()
+            if (length <= 0 || length == lastReasoningEmitLength) return null
+            val reasoning = accumulator.currentReasoning()
+            lastReasoningEmitLength = length
+            if (reasoning.isBlank() || reasoning == lastReasoning) return null
+            lastReasoning = reasoning
+            lastReasoningEmitAt = System.currentTimeMillis()
+            return reasoning
+        }
+
+        fun scheduleReasoningSnapshotLocked(delayMs: Long) {
+            reasoningEmitJob = scope.launch {
+                delay(delayMs)
+                val snapshot = synchronized(reasoningLock) {
+                    reasoningEmitJob = null
+                    collectReasoningSnapshotLocked()
+                }
+                if (snapshot != null) {
+                    dispatchReasoningSnapshot(snapshot)
+                }
+            }
+        }
+
+        fun emitReasoning(force: Boolean = false) {
+            var snapshot: String? = null
+            synchronized(reasoningLock) {
+                val length = accumulator.currentReasoningLength()
+                if (length <= 0 || length == lastReasoningEmitLength) return
+                if (force) {
+                    reasoningEmitJob?.cancel()
+                    reasoningEmitJob = null
+                    snapshot = collectReasoningSnapshotLocked()
+                    return@synchronized
+                }
+                if (reasoningEmitJob?.isActive == true) return
+                val delayMs = ReasoningStreamUpdatePolicy.nextDelayMs(
+                    hasEmittedBefore = lastReasoningEmitLength > 0,
+                    lastEmitAtMs = lastReasoningEmitAt,
+                    nowMs = System.currentTimeMillis(),
+                    intervalMs = REASONING_UPDATE_INTERVAL_MS
+                )
+                if (delayMs <= 0L) {
+                    snapshot = collectReasoningSnapshotLocked()
+                } else {
+                    scheduleReasoningSnapshotLocked(delayMs)
+                }
+            }
+            if (snapshot != null) {
+                dispatchReasoningSnapshot(snapshot!!)
             }
         }
 
         fun emitContent() {
             val content = accumulator.currentContent()
             if (content.isEmpty() || content == lastContent) return
+            if (!hasPublishedReasoningForTurn && accumulator.currentReasoningLength() > 0) {
+                emitReasoning(force = true)
+            }
             lastContent = content
             if (onContentUpdate != null) {
-                scope.launch {
-                    runCatching { onContentUpdate.invoke(content) }
-                        .onFailure { OmniLog.w(tag, "emit content update failed: ${it.message}") }
+                enqueueEmission {
+                    onContentUpdate.invoke(content)
                 }
             }
         }
@@ -181,7 +275,8 @@ class HttpAgentLlmClient(
             if (!completed.compareAndSet(false, true)) return
             runCatching {
                 val turn = accumulator.buildTurn()
-                emitReasoning()
+                enforceReasoningEchoIfRequired(turn, routeInfo)
+                emitReasoning(force = true)
                 emitContent()
                 turn
             }.onSuccess { turn ->
@@ -249,8 +344,30 @@ class HttpAgentLlmClient(
             )
             return streamDone.await()
         } finally {
+            reasoningEmitJob?.cancel()
             eventSource?.cancel()
+            emissionQueue.close()
+            runCatching { emissionJob.join() }
         }
+    }
+
+    private fun enforceReasoningEchoIfRequired(
+        turn: ChatCompletionTurn,
+        routeInfo: HttpController.ChatCompletionRouteInfo
+    ) {
+        if (!routeInfo.requiresReasoningEcho) {
+            return
+        }
+        if (turn.reasoning.isBlank()) {
+            return
+        }
+        if (!turn.message.reasoningContent.isNullOrBlank()) {
+            return
+        }
+        throw IllegalStateException(
+            "assistant turn is missing reasoning_content for route=${routeInfo.resolvedModel} " +
+                "protocol=${routeInfo.protocolType} despite non-empty reasoning output"
+        )
     }
 
     private fun buildRequestVariants(request: ChatCompletionRequest): List<StreamRequestVariant> {
@@ -292,6 +409,76 @@ class HttpAgentLlmClient(
             )
         }
         return variants
+    }
+
+    private fun sanitizeRequestForTarget(request: ChatCompletionRequest): ChatCompletionRequest {
+        if (shouldPreserveAllAssistantReasoning()) {
+            return request
+        }
+        val sanitizedMessages = request.messages.mapIndexed { index, message ->
+            if (
+                message.role != "assistant" ||
+                message.reasoningContent.isNullOrBlank() ||
+                shouldRetainAssistantReasoning(index, request.messages)
+            ) {
+                message
+            } else {
+                message.copy(reasoningContent = null)
+            }
+        }
+        return if (sanitizedMessages == request.messages) {
+            request
+        } else {
+            request.copy(messages = sanitizedMessages)
+        }
+    }
+
+    private fun shouldPreserveAllAssistantReasoning(): Boolean {
+        if (isOfficialDeepSeekTarget()) {
+            return true
+        }
+        return resolvedProtocolType() == DeepSeekProvider.PROTOCOL_TYPE
+    }
+
+    private fun shouldRetainAssistantReasoning(
+        assistantIndex: Int,
+        messages: List<ChatCompletionMessage>
+    ): Boolean {
+        val message = messages.getOrNull(assistantIndex) ?: return false
+        if (message.toolCalls?.isNotEmpty() == true) {
+            return true
+        }
+        for (index in assistantIndex + 1 until messages.size) {
+            when (messages[index].role) {
+                "tool" -> return true
+                "user" -> return false
+            }
+        }
+        return false
+    }
+
+    private fun isOfficialDeepSeekTarget(): Boolean {
+        if (modelOverride != null) {
+            return DeepSeekProvider.shouldUseOfficialAdapter(
+                protocolType = modelOverride.protocolType,
+                apiBase = modelOverride.apiBase
+            )
+        }
+        val profile = runCatching { ModelProviderConfigStore.getEditingProfile() }
+            .getOrNull()
+        return DeepSeekProvider.shouldUseOfficialAdapter(
+            protocolType = profile?.protocolType,
+            apiBase = profile?.baseUrl
+        )
+    }
+
+    private fun resolvedProtocolType(): String {
+        modelOverride?.protocolType
+            ?.let(DeepSeekProvider::normalizeProtocolType)
+            ?.let { return it }
+        return runCatching { ModelProviderConfigStore.getEditingProfile().protocolType }
+            .map(DeepSeekProvider::normalizeProtocolType)
+            .getOrDefault(DeepSeekProvider.normalizeProtocolType(null))
     }
 
     private fun toLegacyFunctionCall(toolChoice: JsonElement?): JsonElement? {

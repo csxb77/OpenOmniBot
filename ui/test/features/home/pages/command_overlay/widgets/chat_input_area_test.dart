@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 
 void main() {
@@ -103,26 +103,221 @@ void main() {
 
     expect(tapped, isTrue);
   });
+
+  testWidgets('codex permission selector opens menu and selects mode', (
+    tester,
+  ) async {
+    CodexPermissionMode? selected;
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: null,
+        useLargeComposerStyle: true,
+        codexPermissionMode: CodexPermissionMode.fullAccess,
+        onCodexPermissionModeChanged: (mode) {
+          selected = mode;
+        },
+      ),
+    );
+    await tester.pump();
+
+    final permissionButton = find.byKey(
+      const ValueKey('chat-input-codex-permission-button'),
+    );
+    expect(
+      find.descendant(of: permissionButton, matching: find.byType(SvgPicture)),
+      findsOneWidget,
+    );
+
+    await tester.tap(permissionButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-defaultMode'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-autoReview'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-fullAccess'),
+      ),
+      findsOneWidget,
+    );
+    for (final mode in CodexPermissionMode.values) {
+      expect(
+        find.descendant(
+          of: find.byKey(
+            ValueKey('chat-input-codex-permission-option-${mode.name}'),
+          ),
+          matching: find.byType(SvgPicture),
+        ),
+        findsOneWidget,
+      );
+    }
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('chat-input-codex-permission-option-autoReview'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(selected, CodexPermissionMode.autoReview);
+  });
+
+  testWidgets('large composer starts collapsed for empty unfocused input', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.keyboardType, TextInputType.multiline);
+    expect(field.textInputAction, TextInputAction.newline);
+    expect(field.minLines, 1);
+    expect(field.maxLines, 3);
+  });
+
+  testWidgets('large composer expands when soft keyboard is visible', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.minLines, 2);
+    expect(field.maxLines, 3);
+    tester.view.resetViewInsets();
+  });
+
+  testWidgets('large composer collapses when keyboard hides while focused', (
+    tester,
+  ) async {
+    final focusNode = FocusNode();
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: null,
+        useLargeComposerStyle: true,
+        focusNode: focusNode,
+      ),
+    );
+    await tester.pump();
+
+    focusNode.requestFocus();
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 2);
+
+    tester.view.resetViewInsets();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(focusNode.hasFocus, isTrue);
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 1);
+  });
+
+  testWidgets('large composer starts collapsing while keyboard is closing', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 2);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).minLines, 1);
+    tester.view.resetViewInsets();
+  });
+
+  testWidgets('large composer resizes from bottom to keep actions anchored', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: true),
+    );
+    await tester.pump();
+
+    final animatedSize = tester.widget<AnimatedSize>(find.byType(AnimatedSize));
+    expect(animatedSize.alignment, Alignment.bottomCenter);
+  });
+
+  testWidgets('large composer stays expanded for existing text without focus', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: null,
+        useLargeComposerStyle: true,
+        initialText: 'draft',
+      ),
+    );
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.minLines, 2);
+    expect(field.maxLines, 3);
+  });
+
+  testWidgets('compact composer keeps send action', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(contextUsageRatio: null, useLargeComposerStyle: false),
+    );
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.keyboardType, TextInputType.text);
+    expect(field.textInputAction, TextInputAction.send);
+    expect(field.maxLines, 1);
+  });
 }
 
 Widget _buildTestApp({
   required double? contextUsageRatio,
   VoidCallback? onLongPressContextUsageRing,
   VoidCallback? onTriggerSlashCommand,
+  bool useLargeComposerStyle = false,
+  CodexPermissionMode? codexPermissionMode,
+  ValueChanged<CodexPermissionMode>? onCodexPermissionModeChanged,
+  String initialText = '',
+  FocusNode? focusNode,
 }) {
   return DefaultAssetBundle(
     bundle: _TestAssetBundle(),
     child: MaterialApp(
       home: Scaffold(
         body: ChatInputArea(
-          controller: TextEditingController(),
-          focusNode: FocusNode(),
+          controller: TextEditingController(text: initialText),
+          focusNode: focusNode ?? FocusNode(),
           isProcessing: false,
           onSendMessage: () {},
           onCancelTask: () {},
+          useLargeComposerStyle: useLargeComposerStyle,
           contextUsageRatio: contextUsageRatio,
           onLongPressContextUsageRing: onLongPressContextUsageRing,
           onTriggerSlashCommand: onTriggerSlashCommand,
+          codexPermissionMode: codexPermissionMode,
+          onCodexPermissionModeChanged: onCodexPermissionModeChanged,
         ),
       ),
     ),

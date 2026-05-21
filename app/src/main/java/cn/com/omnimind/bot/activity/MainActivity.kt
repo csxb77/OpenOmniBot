@@ -2,13 +2,13 @@ package cn.com.omnimind.bot.activity
 
 import android.app.ActivityManager
 import android.content.Context
-import android.content.pm.ActivityInfo
-import cn.com.omnimind.baselib.util.OmniLog
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.lifecycle.lifecycleScope
+import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
-import cn.com.omnimind.bot.omniinfer.OmniInferLocalRuntime
+import cn.com.omnimind.bot.localmodel.LocalModelFeature
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
@@ -81,7 +81,7 @@ class MainActivity : FlutterActivity() {
         }
         lifecycleScope.launch {
             runCatching {
-                OmniInferLocalRuntime.handleAppOpen(this@MainActivity)
+                LocalModelFeature.handleAppOpen(this@MainActivity)
             }.onFailure { error ->
                 OmniLog.e(TAG, "MainActivity auto-start local model service failed", error)
             }
@@ -158,7 +158,26 @@ class MainActivity : FlutterActivity() {
         if (FileSaveChannel.onActivityResult(this, requestCode, resultCode, data)) {
             return
         }
+        if (LocalModelFeature.onActivityResult(this, requestCode, resultCode, data)) {
+            return
+        }
+        if (isHalfScreenInitialized && halfScreenListenerImpl.onActivityResult(requestCode, resultCode, data)) {
+            return
+        }
         super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        if (isHalfScreenInitialized &&
+            halfScreenListenerImpl.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        ) {
+            return
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
     override fun onResume() {

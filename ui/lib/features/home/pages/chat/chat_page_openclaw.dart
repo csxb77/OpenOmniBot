@@ -150,14 +150,25 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
 
   @override
   Future<void> _handleOutsideTap(Offset position) async {
+    final insideInputArea = _isPointerInside(_inputAreaKey, position);
+    final insideInputAuxiliarySurface =
+        _isPointerInside(_openClawPanelKey, position) ||
+        _isPointerInside(_slashCommandStripKey, position);
+    if (!insideInputArea &&
+        !insideInputAuxiliarySurface &&
+        _inputFocusNode.hasFocus) {
+      await SchedulerBinding.instance.endOfFrame;
+      if (!_suppressNextOutsideTapKeyboardHide) {
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+      }
+      _suppressNextOutsideTapKeyboardHide = false;
+    }
     if (!_showSlashCommandPanel &&
         !_showModelMentionPanel &&
         !_openClawPanelExpanded) {
       return;
     }
-    if (_isPointerInside(_openClawPanelKey, position) ||
-        _isPointerInside(_slashCommandStripKey, position) ||
-        _isPointerInside(_inputAreaKey, position)) {
+    if (insideInputArea || insideInputAuxiliarySurface) {
       return;
     }
     if (_openClawPanelExpanded) {
@@ -202,6 +213,9 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
   Future<bool> _tryHandleSlashCommand(String messageText) async {
     final trimmed = messageText.trim();
     if (!trimmed.startsWith('/')) return false;
+    if (_activeMode == ChatPageMode.codex) {
+      return _tryHandleCodexSlashCommand(trimmed);
+    }
 
     if (trimmed == '/compact' || trimmed.startsWith('/compact ')) {
       await _executeManualContextCompactionCommand();

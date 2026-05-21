@@ -144,10 +144,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsVibrationSubtitle => '执行任务时，通过振动进行操作提醒';
 
   @override
+  String get settingsIndependentSendButtonTitle => '使用独立的发送按钮';
+
+  @override
+  String get settingsIndependentSendButtonSubtitle =>
+      '开启后，聊天页键盘回车为换行；关闭后，回车直接发送';
+
+  @override
   String get settingsAutoBackTitle => '任务完成后自动回聊天';
 
   @override
   String get settingsAutoBackSubtitle => '关闭后，任务结束将停留在当前完成页面';
+
+  @override
+  String get settingsHabitualHandTitle => '惯用手';
+
+  @override
+  String get settingsHabitualHandSubtitle => '影响聊天历史记录的侧滑菜单方向';
+
+  @override
+  String get settingsHabitualHandLeft => '左手';
+
+  @override
+  String get settingsHabitualHandRight => '右手';
 
   @override
   String get settingsCompanionPermissionTitle => '陪伴权限授权';
@@ -421,6 +440,21 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatHistoryEmpty => '暂无聊天记录';
 
   @override
+  String get chatHistoryArchivedToast => '已归档';
+
+  @override
+  String get chatHistoryUnarchivedToast => '已移出归档';
+
+  @override
+  String get chatHistoryArchiveFailed => '归档对话失败';
+
+  @override
+  String get chatHistoryUnarchiveFailed => '移出归档失败';
+
+  @override
+  String get chatHistoryArchiveHint => '左滑对话即可归档';
+
+  @override
   String get homeDrawerArchive => '归档对话';
 
   @override
@@ -469,7 +503,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get memoryDeleteDisabled => '短期记忆暂不支持删除';
 
   @override
-  String get memoryGreeting => '你好呀，\n小万会在这里收集你的记忆！';
+  String get memoryGreeting => '你好呀，\n欢迎回来，我们会在这里慢慢整理你的记忆。';
 
   @override
   String memorySelectedCount(Object n) {
@@ -528,6 +562,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get skillBuiltin => '内置';
+
+  @override
+  String get skillOfficial => '官方';
 
   @override
   String get skillUser => '用户';
@@ -593,6 +630,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get skillToggleFailed => '切换失败';
+
+  @override
+  String get skillSyncOfficialTooltip => '安装/更新官方 Skills';
+
+  @override
+  String skillSyncOfficialSuccess(Object count) {
+    return '官方 Skills 已同步（$count 个）';
+  }
+
+  @override
+  String get skillSyncOfficialFailed => '同步官方 Skills 失败';
 
   @override
   String get skillLoadFailed => '加载技能仓库失败';
@@ -721,6 +769,30 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get modelProviderLoadFailed => '加载模型提供商配置失败';
+
+  @override
+  String modelProviderSwitchFailed(Object error) {
+    return '切换 Provider 失败：$error';
+  }
+
+  @override
+  String get modelProviderBaseUrlRequired => '请先填写 Base URL';
+
+  @override
+  String get modelProviderInvalidBaseUrl => '请输入有效的 http(s) Base URL';
+
+  @override
+  String modelProviderFetchedModels(Object count) {
+    return '已获取 $count 个模型';
+  }
+
+  @override
+  String modelProviderFetchFailed(Object error) {
+    return '拉取模型列表失败：$error';
+  }
+
+  @override
   String get sceneModelMapping => '场景映射';
 
   @override
@@ -735,6 +807,57 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sceneModelNoScenes => '暂无可配置场景';
+
+  @override
+  String get sceneModelLoadFailed => '加载场景模型配置失败';
+
+  @override
+  String sceneModelPartialUpdateFailed(Object profiles) {
+    return '部分模型已更新，但这些 Provider 刷新失败：$profiles';
+  }
+
+  @override
+  String sceneModelUpdatedModels(Object count) {
+    return '已更新 $count 个模型';
+  }
+
+  @override
+  String sceneModelRefreshFailed(Object error) {
+    return '刷新模型列表失败：$error';
+  }
+
+  @override
+  String get sceneModelInvalidModelId => '模型 ID 不能以 scene. 开头';
+
+  @override
+  String sceneModelBoundToast(Object scene, Object model) {
+    return '已将 $scene 绑定到 $model';
+  }
+
+  @override
+  String sceneModelSaveFailed(Object scene, Object error) {
+    return '保存 $scene 配置失败：$error';
+  }
+
+  @override
+  String sceneModelBindingCleared(Object scene) {
+    return '已清除 $scene 的绑定';
+  }
+
+  @override
+  String sceneModelDefaultRestored(Object scene) {
+    return '$scene 已恢复为默认模型';
+  }
+
+  @override
+  String sceneModelClearFailed(Object scene, Object error) {
+    return '清除 $scene 配置失败：$error';
+  }
+
+  @override
+  String sceneVoiceSaveFailed(Object error) {
+    return '保存语音配置失败：$error';
+  }
 
   @override
   String get localModelsTitle => '本地模型';
@@ -866,6 +989,34 @@ class AppLocalizationsZh extends AppLocalizations {
   String get localModelsDownloadPauseFailed => '暂停下载失败';
 
   @override
+  String localModelsDownloadStartedToast(String modelName) {
+    return '开始下载：$modelName';
+  }
+
+  @override
+  String localModelsDownloadPausedToast(String modelName) {
+    return '下载已暂停：$modelName';
+  }
+
+  @override
+  String localModelsDownloadCompletedToast(String modelName) {
+    return '下载完成：$modelName';
+  }
+
+  @override
+  String localModelsDownloadFailedToast(String modelName, String reason) {
+    return '下载失败：$modelName — $reason';
+  }
+
+  @override
+  String localModelsDownloadCancelledToast(String modelName, String reason) {
+    return '下载已取消：$modelName — $reason';
+  }
+
+  @override
+  String get localModelsDownloadErrorUnknown => '未知错误';
+
+  @override
   String get localModelsFilterAndSource => '筛选与来源';
 
   @override
@@ -969,6 +1120,22 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get localModelsNotDownloaded => '未下载';
+
+  @override
+  String get localModelsImportFromDevice => '从设备导入';
+
+  @override
+  String get localModelsImportSuccess => '模型导入成功';
+
+  @override
+  String localModelsImportFailed(String reason) {
+    return '导入失败：$reason';
+  }
+
+  @override
+  String localModelsImporting(String modelId) {
+    return '正在导入 $modelId...';
+  }
 
   @override
   String get alarmSaved => '闹钟设置已保存';
@@ -1358,6 +1525,42 @@ class AppLocalizationsZh extends AppLocalizations {
       '小万，是一款以智能对话为核心的手机AI助\n手，通过语义理解与持续学习能力，协助用户\n完成信息处理、决策辅助和日常管理。';
 
   @override
+  String get aboutBetaProgramTitle => '加入 beta 测试';
+
+  @override
+  String get aboutBetaProgramDescription => '接收更快的四段版更新。';
+
+  @override
+  String get aboutBetaProgramToggleFailed => 'beta 测试设置更新失败';
+
+  @override
+  String get aboutPreferencesSectionTitle => '更新与测试';
+
+  @override
+  String get aboutApkSourceTitle => '安装包下载源';
+
+  @override
+  String get aboutApkSourceDescription => '选择安装更新时使用的下载源。';
+
+  @override
+  String get aboutApkSourceOptionCnb => 'Cloudflare R2';
+
+  @override
+  String get aboutApkSourceOptionCnbDescription => '通过更新 Worker 分发';
+
+  @override
+  String get aboutApkSourceOptionGithub => 'GitHub';
+
+  @override
+  String get aboutApkSourceOptionGithubDescription => '官方 Release';
+
+  @override
+  String get aboutApkSourceSwitchFailed => '安装包下载源切换失败';
+
+  @override
+  String get aboutUpdateHintDefault => '检查更新获取最新版本';
+
+  @override
   String get workspaceMemoryLoadFailed => '加载 workspace 记忆配置失败';
 
   @override
@@ -1453,6 +1656,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get alpinePipInstall => 'Python 包安装器';
+
+  @override
+  String get alpineCodex => 'OpenAI Codex CLI 与 app-server 桥接';
 
   @override
   String get alpineSshClient => 'SSH 客户端';
@@ -1599,6 +1805,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get alpineDevEnv => '开发环境';
+
+  @override
+  String get alpineAiAgent => 'AI Agent';
 
   @override
   String get alpineEnvConfig => '环境配置';
