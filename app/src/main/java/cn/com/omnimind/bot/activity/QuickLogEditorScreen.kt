@@ -125,7 +125,6 @@ object QuickLogEditorScreen {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(editorColors.backdrop)
                 .clickable { activity.finish() },
             contentAlignment = Alignment.BottomCenter
         ) {
@@ -311,7 +310,6 @@ object QuickLogEditorScreen {
     }
 
     private data class QuickLogEditorColors(
-        val backdrop: Color,
         val surface: Color,
         val primaryText: Color,
         val secondaryText: Color,
@@ -336,15 +334,8 @@ object QuickLogEditorScreen {
                         else -> Color(0x9E1F2327)
                     }
                 }
-                val backdrop = when (settings.colorTheme) {
-                    QuickLogService.COLOR_LIGHT -> Color(0x66F8FAFC)
-                    QuickLogService.COLOR_BLUE -> Color(0x66DCEBFF)
-                    QuickLogService.COLOR_PINK -> Color(0x66FFE1ED)
-                    else -> Color(0x5531413F)
-                }
                 return if (isLightSurface) {
                     QuickLogEditorColors(
-                        backdrop = backdrop,
                         surface = surface,
                         primaryText = Color(0xFF1F2937),
                         secondaryText = Color(0xFF64748B),
@@ -356,7 +347,6 @@ object QuickLogEditorScreen {
                     )
                 } else {
                     QuickLogEditorColors(
-                        backdrop = backdrop,
                         surface = surface,
                         primaryText = Color.White,
                         secondaryText = Color(0xFFB9C2D0),

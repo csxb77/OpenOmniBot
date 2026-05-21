@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.activity
 
 import android.content.Context
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -51,6 +52,7 @@ class QuickLogWidgetSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         val service = QuickLogService(this)
         setContent {
             MaterialTheme {
@@ -81,7 +83,6 @@ class QuickLogWidgetSettingsActivity : ComponentActivity() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0x66000000))
                 .clickable { onClose() },
             contentAlignment = Alignment.BottomCenter
         ) {
