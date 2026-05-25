@@ -911,7 +911,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     /**
      * 统一的 Flutter 事件派发：
      * 1) 始终在主线程调用；
-     * 2) 当前通道失败时回退到主引擎通道；
+     * 2) 同时投递到当前通道和主引擎通道；
      * 3) 避免事件派发异常导致进程崩溃。
      */
     private fun invokeFlutterEventSafely(method: String, arguments: Any? = null) {
@@ -924,16 +924,19 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         }
 
         var lastError: Exception? = null
+        var delivered = false
         for (target in channels) {
             try {
                 target.invokeMethod(method, arguments)
-                return
+                delivered = true
             } catch (e: Exception) {
                 lastError = e
                 OmniLog.e(TAG, "invoke $method failed on one channel: ${e.message}")
             }
         }
-        OmniLog.e(TAG, "invoke $method failed on all channels: ${lastError?.message}")
+        if (!delivered) {
+            OmniLog.e(TAG, "invoke $method failed on all channels: ${lastError?.message}")
+        }
     }
 
     fun hasActiveAgentRuns(): Boolean {
@@ -3756,6 +3759,27 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         )
     }
 
+    private fun enrichScheduledSubagentParent(
+        arguments: Map<String, Any?>,
+        parentConversationId: Long?,
+        parentConversationMode: String
+    ): Map<String, Any?> {
+        val targetKind = arguments["targetKind"]?.toString()?.trim().orEmpty()
+        if (!targetKind.equals(SUBAGENT_MODE, ignoreCase = true) || parentConversationId == null) {
+            return arguments
+        }
+        if (
+            arguments["parentConversationId"] != null ||
+            arguments["subagentParentConversationId"] != null
+        ) {
+            return arguments
+        }
+        return LinkedHashMap(arguments).apply {
+            put("parentConversationId", parentConversationId)
+            put("parentConversationMode", parentConversationMode)
+        }
+    }
+
     private fun normalizeNotificationBody(text: String): String {
         val normalized = AgentTextSanitizer.sanitizeUtf16(text)
             .replace(Regex("\\s+"), " ")
@@ -3956,8 +3980,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
 
                 val scheduleBridge = object : AgentScheduleToolBridge {
                     override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> {
+                        val enrichedArguments = enrichScheduledSubagentParent(
+                            arguments = arguments,
+                            parentConversationId = conversationId,
+                            parentConversationMode = resolvedConversationMode
+                        )
                         return toStringAnyMap(
-                            invokeFlutterMethodForAgent("agentScheduleCreate", arguments)
+                            invokeFlutterMethodForAgent("agentScheduleCreate", enrichedArguments)
                         )
                     }
 
@@ -3968,8 +3997,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     }
 
                     override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> {
+                        val enrichedArguments = enrichScheduledSubagentParent(
+                            arguments = arguments,
+                            parentConversationId = conversationId,
+                            parentConversationMode = resolvedConversationMode
+                        )
                         return toStringAnyMap(
-                            invokeFlutterMethodForAgent("agentScheduleUpdate", arguments)
+                            invokeFlutterMethodForAgent("agentScheduleUpdate", enrichedArguments)
                         )
                     }
 
@@ -5739,13 +5773,21 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val title = call.argument<String>("title") ?: "新对话"
         val mode = normalizeConversationMode(call.argument<String>("mode"))
         val summary = call.argument<String>("summary")
+        val parentConversationId = call.argument<Number>("parentConversationId")
+            ?.toLong()
+            ?.takeIf { it > 0L }
+        val parentConversationMode = call.argument<String>("parentConversationMode")
+        val scheduledTaskId = call.argument<String>("scheduledTaskId")
 
         workJob.launch {
             try {
                 val conversation = conversationDomainService.createConversation(
                     title = title,
                     mode = mode,
-                    summary = summary
+                    summary = summary,
+                    parentConversationId = parentConversationId,
+                    parentConversationMode = parentConversationMode,
+                    scheduledTaskId = scheduledTaskId
                 )
                 withContext(Dispatchers.Main) {
                     result.success((conversation["id"] as? Number)?.toLong())
