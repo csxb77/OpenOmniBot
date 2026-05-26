@@ -37,6 +37,43 @@ interface AgentLlmClient {
 class HttpAgentLlmClient(
     private val scope: CoroutineScope,
     private val modelOverride: AgentModelOverride? = null,
+    private val streamRequestOp: suspend (
+        model: String,
+        requestBodyJson: String,
+        event: EventSourceListener,
+        explicitApiBase: String?,
+        explicitApiKey: String?,
+        explicitModel: String?,
+        explicitProtocolType: String?,
+        forceHttp1: Boolean
+    ) -> EventSource = { model, requestBodyJson, event, explicitApiBase, explicitApiKey, explicitModel, explicitProtocolType, forceHttp1 ->
+        HttpController.postChatCompletionsStreamRequest(
+            model = model,
+            requestBodyJson = requestBodyJson,
+            event = event,
+            explicitApiBase = explicitApiBase,
+            explicitApiKey = explicitApiKey,
+            explicitModel = explicitModel,
+            explicitProtocolType = explicitProtocolType,
+            forceHttp1 = forceHttp1
+        )
+    },
+    private val resolveRouteInfoOp: (
+        modelOrScene: String,
+        explicitApiBase: String?,
+        explicitApiKey: String?,
+        explicitModel: String?,
+        explicitProtocolType: String?
+    ) -> HttpController.ChatCompletionRouteInfo = { modelOrScene, explicitApiBase, explicitApiKey, explicitModel, explicitProtocolType ->
+        HttpController.resolveChatCompletionRouteInfo(
+            modelOrScene = modelOrScene,
+            explicitApiBase = explicitApiBase,
+            explicitApiKey = explicitApiKey,
+            explicitModel = explicitModel,
+            explicitProtocolType = explicitProtocolType
+        )
+    },
+    private val streamIdleWatchdogMs: Long = 0L,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -49,6 +86,8 @@ class HttpAgentLlmClient(
     private companion object {
         const val REASONING_UPDATE_INTERVAL_MS =
             ReasoningStreamUpdatePolicy.DEFAULT_INTERVAL_MS
+        const val DEFAULT_CLOSED_STREAM_ERROR =
+            "chat completion stream closed before completion signal"
     }
 
     private data class StreamRequestVariant(
@@ -156,12 +195,12 @@ class HttpAgentLlmClient(
     ): ChatCompletionTurn {
         val streamDone = CompletableDeferred<ChatCompletionTurn>()
         val completed = AtomicBoolean(false)
-        val routeInfo = HttpController.resolveChatCompletionRouteInfo(
-            modelOrScene = model,
-            explicitApiBase = modelOverride?.apiBase,
-            explicitApiKey = modelOverride?.apiKey,
-            explicitModel = modelOverride?.modelId,
-            explicitProtocolType = modelOverride?.protocolType
+        val routeInfo = resolveRouteInfoOp(
+            model,
+            modelOverride?.apiBase,
+            modelOverride?.apiKey,
+            modelOverride?.modelId,
+            modelOverride?.protocolType
         )
         val accumulator = AgentLlmStreamAccumulator(
             json = json,
@@ -178,6 +217,7 @@ class HttpAgentLlmClient(
         val reasoningLock = Any()
         var lastContent = ""
         var eventSource: EventSource? = null
+        var streamIdleWatchdog: Job? = null
         val emissionQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
         val emissionJob = scope.launch {
             for (block in emissionQueue) {
@@ -192,6 +232,29 @@ class HttpAgentLlmClient(
                 return
             }
             emissionQueue.trySend(block)
+        }
+
+        fun cancelWatchdog() {
+            streamIdleWatchdog?.cancel()
+            streamIdleWatchdog = null
+        }
+
+        fun scheduleWatchdog() {
+            val timeoutMs = streamIdleWatchdogMs
+            if (timeoutMs <= 0L) {
+                return
+            }
+            cancelWatchdog()
+            streamIdleWatchdog = scope.launch {
+                delay(timeoutMs)
+                if (!completed.compareAndSet(false, true)) {
+                    return@launch
+                }
+                streamDone.completeExceptionally(
+                    IllegalStateException("chat completion stream idle timeout after ${timeoutMs}ms")
+                )
+                eventSource?.cancel()
+            }
         }
 
         fun dispatchReasoningSnapshot(reasoning: String) {
@@ -273,6 +336,7 @@ class HttpAgentLlmClient(
 
         fun completeStream(eventSource: EventSource? = null) {
             if (!completed.compareAndSet(false, true)) return
+            cancelWatchdog()
             runCatching {
                 val turn = accumulator.buildTurn()
                 enforceReasoningEchoIfRequired(turn, routeInfo)
@@ -288,6 +352,10 @@ class HttpAgentLlmClient(
         }
 
         val listener = object : EventSourceListener() {
+            override fun onOpen(eventSource: EventSource, response: Response) {
+                scheduleWatchdog()
+            }
+
             override fun onEvent(
                 eventSource: EventSource,
                 id: String?,
@@ -296,6 +364,7 @@ class HttpAgentLlmClient(
             ) {
                 if (completed.get()) return
                 runCatching {
+                    scheduleWatchdog()
                     val done = accumulator.consume(data)
                     emitReasoning()
                     emitContent()
@@ -312,11 +381,25 @@ class HttpAgentLlmClient(
             }
 
             override fun onClosed(eventSource: EventSource) {
-                completeStream()
+                if (completed.get()) {
+                    cancelWatchdog()
+                    return
+                }
+                if (accumulator.canFinalizeOnClosed()) {
+                    completeStream()
+                    return
+                }
+                cancelWatchdog()
+                if (completed.compareAndSet(false, true)) {
+                    streamDone.completeExceptionally(
+                        IllegalStateException(DEFAULT_CLOSED_STREAM_ERROR)
+                    )
+                }
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 if (!completed.compareAndSet(false, true)) return
+                cancelWatchdog()
                 val responseBody = extractResponseBody(response)
                 val reason = extractErrorReason(responseBody)
                     ?: sanitizeReason(t?.message)
@@ -332,18 +415,20 @@ class HttpAgentLlmClient(
         }
 
         try {
-            eventSource = HttpController.postChatCompletionsStreamRequest(
-                model = model,
-                requestBodyJson = requestJson,
-                event = listener,
-                explicitApiBase = modelOverride?.apiBase,
-                explicitApiKey = modelOverride?.apiKey,
-                explicitModel = modelOverride?.modelId,
-                explicitProtocolType = modelOverride?.protocolType,
-                forceHttp1 = forceHttp1
+            eventSource = streamRequestOp(
+                model,
+                requestJson,
+                listener,
+                modelOverride?.apiBase,
+                modelOverride?.apiKey,
+                modelOverride?.modelId,
+                modelOverride?.protocolType,
+                forceHttp1
             )
+            scheduleWatchdog()
             return streamDone.await()
         } finally {
+            cancelWatchdog()
             reasoningEmitJob?.cancel()
             eventSource?.cancel()
             emissionQueue.close()

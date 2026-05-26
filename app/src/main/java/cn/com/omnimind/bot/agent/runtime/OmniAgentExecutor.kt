@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import android.content.Context
+import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import cn.com.omnimind.bot.agent.workspace.memory.MemoryRetrievalPipeline
@@ -142,6 +143,17 @@ class OmniAgentExecutor(
                 json = json,
                 modelOverride = modelOverride
             )
+            val toolImageContinuationPolicy = runCatching {
+                AgentToolImageContinuationPolicyResolver.resolve(
+                    HttpController.resolveChatCompletionRouteInfo(
+                        modelOrScene = agentModelScene,
+                        explicitApiBase = modelOverride?.apiBase,
+                        explicitApiKey = modelOverride?.apiKey,
+                        explicitModel = modelOverride?.modelId,
+                        explicitProtocolType = modelOverride?.protocolType
+                    )
+                )
+            }.getOrDefault(AgentToolImageContinuationPolicy.DEFAULT)
             val contextCompactor = AgentConversationContextCompactor(
                 historyRepository = historyRepository,
                 modelScene = agentModelScene,
@@ -164,7 +176,8 @@ class OmniAgentExecutor(
                     catalogRef.get() ?: error("subagent dispatcher missing parent catalog")
                 },
                 eventAdapter = eventAdapter,
-                model = agentModelScene
+                model = agentModelScene,
+                toolImageContinuationPolicy = toolImageContinuationPolicy
             )
             toolRouter = AgentToolRouter(
                 context = context,
@@ -179,7 +192,8 @@ class OmniAgentExecutor(
                 toolRegistry = toolRegistry,
                 toolRouter = toolRouter,
                 eventAdapter = eventAdapter,
-                model = agentModelScene
+                model = agentModelScene,
+                toolImageContinuationPolicy = toolImageContinuationPolicy
             )
 
             orchestrator.run(

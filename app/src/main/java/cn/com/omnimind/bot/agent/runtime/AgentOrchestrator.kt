@@ -27,7 +27,9 @@ class AgentOrchestrator(
     private val toolRegistry: AgentToolCatalog,
     private val toolRouter: AgentToolExecutor,
     private val eventAdapter: AgentEventAdapter,
-    private val model: String
+    private val model: String,
+    private val toolImageContinuationPolicy: AgentToolImageContinuationPolicy =
+        AgentToolImageContinuationPolicy.DEFAULT
 ) {
     data class Input(
         val callback: AgentCallback,
@@ -480,7 +482,20 @@ class AgentOrchestrator(
             result = result,
             extras = failureLearning?.toPayload() ?: emptyMap()
         )
-        val imageDataUrl = (result as? ToolExecutionResult.ContextResult)?.imageDataUrl
+        val imageDataUrl = (result as? ToolExecutionResult.ContextResult)
+            ?.imageDataUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { toolImageContinuationPolicy.supportsToolImageContinuation }
+        if (
+            result is ToolExecutionResult.ContextResult &&
+            !result.imageDataUrl.isNullOrBlank() &&
+            imageDataUrl == null
+        ) {
+            logInfo(
+                tag,
+                "skip_tool_image_continuation tool=${toolCall.function.name} route=${toolImageContinuationPolicy.routeLabel}"
+            )
+        }
 
         val content: JsonElement = if (imageDataUrl != null) {
             buildJsonArray {

@@ -7,6 +7,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -506,16 +507,99 @@ class AgentOrchestratorTest {
         assertEquals(56.7, callback.lastDecodeTokensPerSecond!!, 0.0)
     }
 
+    @Test
+    fun toolResultImageContinuationIsIncludedByDefault() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(
+                assistantTurn(toolCalls = listOf(toolCall("browser_use"))),
+                assistantTurn(content = "已读取截图结果。")
+            )
+        )
+        val toolExecutor = FakeToolExecutor(
+            results = mapOf(
+                "browser_use" to listOf(
+                    ToolExecutionResult.ContextResult(
+                        toolName = "browser_use",
+                        summaryText = "截图已生成",
+                        previewJson = "{}",
+                        rawResultJson = "{}",
+                        success = true,
+                        imageDataUrl = "data:image/jpeg;base64,AAA"
+                    )
+                )
+            )
+        )
+
+        createOrchestrator(llmClient, toolExecutor).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("看一下页面"),
+                executionEnv = FakeExecutionEnvironment("看一下页面")
+            )
+        )
+
+        val toolMessage = llmClient.requests[1].messages.last()
+        assertEquals("tool", toolMessage.role)
+        assertTrue(toolMessage.content.toString().contains("\"image_url\""))
+    }
+
+    @Test
+    fun toolResultImageContinuationIsOmittedWhenPolicyDisablesIt() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(
+                assistantTurn(toolCalls = listOf(toolCall("browser_use"))),
+                assistantTurn(content = "已按文字摘要继续。")
+            )
+        )
+        val toolExecutor = FakeToolExecutor(
+            results = mapOf(
+                "browser_use" to listOf(
+                    ToolExecutionResult.ContextResult(
+                        toolName = "browser_use",
+                        summaryText = "截图已生成",
+                        previewJson = "{}",
+                        rawResultJson = "{}",
+                        success = true,
+                        imageDataUrl = "data:image/jpeg;base64,AAA"
+                    )
+                )
+            )
+        )
+
+        createOrchestrator(
+            llmClient = llmClient,
+            toolExecutor = toolExecutor,
+            toolImageContinuationPolicy = AgentToolImageContinuationPolicy(
+                supportsToolImageContinuation = false,
+                routeLabel = "model=mimo-v2.5"
+            )
+        ).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("看一下页面"),
+                executionEnv = FakeExecutionEnvironment("看一下页面")
+            )
+        )
+
+        val toolMessage = llmClient.requests[1].messages.last()
+        assertEquals("tool", toolMessage.role)
+        assertTrue(toolMessage.content is JsonPrimitive)
+        assertFalse(toolMessage.content.toString().contains("\"image_url\""))
+    }
+
     private fun createOrchestrator(
         llmClient: FakeLlmClient,
-        toolExecutor: FakeToolExecutor
+        toolExecutor: FakeToolExecutor,
+        toolImageContinuationPolicy: AgentToolImageContinuationPolicy =
+            AgentToolImageContinuationPolicy.DEFAULT
     ): AgentOrchestrator {
         return AgentOrchestrator(
             llmClient = llmClient,
             toolRegistry = FakeToolCatalog(),
             toolRouter = toolExecutor,
             eventAdapter = AgentEventAdapter(eventJson),
-            model = "test-model"
+            model = "test-model",
+            toolImageContinuationPolicy = toolImageContinuationPolicy
         )
     }
 
