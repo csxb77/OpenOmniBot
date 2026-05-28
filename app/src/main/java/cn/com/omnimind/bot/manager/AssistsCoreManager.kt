@@ -59,6 +59,7 @@ import cn.com.omnimind.bot.agent.AgentAlarmToolService
 import cn.com.omnimind.bot.agent.AgentAiCapabilityConfigSync
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
+import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentStreamEvent
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
 import cn.com.omnimind.bot.agent.AgentModelOverride
@@ -3922,11 +3923,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         )
         val legacyConversationHistory =
             call.argument<List<Map<String, Any?>>>("conversationHistory") ?: emptyList()
-        val attachments = (call.argument<List<Map<String, Any?>>>("attachments") ?: emptyList())
+        val rawAttachments = (call.argument<List<Map<String, Any?>>>("attachments") ?: emptyList())
             .map(::sanitizeInteropMap)
-        val modelAttachments = AgentImageAttachmentSupport
-            .prepareAttachments(attachments)
-            .modelAttachments
+        val normalizedAttachments = AgentWorkspaceAttachmentSupport.prepareAttachmentsForRuntime(
+            context = context,
+            taskId = taskId,
+            rawAttachments = rawAttachments
+        )
+        val preparedAttachments = AgentImageAttachmentSupport.prepareAttachments(normalizedAttachments)
+        val runtimeAttachments = preparedAttachments.runtimeAttachments
+        val historyAttachments = preparedAttachments.historyAttachments
         val userMessageCreatedAt = call.argument<Number>("userMessageCreatedAt")?.toLong()
         val conversationId = call.argument<Number>("conversationId")?.toLong()?.takeIf { it > 0L }
         val requestedConversationMode =
@@ -4490,14 +4496,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
 
                 conversationId?.let { normalizedConversationId ->
-                    if (userMessage.isNotBlank() || attachments.isNotEmpty()) {
+                    if (userMessage.isNotBlank() || historyAttachments.isNotEmpty()) {
                         persistConversationMutation("upsert user message") {
                             repository.upsertUserMessage(
                                 conversationId = normalizedConversationId,
                                 conversationMode = resolvedConversationMode,
                                 entryId = "$taskId-user",
                                 text = userMessage,
-                                attachments = attachments,
+                                attachments = historyAttachments,
                                 createdAt = userMessageCreatedAt ?: System.currentTimeMillis()
                             )
                         }
@@ -5083,7 +5089,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     legacyConversationHistory,
                     runtimeContextRepository,
                     currentPackageName,
-                    modelAttachments,
+                    runtimeAttachments,
                     conversationId,
                     resolvedConversationMode,
                     modelOverride,

@@ -327,7 +327,13 @@ class OmniAgentExecutor(
         userMessage: String,
         attachments: List<Map<String, Any?>>
     ): cn.com.omnimind.baselib.llm.ChatCompletionMessage {
-        val normalizedAttachments = normalizeAttachments(attachments)
+        val rawText = AgentAttachmentPromptSupport.buildUserMessageText(
+            text = userMessage,
+            attachments = attachments
+        )
+        val normalizedAttachments = normalizeAttachments(
+            attachments.filter(AgentAttachmentPromptSupport::shouldSendAttachmentToModel)
+        )
         val imageParts = normalizedAttachments
             .filter { it.isImage }
             .mapNotNull { attachment ->
@@ -343,7 +349,6 @@ class OmniAgentExecutor(
                     }
                 }
             }
-        val rawText = userMessage
         val content = if (imageParts.isEmpty()) {
             JsonPrimitive(rawText)
         } else {
