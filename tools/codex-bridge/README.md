@@ -15,23 +15,31 @@ Codex sessions are read through the proxied `codex app-server` protocol, so the 
 
 ## Run
 
-Recommended one-shot startup:
+Recommended startup:
 
 ```bash
-npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto
+npx @thuocean/codex-bridge
+```
+
+The bridge opens a terminal setup flow where you can use Up/Down and Enter to choose the LAN address to listen on and either auto-generate a token, enter a token manually, or disable token auth. Press Esc on later steps to go back and reselect the previous setup item.
+
+Scripted startup is still supported:
+
+```bash
+npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --no-interactive
 ```
 
 Windows PowerShell example:
 
 ```powershell
-npx @thuocean/codex-bridge --cwd "C:\Users\you\code\project" --token auto
+npx @thuocean/codex-bridge --cwd "C:\Users\you\code\project" --token auto --no-interactive
 ```
 
 Or install it globally:
 
 ```bash
 npm install -g @thuocean/codex-bridge
-codex-bridge "/Users/you/code/project" --token auto
+codex-bridge
 ```
 
 When the bridge starts, it prints a terminal QR code. In Omnibot, tap Settings -> 服务与环境 -> Codex -> 扫码连接 to fill the remote Bridge URL, cwd, and token automatically.
@@ -41,7 +49,7 @@ For local development from this repository:
 ```bash
 cd tools/codex-bridge
 npm install
-npm start -- --cwd "/Users/you/code/project" --token auto
+npm start -- --cwd "/Users/you/code/project" --token auto --no-interactive
 ```
 
 If you do not use the QR code, set these values in Omnibot under Settings -> 服务与环境 -> Codex:
@@ -58,6 +66,8 @@ If the printed IP is not reachable from your phone, override the advertised addr
 npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --public-host 192.168.1.20
 ```
 
+For unattended scripts or service managers, pass `--no-interactive` or set `OMNIBOT_BRIDGE_INTERACTIVE=0`.
+
 ## CLI Options
 
 - `--cwd <path>` or positional `project-dir`: Codex working directory, default current directory
@@ -70,6 +80,8 @@ npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --public
 - `--codex-home <path>`: optional `CODEX_HOME` override
 - `--app-server <auto|desktop|stdio>`: app-server transport, default `auto`
 - `--app-server-socket <path>`: desktop Codex app-server Unix socket override
+- `--interactive`: force terminal setup prompts
+- `--no-interactive`: start immediately without terminal prompts
 
 ## Environment
 
@@ -79,6 +91,7 @@ npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --public
 - `OMNIBOT_BRIDGE_TOKEN`: optional bearer token; set to `auto` to generate one
 - `OMNIBOT_BRIDGE_CWD`: default project directory
 - `OMNIBOT_BRIDGE_APP_SERVER`: `auto`, `desktop`, or `stdio`
+- `OMNIBOT_BRIDGE_INTERACTIVE`: set to `0`/`false` to disable prompts, or `1`/`true` to force prompts
 - `OMNIBOT_BRIDGE_MAX_READ_BYTES`: max file preview payload, default 12 MiB
 - `CODEX_BIN`: Codex executable, default `codex`
 - `CODEX_HOME`: optional Codex config directory override

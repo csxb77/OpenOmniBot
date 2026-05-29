@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import readlineTerminal from 'node:readline';
+import readline from 'node:readline/promises';
 import { spawn, execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
@@ -36,12 +38,15 @@ Options:
                           Codex app-server transport. Defaults to auto.
   --app-server-socket <path>
                           Desktop Codex app-server Unix socket override.
+  --interactive           Force terminal setup prompts.
+  --no-interactive        Start immediately without terminal prompts.
   -h, --help              Show this help.
 
 Environment variables with the same meaning are also supported:
   OMNIBOT_BRIDGE_CWD, OMNIBOT_BRIDGE_TOKEN, OMNIBOT_BRIDGE_HOST,
   OMNIBOT_BRIDGE_PORT, OMNIBOT_BRIDGE_PUBLIC_HOST, CODEX_BIN, CODEX_HOME,
-  OMNIBOT_BRIDGE_APP_SERVER, CODEX_APP_SERVER_SOCKET`);
+  OMNIBOT_BRIDGE_APP_SERVER, OMNIBOT_BRIDGE_INTERACTIVE,
+  CODEX_APP_SERVER_SOCKET`);
 }
 
 function readOptionValue(args, index, option) {
@@ -67,6 +72,14 @@ function parseCliArgs(args) {
     }
     if (arg === '--no-token') {
       options.token = '';
+      continue;
+    }
+    if (arg === '--interactive') {
+      options.interactive = true;
+      continue;
+    }
+    if (arg === '--no-interactive') {
+      options.interactive = false;
       continue;
     }
     const optionMap = {
@@ -116,6 +129,402 @@ function expandHomePath(rawPath) {
   return value;
 }
 
+function envOption(name) {
+  return Object.prototype.hasOwnProperty.call(process.env, name)
+    ? process.env[name]
+    : undefined;
+}
+
+function hasText(value) {
+  return String(value ?? '').trim().length > 0;
+}
+
+function hasExplicitNetworkConfig(options) {
+  return (
+    hasText(options.host) ||
+    hasText(options.publicHost) ||
+    hasText(envOption('OMNIBOT_BRIDGE_HOST')) ||
+    hasText(envOption('OMNIBOT_BRIDGE_PUBLIC_HOST'))
+  );
+}
+
+function hasExplicitTokenConfig(options) {
+  return (
+    Object.prototype.hasOwnProperty.call(options, 'token') ||
+    envOption('OMNIBOT_BRIDGE_TOKEN') !== undefined
+  );
+}
+
+function envInteractiveEnabled() {
+  const raw = envOption('OMNIBOT_BRIDGE_INTERACTIVE');
+  if (raw === undefined) return null;
+  const normalized = String(raw).trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  return null;
+}
+
+function shouldRunInteractiveSetup(options) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  if (options.interactive === false) return false;
+  if (options.interactive === true) return true;
+  const envInteractive = envInteractiveEnabled();
+  if (envInteractive === false) return false;
+  if (envInteractive === true) return true;
+  return !hasExplicitNetworkConfig(options) || !hasExplicitTokenConfig(options);
+}
+
+function setupCancelledError() {
+  const error = new Error('Setup cancelled.');
+  error.code = 'OMNIBOT_BRIDGE_SETUP_CANCELLED';
+  return error;
+}
+
+const PROMPT_BACK = Symbol('prompt-back');
+
+function clampTerminalLine(line) {
+  const columns = process.stdout.columns || 100;
+  if (line.length < columns) return line;
+  return `${line.slice(0, Math.max(0, columns - 4))}...`;
+}
+
+function renderChoiceLine(choice, index, selectedIndex, defaultIndex) {
+  const pointer = index === selectedIndex ? '>' : ' ';
+  const marker = index === defaultIndex ? ' (default)' : '';
+  const detail = choice.detail ? ` - ${choice.detail}` : '';
+  const plainLine = clampTerminalLine(`${pointer} ${choice.label}${marker}${detail}`);
+  return index === selectedIndex ? `\x1b[36m${plainLine}\x1b[0m` : plainLine;
+}
+
+function renderChoices(choices, selectedIndex, defaultIndex) {
+  choices.forEach((choice, index) => {
+    process.stdout.write(`${renderChoiceLine(choice, index, selectedIndex, defaultIndex)}\n`);
+  });
+}
+
+async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
+  if (choices.length === 0) {
+    throw new Error(`${title} has no choices.`);
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return choices[defaultIndex];
+  }
+  let selectedIndex = Math.min(Math.max(defaultIndex, 0), choices.length - 1);
+  const renderedLines = choices.length;
+
+  process.stdout.write(`\n${title}\n`);
+  const escHelp = options.allowBack ? ' Esc goes back.' : '';
+  process.stdout.write(`Use Up/Down and Enter.${escHelp} Ctrl-C cancels.\n`);
+  renderChoices(choices, selectedIndex, defaultIndex);
+
+  return new Promise((resolve, reject) => {
+    const previousRawMode = process.stdin.isRaw;
+    readlineTerminal.emitKeypressEvents(process.stdin);
+
+    function cleanup() {
+      process.stdin.off('keypress', onKeypress);
+      if (process.stdin.setRawMode) {
+        process.stdin.setRawMode(Boolean(previousRawMode));
+      }
+      process.stdin.pause();
+    }
+
+    function rerender() {
+      readlineTerminal.moveCursor(process.stdout, 0, -renderedLines);
+      readlineTerminal.clearScreenDown(process.stdout);
+      renderChoices(choices, selectedIndex, defaultIndex);
+    }
+
+    function finish() {
+      cleanup();
+      process.stdout.write('\n');
+      resolve(choices[selectedIndex]);
+    }
+
+    function cancel() {
+      cleanup();
+      process.stdout.write('\n');
+      reject(setupCancelledError());
+    }
+
+    function back() {
+      cleanup();
+      process.stdout.write('\n');
+      resolve(PROMPT_BACK);
+    }
+
+    function move(delta) {
+      selectedIndex = (selectedIndex + delta + choices.length) % choices.length;
+      rerender();
+    }
+
+    function onKeypress(input, key) {
+      if ((key?.ctrl && key.name === 'c') || input === '\u0003') {
+        cancel();
+        return;
+      }
+      if (key?.name === 'return' || key?.name === 'enter' || input === '\r' || input === '\n') {
+        finish();
+        return;
+      }
+      if (key?.name === 'escape' || input === '\u001b') {
+        if (options.allowBack) {
+          back();
+        } else {
+          process.stdout.write('\x07');
+        }
+        return;
+      }
+      if (
+        key?.name === 'up' ||
+        key?.name === 'k' ||
+        (key?.ctrl && key.name === 'p')
+      ) {
+        move(-1);
+        return;
+      }
+      if (
+        key?.name === 'down' ||
+        key?.name === 'j' ||
+        (key?.ctrl && key.name === 'n')
+      ) {
+        move(1);
+      }
+    }
+
+    if (process.stdin.setRawMode) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    process.stdin.on('keypress', onKeypress);
+  });
+}
+
+async function promptTextFallback(question, defaultValue) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  const suffix = defaultValue ? ` [${defaultValue}]` : '';
+  try {
+    const answer = (await rl.question(`${question}${suffix}: `)).trim();
+    return answer || defaultValue;
+  } finally {
+    rl.close();
+  }
+}
+
+async function promptText(question, defaultValue = '', options = {}) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return promptTextFallback(question, defaultValue);
+  }
+  const suffix = defaultValue ? ` [${defaultValue}]` : '';
+  const prompt = `${question}${suffix}: `;
+  let value = '';
+
+  process.stdout.write(prompt);
+
+  return new Promise((resolve, reject) => {
+    const previousRawMode = process.stdin.isRaw;
+    readlineTerminal.emitKeypressEvents(process.stdin);
+
+    function cleanup() {
+      process.stdin.off('keypress', onKeypress);
+      if (process.stdin.setRawMode) {
+        process.stdin.setRawMode(Boolean(previousRawMode));
+      }
+      process.stdin.pause();
+    }
+
+    function rerender() {
+      readlineTerminal.clearLine(process.stdout, 0);
+      readlineTerminal.cursorTo(process.stdout, 0);
+      process.stdout.write(`${prompt}${value}`);
+    }
+
+    function finish() {
+      cleanup();
+      process.stdout.write('\n');
+      resolve(value.trim() || defaultValue);
+    }
+
+    function cancel() {
+      cleanup();
+      process.stdout.write('\n');
+      reject(setupCancelledError());
+    }
+
+    function back() {
+      cleanup();
+      process.stdout.write('\n');
+      resolve(PROMPT_BACK);
+    }
+
+    function onKeypress(input, key) {
+      if ((key?.ctrl && key.name === 'c') || input === '\u0003') {
+        cancel();
+        return;
+      }
+      if (key?.name === 'return' || key?.name === 'enter' || input === '\r' || input === '\n') {
+        finish();
+        return;
+      }
+      if (key?.name === 'escape' || input === '\u001b') {
+        if (options.allowBack) {
+          back();
+        } else {
+          process.stdout.write('\x07');
+        }
+        return;
+      }
+      if (key?.name === 'backspace' || key?.name === 'delete') {
+        value = value.slice(0, -1);
+        rerender();
+        return;
+      }
+      if (!input || key?.ctrl || key?.meta) {
+        return;
+      }
+      value += input;
+      rerender();
+    }
+
+    if (process.stdin.setRawMode) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    process.stdin.on('keypress', onKeypress);
+  });
+}
+
+async function promptNetworkConfig(options) {
+  if (!shouldPromptNetworkConfig(options)) {
+    return {};
+  }
+  const addresses = listAdvertisableIpv4Addresses();
+  const choices = addresses.map((entry) => ({
+    label: `${entry.address} (${entry.name})`,
+    detail: 'listen on this LAN address and advertise it',
+    host: entry.address,
+    publicHost: entry.address,
+  }));
+  if (addresses.length > 0) {
+    choices.push({
+      label: '0.0.0.0 (all interfaces)',
+      detail: `listen everywhere, advertise ${addresses[0].address}`,
+      host: '0.0.0.0',
+      publicHost: addresses[0].address,
+    });
+  } else {
+    choices.push({
+      label: '0.0.0.0 (all interfaces)',
+      detail: 'listen everywhere',
+      host: '0.0.0.0',
+      publicHost: '',
+    });
+  }
+  choices.push({
+    label: '127.0.0.1 (localhost only)',
+    detail: 'for adb reverse, SSH tunnel, or local testing',
+    host: '127.0.0.1',
+    publicHost: '127.0.0.1',
+  });
+  choices.push({
+    label: 'Custom host/IP',
+    detail: 'type a listen address manually',
+    custom: true,
+  });
+  for (;;) {
+    const selected = await promptChoice(
+      'Select the address Codex Bridge should listen on',
+      choices,
+      0
+    );
+    if (!selected.custom) {
+      return { host: selected.host, publicHost: selected.publicHost };
+    }
+    const host = await promptText('Listen host/IP', '0.0.0.0', {
+      allowBack: true,
+    });
+    if (host === PROMPT_BACK) {
+      continue;
+    }
+    const publicHost = await promptText(
+      'Phone-reachable host/IP shown in QR code',
+      isWildcardHost(host) ? addresses[0]?.address || 'localhost' : host,
+      { allowBack: true }
+    );
+    if (publicHost === PROMPT_BACK) {
+      continue;
+    }
+    return { host, publicHost };
+  }
+}
+
+function shouldPromptNetworkConfig(options) {
+  if (options.interactive === true) return true;
+  return !hasExplicitNetworkConfig(options);
+}
+
+async function promptTokenConfig(options, allowBack = false) {
+  if (options.interactive !== true && hasExplicitTokenConfig(options)) {
+    return {};
+  }
+  for (;;) {
+    const selected = await promptChoice(
+      'Select token authentication',
+      [
+        {
+          label: 'Auto-generate token',
+          detail: 'recommended for LAN use',
+          token: 'auto',
+        },
+        {
+          label: 'Enter token manually',
+          detail: 'use a token you will type on the phone',
+          manual: true,
+        },
+        {
+          label: 'No token',
+          detail: 'only use on trusted networks',
+          token: '',
+        },
+      ],
+      0,
+      { allowBack }
+    );
+    if (selected === PROMPT_BACK) {
+      return PROMPT_BACK;
+    }
+    if (!selected.manual) {
+      return { token: selected.token };
+    }
+    const token = await promptText('Bridge token', '', { allowBack: true });
+    if (token === PROMPT_BACK) {
+      continue;
+    }
+    if (token) return { token };
+    console.log('Token cannot be empty. Choose "No token" if you want to disable auth.');
+  }
+}
+
+async function interactiveSetup(options) {
+  if (!shouldRunInteractiveSetup(options)) {
+    return {};
+  }
+  console.log('\nOmnibot Codex Bridge setup');
+  console.log('Press Enter to accept the highlighted choice.\n');
+  const shouldPromptNetwork = shouldPromptNetworkConfig(options);
+  for (;;) {
+    const networkConfig = await promptNetworkConfig(options);
+    const tokenConfig = await promptTokenConfig(options, shouldPromptNetwork);
+    if (tokenConfig === PROMPT_BACK) {
+      continue;
+    }
+    return { ...networkConfig, ...tokenConfig };
+  }
+}
+
 let cliOptions;
 try {
   cliOptions = parseCliArgs(process.argv.slice(2));
@@ -130,6 +539,16 @@ if (cliOptions.help) {
   process.exit(0);
 }
 
+let interactiveOptions;
+try {
+  interactiveOptions = await interactiveSetup(cliOptions);
+} catch (error) {
+  if (error?.code === 'OMNIBOT_BRIDGE_SETUP_CANCELLED') {
+    console.error('Setup cancelled.');
+    process.exit(130);
+  }
+  throw error;
+}
 const port = Number.parseInt(
   cliOptions.port || process.env.OMNIBOT_BRIDGE_PORT || '17321',
   10
@@ -138,10 +557,21 @@ if (!Number.isFinite(port) || port <= 0 || port > 65535) {
   console.error(`Invalid bridge port: ${cliOptions.port || process.env.OMNIBOT_BRIDGE_PORT}`);
   process.exit(1);
 }
-const host = cliOptions.host || process.env.OMNIBOT_BRIDGE_HOST || '0.0.0.0';
+const host =
+  interactiveOptions.host ||
+  cliOptions.host ||
+  process.env.OMNIBOT_BRIDGE_HOST ||
+  '0.0.0.0';
 const publicHost =
-  cliOptions.publicHost || process.env.OMNIBOT_BRIDGE_PUBLIC_HOST || '';
-const token = resolveToken(cliOptions.token);
+  interactiveOptions.publicHost ||
+  cliOptions.publicHost ||
+  process.env.OMNIBOT_BRIDGE_PUBLIC_HOST ||
+  '';
+const token = resolveToken(
+  Object.prototype.hasOwnProperty.call(interactiveOptions, 'token')
+    ? interactiveOptions.token
+    : cliOptions.token
+);
 const codexBin = cliOptions.codexBin || process.env.CODEX_BIN || 'codex';
 const bridgeCwd = path.resolve(
   expandHomePath(
