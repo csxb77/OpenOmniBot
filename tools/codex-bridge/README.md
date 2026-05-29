@@ -21,7 +21,7 @@ Recommended startup:
 npx @thuocean/codex-bridge
 ```
 
-The bridge opens a terminal setup flow where you can use Up/Down and Enter to choose the LAN address to listen on and either auto-generate a token, enter a token manually, or disable token auth. Press Esc on later steps to go back and reselect the previous setup item.
+The bridge opens a terminal setup flow where you can use Up/Down and Enter to choose the LAN address to listen on and either auto-generate a token, enter a token manually, or disable token auth. Custom values are typed in place on the selected row. Press Esc on later steps to go back and reselect the previous setup item.
 
 Scripted startup is still supported:
 

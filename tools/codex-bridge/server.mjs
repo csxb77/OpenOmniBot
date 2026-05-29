@@ -182,24 +182,107 @@ function setupCancelledError() {
 
 const PROMPT_BACK = Symbol('prompt-back');
 
-function clampTerminalLine(line) {
-  const columns = process.stdout.columns || 100;
-  if (line.length < columns) return line;
-  return `${line.slice(0, Math.max(0, columns - 4))}...`;
+function shouldUseColor() {
+  return process.stdout.isTTY && !Object.prototype.hasOwnProperty.call(process.env, 'NO_COLOR');
 }
 
-function renderChoiceLine(choice, index, selectedIndex, defaultIndex) {
-  const pointer = index === selectedIndex ? '>' : ' ';
-  const marker = index === defaultIndex ? ' (default)' : '';
-  const detail = choice.detail ? ` - ${choice.detail}` : '';
-  const plainLine = clampTerminalLine(`${pointer} ${choice.label}${marker}${detail}`);
-  return index === selectedIndex ? `\x1b[36m${plainLine}\x1b[0m` : plainLine;
+function paint(code, value) {
+  const text = String(value);
+  return shouldUseColor() ? `\x1b[${code}m${text}\x1b[0m` : text;
 }
 
-function renderChoices(choices, selectedIndex, defaultIndex) {
+const color = {
+  accent: (text) => paint('35', text),
+  dim: (text) => paint('2', text),
+  error: (text) => paint('31', text),
+  green: (text) => paint('32', text),
+  gray: (text) => paint('90', text),
+  heading: (text) => paint('1;36', text),
+  input: (text) => paint('1;32', text),
+  key: (text) => paint('33', text),
+  label: (text) => paint('90', text),
+  prompt: (text) => paint('36', text),
+  selected: (text) => paint('1;96', text),
+  value: (text) => paint('32', text),
+  warn: (text) => paint('33', text),
+  white: (text) => paint('97', text),
+};
+
+function terminalContentWidth() {
+  return Math.max(20, (process.stdout.columns || 100) - 1);
+}
+
+function visibleLength(value) {
+  const text = String(value);
+  let length = 0;
+  for (let index = 0; index < text.length;) {
+    if (text[index] === '\x1b' && text[index + 1] === '[') {
+      const end = text.indexOf('m', index + 2);
+      if (end >= 0) {
+        index = end + 1;
+        continue;
+      }
+    }
+    const codePoint = text.codePointAt(index);
+    index += codePoint > 0xffff ? 2 : 1;
+    length += 1;
+  }
+  return length;
+}
+
+function truncateAnsiLine(value, maxWidth = terminalContentWidth()) {
+  const text = String(value);
+  if (visibleLength(text) <= maxWidth) return text;
+  const suffix = maxWidth >= 4 ? '...' : '.';
+  const limit = Math.max(0, maxWidth - suffix.length);
+  let length = 0;
+  let output = '';
+  for (let index = 0; index < text.length;) {
+    if (text[index] === '\x1b' && text[index + 1] === '[') {
+      const end = text.indexOf('m', index + 2);
+      if (end >= 0) {
+        output += text.slice(index, end + 1);
+        index = end + 1;
+        continue;
+      }
+    }
+    const codePoint = text.codePointAt(index);
+    if (length >= limit) break;
+    output += String.fromCodePoint(codePoint);
+    index += codePoint > 0xffff ? 2 : 1;
+    length += 1;
+  }
+  const reset = shouldUseColor() ? '\x1b[0m' : '';
+  return `${output}${reset}${color.dim(suffix)}`;
+}
+
+function renderChoiceLine(choice, index, selectedIndex, defaultIndex, inputState = null) {
+  const selected = index === selectedIndex;
+  const pointer = selected ? color.green('>') : color.gray(' ');
+  if (inputState && selected) {
+    const inlineValue = inputState.value;
+    const placeholder = inputState.defaultValue || inputState.placeholder || '';
+    const renderedValue = inlineValue
+      ? color.input(inlineValue)
+      : color.dim(placeholder);
+    return truncateAnsiLine(`${pointer} ${renderedValue}`);
+  }
+  const marker = index === defaultIndex ? color.key(' (default)') : '';
+  const detail = choice.detail ? color.gray(` - ${choice.detail}`) : '';
+  const label = selected ? color.selected(choice.label) : color.white(choice.label);
+  return truncateAnsiLine(`${pointer} ${label}${marker}${detail}`);
+}
+
+function renderChoices(choices, selectedIndex, defaultIndex, inputState = null) {
   choices.forEach((choice, index) => {
-    process.stdout.write(`${renderChoiceLine(choice, index, selectedIndex, defaultIndex)}\n`);
+    process.stdout.write(
+      `${renderChoiceLine(choice, index, selectedIndex, defaultIndex, inputState)}\n`
+    );
   });
+}
+
+function logField(label, value, valueStyle = color.value) {
+  console.log(`${color.label(`${label}:`)} ${valueStyle(value)}`);
 }
 
 async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
@@ -211,10 +294,19 @@ async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
   }
   let selectedIndex = Math.min(Math.max(defaultIndex, 0), choices.length - 1);
   const renderedLines = choices.length;
+  let inputState = null;
 
-  process.stdout.write(`\n${title}\n`);
-  const escHelp = options.allowBack ? ' Esc goes back.' : '';
-  process.stdout.write(`Use Up/Down and Enter.${escHelp} Ctrl-C cancels.\n`);
+  process.stdout.write(`\n${color.heading(title)}\n`);
+  const hasInlineInput = choices.some((choice) => choice.input);
+  const escHelp = options.allowBack
+    ? ` ${color.key('Esc')} goes back.`
+    : hasInlineInput
+      ? ` ${color.key('Esc')} leaves input.`
+      : '';
+  process.stdout.write(
+    `${color.dim('Use')} ${color.key('Up/Down')} ${color.dim('and')} ` +
+      `${color.key('Enter')}.${escHelp} ${color.key('Ctrl-C')} ${color.dim('cancels.')}\n`
+  );
   renderChoices(choices, selectedIndex, defaultIndex);
 
   return new Promise((resolve, reject) => {
@@ -232,13 +324,32 @@ async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
     function rerender() {
       readlineTerminal.moveCursor(process.stdout, 0, -renderedLines);
       readlineTerminal.clearScreenDown(process.stdout);
-      renderChoices(choices, selectedIndex, defaultIndex);
+      renderChoices(choices, selectedIndex, defaultIndex, inputState);
     }
 
     function finish() {
+      const selectedChoice = choices[selectedIndex];
+      if (selectedChoice.input) {
+        inputState = {
+          defaultValue: selectedChoice.input.defaultValue || '',
+          placeholder: selectedChoice.input.placeholder || '',
+          value: '',
+        };
+        rerender();
+        return;
+      }
       cleanup();
       process.stdout.write('\n');
-      resolve(choices[selectedIndex]);
+      resolve(selectedChoice);
+    }
+
+    function finishInput() {
+      const selectedChoice = choices[selectedIndex];
+      const rawValue = inputState.value || inputState.defaultValue || '';
+      const inputValue = selectedChoice.input?.trim === false ? rawValue : rawValue.trim();
+      cleanup();
+      process.stdout.write('\n');
+      resolve({ ...selectedChoice, inputValue });
     }
 
     function cancel() {
@@ -254,6 +365,7 @@ async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
     }
 
     function move(delta) {
+      if (inputState) return;
       selectedIndex = (selectedIndex + delta + choices.length) % choices.length;
       rerender();
     }
@@ -264,15 +376,35 @@ async function promptChoice(title, choices, defaultIndex = 0, options = {}) {
         return;
       }
       if (key?.name === 'return' || key?.name === 'enter' || input === '\r' || input === '\n') {
-        finish();
+        if (inputState) {
+          finishInput();
+        } else {
+          finish();
+        }
         return;
       }
       if (key?.name === 'escape' || input === '\u001b') {
-        if (options.allowBack) {
+        if (inputState) {
+          inputState = null;
+          rerender();
+        } else if (options.allowBack) {
           back();
         } else {
           process.stdout.write('\x07');
         }
+        return;
+      }
+      if (inputState) {
+        if (key?.name === 'backspace' || key?.name === 'delete') {
+          inputState.value = inputState.value.slice(0, -1);
+          rerender();
+          return;
+        }
+        if (!input || key?.ctrl || key?.meta) {
+          return;
+        }
+        inputState.value += input;
+        rerender();
         return;
       }
       if (
@@ -318,8 +450,8 @@ async function promptText(question, defaultValue = '', options = {}) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return promptTextFallback(question, defaultValue);
   }
-  const suffix = defaultValue ? ` [${defaultValue}]` : '';
-  const prompt = `${question}${suffix}: `;
+  const suffix = defaultValue ? color.gray(` [${defaultValue}]`) : '';
+  const prompt = `${color.green('>')} ${color.prompt(question)}${suffix}: `;
   let value = '';
 
   process.stdout.write(prompt);
@@ -433,6 +565,10 @@ async function promptNetworkConfig(options) {
     label: 'Custom host/IP',
     detail: 'type a listen address manually',
     custom: true,
+    input: {
+      defaultValue: '0.0.0.0',
+      placeholder: '0.0.0.0',
+    },
   });
   for (;;) {
     const selected = await promptChoice(
@@ -443,12 +579,7 @@ async function promptNetworkConfig(options) {
     if (!selected.custom) {
       return { host: selected.host, publicHost: selected.publicHost };
     }
-    const host = await promptText('Listen host/IP', '0.0.0.0', {
-      allowBack: true,
-    });
-    if (host === PROMPT_BACK) {
-      continue;
-    }
+    const host = selected.inputValue || '0.0.0.0';
     const publicHost = await promptText(
       'Phone-reachable host/IP shown in QR code',
       isWildcardHost(host) ? addresses[0]?.address || 'localhost' : host,
@@ -483,6 +614,9 @@ async function promptTokenConfig(options, allowBack = false) {
           label: 'Enter token manually',
           detail: 'use a token you will type on the phone',
           manual: true,
+          input: {
+            placeholder: 'type token',
+          },
         },
         {
           label: 'No token',
@@ -499,12 +633,9 @@ async function promptTokenConfig(options, allowBack = false) {
     if (!selected.manual) {
       return { token: selected.token };
     }
-    const token = await promptText('Bridge token', '', { allowBack: true });
-    if (token === PROMPT_BACK) {
-      continue;
-    }
+    const token = selected.inputValue || '';
     if (token) return { token };
-    console.log('Token cannot be empty. Choose "No token" if you want to disable auth.');
+    console.log(color.warn('Token cannot be empty. Choose "No token" if you want to disable auth.'));
   }
 }
 
@@ -512,8 +643,10 @@ async function interactiveSetup(options) {
   if (!shouldRunInteractiveSetup(options)) {
     return {};
   }
-  console.log('\nOmnibot Codex Bridge setup');
-  console.log('Press Enter to accept the highlighted choice.\n');
+  console.log(`\n${color.heading('Omnibot Codex Bridge setup')}`);
+  console.log(
+    `${color.dim('Press')} ${color.key('Enter')} ${color.dim('to accept the highlighted choice.')}\n`
+  );
   const shouldPromptNetwork = shouldPromptNetworkConfig(options);
   for (;;) {
     const networkConfig = await promptNetworkConfig(options);
@@ -529,8 +662,8 @@ let cliOptions;
 try {
   cliOptions = parseCliArgs(process.argv.slice(2));
 } catch (error) {
-  console.error(error.message);
-  console.error('Run with --help for usage.');
+  console.error(color.error(error.message));
+  console.error(color.dim('Run with --help for usage.'));
   process.exit(1);
 }
 
@@ -544,7 +677,7 @@ try {
   interactiveOptions = await interactiveSetup(cliOptions);
 } catch (error) {
   if (error?.code === 'OMNIBOT_BRIDGE_SETUP_CANCELLED') {
-    console.error('Setup cancelled.');
+    console.error(color.warn('Setup cancelled.'));
     process.exit(130);
   }
   throw error;
@@ -554,7 +687,7 @@ const port = Number.parseInt(
   10
 );
 if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-  console.error(`Invalid bridge port: ${cliOptions.port || process.env.OMNIBOT_BRIDGE_PORT}`);
+  console.error(color.error(`Invalid bridge port: ${cliOptions.port || process.env.OMNIBOT_BRIDGE_PORT}`));
   process.exit(1);
 }
 const host =
@@ -1463,47 +1596,50 @@ await once(server, 'listening');
 const advertised = advertisedHosts();
 const primaryBridgeUrl = bridgeWebSocketUrl(advertised[0].address);
 const payload = quickConnectPayload(primaryBridgeUrl);
-console.log(`Omnibot Codex bridge listening on ws://${host}:${port}/codex`);
-console.log(`Health check: http://${host}:${port}/health`);
-console.log(`Directory browser: http://${host}:${port}/fs/list`);
-console.log(`File browser API: http://${host}:${port}/fs/read`);
-console.log(`Working directory: ${bridgeCwd}`);
+console.log(`\n${color.heading('Omnibot Codex bridge')}`);
+logField('Listening', `ws://${host}:${port}/codex`, color.green);
+logField('Health check', `http://${host}:${port}/health`, color.prompt);
+logField('Directory browser', `http://${host}:${port}/fs/list`, color.prompt);
+logField('File browser API', `http://${host}:${port}/fs/read`, color.prompt);
+logField('Working directory', bridgeCwd, color.white);
 const startupSocketPath = resolveCodexControlSocketPath();
 const startupSocketAvailable = await socketExists(startupSocketPath);
-console.log(
-  `Codex app-server transport: ${appServerTransport}` +
-    (startupSocketAvailable ? ` (desktop socket: ${startupSocketPath})` : '')
+logField(
+  'Codex transport',
+  `${appServerTransport}` +
+    (startupSocketAvailable ? ` (desktop socket: ${startupSocketPath})` : ''),
+  color.accent
 );
 const startupCodexVersion = await readCodexVersion();
 if (startupCodexVersion.ok) {
-  console.log(`Codex CLI: ${startupCodexVersion.version}`);
+  logField('Codex CLI', startupCodexVersion.version, color.green);
 } else if (appServerTransport !== 'stdio' && startupSocketAvailable) {
-  console.log(`Codex CLI check failed: ${startupCodexVersion.error}`);
-  console.log('Desktop Codex app-server socket is available; bridge will proxy that session.');
+  console.log(color.warn(`Codex CLI check failed: ${startupCodexVersion.error}`));
+  console.log(color.prompt('Desktop Codex app-server socket is available; bridge will proxy that session.'));
 } else {
-  console.log(`Codex CLI check failed: ${startupCodexVersion.error}`);
-  console.log('Install/login Codex CLI or pass --codex-bin /absolute/path/to/codex.');
+  console.log(color.warn(`Codex CLI check failed: ${startupCodexVersion.error}`));
+  console.log(color.dim('Install/login Codex CLI or pass --codex-bin /absolute/path/to/codex.'));
 }
 if (token) {
-  console.log('Token auth: enabled');
-  console.log(`Bridge token: ${token}`);
+  logField('Token auth', 'enabled', color.warn);
+  logField('Bridge token', token, color.warn);
 }
-console.log(`Quick connect bridge URL: ${primaryBridgeUrl}`);
+logField('Quick connect URL', primaryBridgeUrl, color.green);
 if (advertised.length > 1) {
   console.log(
-    `Other detected LAN addresses: ${advertised
+    `${color.label('Other LAN addresses:')} ${color.dim(advertised
       .slice(1)
       .map((entry) => `${entry.address} (${entry.name})`)
-      .join(', ')}`
+      .join(', '))}`
   );
 }
 if (!publicHost.trim() && isWildcardHost(host)) {
-  console.log('Set OMNIBOT_BRIDGE_PUBLIC_HOST to override the QR address if this IP is not reachable from your phone.');
+  console.log(color.warn('Set OMNIBOT_BRIDGE_PUBLIC_HOST to override the QR address if this IP is not reachable from your phone.'));
 }
 if (!publicHost.trim() && isLoopbackHost(host)) {
-  console.log('OMNIBOT_BRIDGE_HOST is loopback; phones can only connect through adb reverse, a tunnel, or another forwarded network path.');
+  console.log(color.warn('OMNIBOT_BRIDGE_HOST is loopback; phones can only connect through adb reverse, a tunnel, or another forwarded network path.'));
 }
-console.log(`Quick connect payload: ${payload}`);
+logField('Quick connect payload', payload, color.dim);
 qrcode.generate(payload, { small: true }, (qr) => {
   console.log(qr);
 });
