@@ -49,7 +49,7 @@ OpenOmniBot 是一个基于 Android 原生 Kotlin 与 Flutter 构建的端侧 AI
 - **生产力工具**：支持读写文件、浏览工作区、调用浏览器、调用终端。
 
 <p align="center">
-  <img src="docs/tutorial/example.png" alt="示例" width="360" />
+  <img src="docs/tutorial/example.png" alt="示例" />
 </p>
 
 

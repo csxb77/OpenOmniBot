@@ -48,7 +48,7 @@ OpenOmniBot is an on-device AI agent built with native Android Kotlin and Flutte
 - **Productivity tools**: Read and write files, browse the workspace, use the browser, and access the terminal.
 
 <p align="center">
-  <img src="docs/tutorial/example.png" alt="Example" width="360" />
+  <img src="docs/tutorial/example.png" alt="Example" />
 </p>
 
 
