@@ -4,6 +4,7 @@ import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_stream_meta.dart';
+import 'package:ui/services/codex_diff_parser.dart';
 
 class CodexReduceResult {
   const CodexReduceResult({
@@ -507,11 +508,7 @@ class CodexEventReducer {
             runtime.currentDispatchTaskId ??
             runtime.lastAgentTaskId ??
             parentTaskId;
-        _completeTurn(
-          runtime,
-          completionTaskId,
-          appendCancelIfEmpty: false,
-        );
+        _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
       }
       return CodexReduceResult(
         handled: true,
@@ -764,6 +761,39 @@ class CodexEventReducer {
     );
     final existing = index == -1 ? null : runtime.messages[index];
     final existingCardData = existing?.cardData ?? const <String, dynamic>{};
+    final effectiveTerminalOutput = terminalOutput.isNotEmpty
+        ? terminalOutput
+        : (existingCardData['terminalOutput'] ?? '').toString();
+    final diffText = toolType == 'file'
+        ? _resolveFileDiffText(
+            existingCardData: existingCardData,
+            raw: raw,
+            terminalOutput: effectiveTerminalOutput,
+            progress: progress,
+            summary: summary,
+          )
+        : '';
+    final diffSummary = diffText.isEmpty ? null : parseCodexDiffText(diffText);
+    final diffPreview = diffSummary == null
+        ? ''
+        : summarizeCodexDiff(diffSummary);
+    final effectiveSummary = toolType == 'file' && diffPreview.isNotEmpty
+        ? diffPreview
+        : summary.isNotEmpty
+        ? summary
+        : (existingCardData['summary'] ?? '').toString();
+    final effectiveProgress = toolType == 'file' && diffPreview.isNotEmpty
+        ? diffPreview
+        : progress.isNotEmpty
+        ? progress
+        : (existingCardData['progress'] ?? '').toString();
+    final resolvedFilePath = toolType == 'file'
+        ? _resolveFilePath(raw) ??
+              (diffSummary?.primaryPath.trim().isNotEmpty == true
+                  ? diffSummary!.primaryPath
+                  : null) ??
+              (existingCardData['filePath'] ?? '').toString()
+        : '';
     final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
       'taskId': taskId,
@@ -773,22 +803,28 @@ class CodexEventReducer {
       'cardId': cardId,
       'toolType': toolType,
       'status': status,
-      'summary': summary.isNotEmpty
-          ? summary
-          : (existingCardData['summary'] ?? '').toString(),
-      'progress': progress.isNotEmpty
-          ? progress
-          : (existingCardData['progress'] ?? '').toString(),
+      'summary': effectiveSummary,
+      'progress': effectiveProgress,
       'argsJson': _safeJson(raw),
       'resultPreviewJson': '',
       'rawResultJson': _safeJson(raw),
-      'terminalOutput': terminalOutput.isNotEmpty
-          ? terminalOutput
-          : (existingCardData['terminalOutput'] ?? '').toString(),
+      'terminalOutput': effectiveTerminalOutput,
       'terminalOutputDelta': progress,
-      'showTerminalOutput': terminalOutput.isNotEmpty || toolType == 'terminal',
+      'showTerminalOutput':
+          (effectiveTerminalOutput.isNotEmpty && diffText.isEmpty) ||
+          toolType == 'terminal',
       'showRawResult': true,
     };
+    if (toolType == 'file') {
+      cardData.addAll(<String, dynamic>{
+        'diffText': diffText,
+        'showDiff': diffText.isNotEmpty,
+        'filePath': resolvedFilePath,
+        'changedFiles': diffSummary?.changedFileCount ?? 0,
+        'additions': diffSummary?.additions ?? 0,
+        'deletions': diffSummary?.deletions ?? 0,
+      });
+    }
     final startTime = _startTimeForEntry(
       runtime,
       cardId,
@@ -1303,31 +1339,56 @@ class CodexEventReducer {
     Map<String, dynamic> params, {
     String fallback = 'Codex file change',
   }) {
-    final args = _toolArguments(params);
-    final path = _firstString([
-      params['path'],
-      params['filePath'],
-      params['file_path'],
-      params['filename'],
-      params['fileName'],
-      args['path'],
-      args['filePath'],
-      args['file_path'],
-      args['filename'],
-      args['fileName'],
-      _firstPathFromList(params['files']),
-      _firstPathFromList(params['changes']),
-      _firstPathFromList(args['files']),
-      _firstPathFromList(args['changes']),
-      _asStringMap(params['item'])?['path'],
-      _asStringMap(params['item'])?['filePath'],
-      _asStringMap(params['item'])?['file_path'],
-    ]);
+    final path = _resolveFilePath(params);
     if (path == null) {
       return fallback;
     }
     final name = _lastPathSegment(path) ?? path;
     return _compactTitle('Edit $name', maxLength: 42);
+  }
+
+  String? _resolveFilePath(Map<String, dynamic> params) {
+    final args = _toolArguments(params);
+    return _firstString([
+          params['path'],
+          params['filePath'],
+          params['file_path'],
+          params['filename'],
+          params['fileName'],
+          args['path'],
+          args['filePath'],
+          args['file_path'],
+          args['filename'],
+          args['fileName'],
+          _firstPathFromList(params['files']),
+          _firstPathFromList(params['changes']),
+          _firstPathFromList(args['files']),
+          _firstPathFromList(args['changes']),
+          _asStringMap(params['item'])?['path'],
+          _asStringMap(params['item'])?['filePath'],
+          _asStringMap(params['item'])?['file_path'],
+        ]) ??
+        extractCodexDiffPath(params);
+  }
+
+  String _resolveFileDiffText({
+    required Map<String, dynamic> existingCardData,
+    required Map<String, dynamic> raw,
+    required String terminalOutput,
+    required String progress,
+    required String summary,
+  }) {
+    final fromExisting = (existingCardData['diffText'] ?? '').toString();
+    final fromCurrent = extractCodexDiffText(
+      raw,
+      outputText: terminalOutput,
+      progress: progress,
+      summary: summary,
+    );
+    if (fromCurrent != null && fromCurrent.trim().isNotEmpty) {
+      return fromCurrent;
+    }
+    return fromExisting.trim().isEmpty ? '' : fromExisting;
   }
 
   String _genericToolTitle(Map<String, dynamic> params) {

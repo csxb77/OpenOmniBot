@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
 import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
@@ -74,6 +76,161 @@ void main() {
     expect(cardData['type'], 'agent_tool_summary');
     expect(cardData['toolType'], 'terminal');
     expect(cardData['terminalOutput'], 'file.txt\n');
+  });
+
+  test('maps file diffs into first-class diff tool cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/fileChange/outputDelta',
+          'params': {
+            'turnId': 'turn-1',
+            'itemId': 'file-1',
+            'path': 'lib/main.dart',
+            'delta': '''
+diff --git a/lib/main.dart b/lib/main.dart
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,2 +1,2 @@
+-old line
++new line
+ same line
+''',
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['type'], 'agent_tool_summary');
+    expect(cardData['toolType'], 'file');
+    expect(cardData['showDiff'], isTrue);
+    expect(cardData['filePath'], 'lib/main.dart');
+    expect(cardData['additions'], 1);
+    expect(cardData['deletions'], 1);
+    expect(cardData['summary'], contains('+1 -1'));
+    expect((cardData['diffText'] ?? '').toString(), contains('diff --git'));
+  });
+
+  test('maps hunk-only changes json into first-class diff tool cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/fileChange/outputDelta',
+          'params': {
+            'turnId': 'turn-1',
+            'itemId': 'call-1',
+            'type': 'fileChange',
+            'id': 'call-1',
+            'changes': jsonEncode({
+              'path': '/repo/test/services/codex_diff_parser_test.dart',
+              'kind': {'type': 'update', 'move_path': null},
+              'diff': '''
+@@ -1,2 +1,2 @@
+-old line
++new line
+ same line
+''',
+            }),
+            'status': 'completed',
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['type'], 'agent_tool_summary');
+    expect(cardData['toolType'], 'file');
+    expect(cardData['toolTitle'], 'Edit codex_diff_parser_test.dart');
+    expect(cardData['showDiff'], isTrue);
+    expect(
+      cardData['filePath'],
+      '/repo/test/services/codex_diff_parser_test.dart',
+    );
+    expect(cardData['changedFiles'], 1);
+    expect(cardData['additions'], 1);
+    expect(cardData['deletions'], 1);
+    expect(cardData['summary'], '1 file · +1 -1');
+    expect((cardData['diffText'] ?? '').toString(), contains('diff --git'));
+  });
+
+  test('hydrates historical hunk-only file changes as diff cards', () {
+    final messages = codexMessagesFromThreadResponseForTesting({
+      'thread': {
+        'id': 'thread-1',
+        'turns': [
+          {
+            'id': 'turn-1',
+            'items': [
+              {
+                'id': 'call-1',
+                'type': 'fileChange',
+                'status': 'completed',
+                'changes': jsonEncode({
+                  'path': '/repo/lib/main.dart',
+                  'kind': {'type': 'update'},
+                  'diff': '''
+@@ -1,2 +1,2 @@
+-old line
++new line
+ same line
+''',
+                }),
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    final cardData = messages.single.cardData!;
+    expect(cardData['toolType'], 'file');
+    expect(cardData['showDiff'], isTrue);
+    expect(cardData['filePath'], '/repo/lib/main.dart');
+    expect(cardData['additions'], 1);
+    expect(cardData['deletions'], 1);
+  });
+
+  test('hydrates codex user image blocks as message attachments', () {
+    final messages = codexMessagesFromThreadResponseForTesting({
+      'thread': {
+        'id': 'thread-1',
+        'turns': [
+          {
+            'id': 'turn-1',
+            'items': [
+              {
+                'id': 'user-1',
+                'type': 'userMessage',
+                'content': [
+                  {'type': 'text', 'text': '看这张图'},
+                  {
+                    'type': 'image',
+                    'detail': null,
+                    'url': 'data:image/png;base64,AAAA',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    final message = messages.single;
+    expect(message.user, 1);
+    expect(message.text, '看这张图');
+    expect(message.text, isNot(contains('data:image')));
+    expect(message.text, isNot(contains('{type: image')));
+
+    final attachments = message.content?['attachments'] as List;
+    expect(attachments, hasLength(1));
+    final attachment = attachments.single as Map<String, dynamic>;
+    expect(attachment['dataUrl'], 'data:image/png;base64,AAAA');
+    expect(attachment['mimeType'], 'image/png');
+    expect(attachment['isImage'], isTrue);
   });
 
   test('uses file paths for concise file change tool titles', () {
@@ -603,9 +760,7 @@ void main() {
     );
 
     final completedCard = runtime.messages
-        .firstWhere(
-          (message) => message.cardData?['type'] == 'deep_thinking',
-        )
+        .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
         .cardData!;
     expect(completedCard['startTime'], startedStartTime);
     expect(completedCard['stage'], ThinkingStage.complete.value);
@@ -908,61 +1063,56 @@ void main() {
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test(
-    'top-level error with willRetry=false finalizes the active turn',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'turn/started',
-            'params': {'threadId': 'thread-1', 'turnId': 'turn-1'},
+  test('top-level error with willRetry=false finalizes the active turn', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/started',
+          'params': {'threadId': 'thread-1', 'turnId': 'turn-1'},
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/reasoning/textDelta',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'itemId': 'reason-1',
+            'delta': 'thinking',
           },
         },
-      );
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'item/reasoning/textDelta',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'itemId': 'reason-1',
-              'delta': 'thinking',
-            },
+      },
+    );
+
+    expect(runtime.isAiResponding, isTrue);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'error',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'willRetry': false,
+            'message': 'connection lost',
           },
         },
-      );
+      },
+    );
 
-      expect(runtime.isAiResponding, isTrue);
-
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'error',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'willRetry': false,
-              'message': 'connection lost',
-            },
-          },
-        },
-      );
-
-      expect(runtime.isAiResponding, isFalse);
-      expect(runtime.currentDispatchTaskId, isNull);
-      final thinking = runtime.messages
-          .firstWhere(
-            (message) => message.cardData?['type'] == 'deep_thinking',
-          )
-          .cardData!;
-      expect(thinking['isLoading'], isFalse);
-      expect(thinking['stage'], ThinkingStage.complete.value);
-    },
-  );
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTaskId, isNull);
+    final thinking = runtime.messages
+        .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
+        .cardData!;
+    expect(thinking['isLoading'], isFalse);
+    expect(thinking['stage'], ThinkingStage.complete.value);
+  });
 
   test('top-level error with willRetry=true keeps the turn active', () {
     reducer.reduce(
@@ -998,26 +1148,30 @@ void main() {
     'snapshot renders reasoning as loading even when item.status is completed '
     'while turn is active',
     () {
-      final messages = codexMessagesFromThreadResponseForTesting({
-        'thread': {
-          'id': 'thread-1',
-          'status': {'type': 'active'},
-          'turns': [
-            {
-              'id': 'turn-1',
-              'status': 'inProgress',
-              'items': [
-                {
-                  'id': 'reason-1',
-                  'type': 'reasoning',
-                  'status': 'completed',
-                  'summary': ['done reasoning'],
-                },
-              ],
-            },
-          ],
+      final messages = codexMessagesFromThreadResponseForTesting(
+        {
+          'thread': {
+            'id': 'thread-1',
+            'status': {'type': 'active'},
+            'turns': [
+              {
+                'id': 'turn-1',
+                'status': 'inProgress',
+                'items': [
+                  {
+                    'id': 'reason-1',
+                    'type': 'reasoning',
+                    'status': 'completed',
+                    'summary': ['done reasoning'],
+                  },
+                ],
+              },
+            ],
+          },
         },
-      }, active: true, activeTurnId: 'turn-1');
+        active: true,
+        activeTurnId: 'turn-1',
+      );
 
       final cardData = messages.first.cardData!;
       expect(cardData['type'], 'deep_thinking');

@@ -1174,8 +1174,7 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
     // reasoning deltas when codex doesn't surface a "running" status in
     // thread/read.
     final isAiResponding =
-        snapshotIsAiResponding ||
-        (previousActive && !snapshotKnowsInactive);
+        snapshotIsAiResponding || (previousActive && !snapshotKnowsInactive);
     final activeTurnId = isAiResponding
         ? (directActiveTurnId ??
               _codexLatestTurnIdFromThreadResponse(response) ??
@@ -1933,11 +1932,14 @@ String _remoteCodexSnapshotSignature({
     ..write('|')
     ..write(messages.length);
   for (final message in messages) {
+    final attachments = message.content?['attachments'];
     buffer
       ..write('|')
       ..write(message.id)
       ..write(':')
-      ..write(message.text?.hashCode ?? message.cardData?.hashCode ?? 0);
+      ..write(message.text?.hashCode ?? message.cardData?.hashCode ?? 0)
+      ..write(':')
+      ..write(attachments == null ? 0 : _safeCodexJson(attachments).hashCode);
   }
   return buffer.toString();
 }
@@ -2179,7 +2181,7 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
             itemIndex,
       );
       if (itemType == 'userMessage') {
-        final text = _codexExtractText(
+        final userContent = _codexExtractUserMessageContent(
           item['content'] ??
               item['text'] ??
               item['message'] ??
@@ -2187,15 +2189,23 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
               item['text_elements'] ??
               item['parts'],
         );
-        if (text.trim().isEmpty) {
+        if (userContent.text.trim().isEmpty &&
+            userContent.attachments.isEmpty) {
           continue;
+        }
+        final content = <String, dynamic>{
+          'text': userContent.text,
+          'id': '$itemId-codex-user',
+        };
+        if (userContent.attachments.isNotEmpty) {
+          content['attachments'] = userContent.attachments;
         }
         chronological.add(
           ChatMessageModel(
             id: '$itemId-codex-user',
             type: 1,
             user: 1,
-            content: {'text': text, 'id': '$itemId-codex-user'},
+            content: content,
             createAt: createdAt,
           ),
         );
@@ -2276,12 +2286,14 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
       }
       if (_codexHistoricalToolItemTypes.contains(itemType)) {
         seq += 1;
-        final cardId = '$itemId-codex-${_codexToolKind(itemType)}';
+        final toolKind = _codexToolKind(itemType);
+        final cardId = '$itemId-codex-$toolKind';
         final itemActivity = _codexActivityFromValue(
           item['status'] ?? item['state'],
         );
         final isRunning = isActiveTurn && itemActivity?.active != false;
         final status = isRunning ? 'running' : 'success';
+        final toolTitle = _codexToolTitle(itemType, item);
         final summary = _codexExtractText(
           item['summary'] ??
               item['status'] ??
@@ -2289,27 +2301,67 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
               item['text'] ??
               item['content'],
         );
+        final rawJson = _safeCodexJson(item);
+        final terminalOutput = _codexExtractText(item['output']);
+        final diffText = toolKind == 'file'
+            ? extractCodexDiffText(
+                    item,
+                    outputText: terminalOutput,
+                    progress: summary,
+                    summary: summary,
+                  ) ??
+                  ''
+            : '';
+        final diffSummary = diffText.isEmpty
+            ? null
+            : parseCodexDiffText(diffText);
+        final diffPreview = diffSummary == null
+            ? ''
+            : summarizeCodexDiff(diffSummary);
+        final effectiveSummary = toolKind == 'file' && diffPreview.isNotEmpty
+            ? diffPreview
+            : summary;
+        final effectiveProgress = toolKind == 'file' && diffPreview.isNotEmpty
+            ? diffPreview
+            : summary;
+        final filePath = toolKind == 'file'
+            ? extractCodexDiffPath(item) ??
+                  (diffSummary?.primaryPath.trim().isNotEmpty == true
+                      ? diffSummary!.primaryPath
+                      : null)
+            : null;
+        final cardData = <String, dynamic>{
+          'type': 'agent_tool_summary',
+          'taskId': turnId,
+          'toolName': 'codex.$toolKind',
+          'displayName': toolTitle,
+          'toolTitle': toolTitle,
+          'cardId': cardId,
+          'toolType': toolKind,
+          'status': status,
+          'summary': effectiveSummary,
+          'progress': effectiveProgress,
+          'argsJson': rawJson,
+          'resultPreviewJson': '',
+          'rawResultJson': rawJson,
+          'terminalOutput': terminalOutput,
+          'terminalOutputDelta': '',
+          'showTerminalOutput': itemType == 'commandExecution',
+          'showRawResult': true,
+        };
+        if (toolKind == 'file') {
+          cardData.addAll(<String, dynamic>{
+            'diffText': diffText,
+            'showDiff': diffText.isNotEmpty,
+            'filePath': filePath ?? '',
+            'changedFiles': diffSummary?.changedFileCount ?? 0,
+            'additions': diffSummary?.additions ?? 0,
+            'deletions': diffSummary?.deletions ?? 0,
+          });
+        }
         chronological.add(
           ChatMessageModel.cardMessage(
-            {
-              'type': 'agent_tool_summary',
-              'taskId': turnId,
-              'toolName': 'codex.${_codexToolKind(itemType)}',
-              'displayName': _codexToolTitle(itemType, item),
-              'toolTitle': _codexToolTitle(itemType, item),
-              'cardId': cardId,
-              'toolType': _codexToolKind(itemType),
-              'status': status,
-              'summary': summary,
-              'progress': summary,
-              'argsJson': _safeCodexJson(item),
-              'resultPreviewJson': '',
-              'rawResultJson': _safeCodexJson(item),
-              'terminalOutput': _codexExtractText(item['output']),
-              'terminalOutputDelta': '',
-              'showTerminalOutput': itemType == 'commandExecution',
-              'showRawResult': true,
-            },
+            cardData,
             id: cardId,
             streamMeta: ensureAgentStreamMessageMeta(
               null,
@@ -2362,6 +2414,344 @@ Map<String, dynamic>? _asCodexMap(dynamic value) {
   return value.map((key, nestedValue) {
     return MapEntry(key.toString(), nestedValue);
   });
+}
+
+class _CodexUserMessageContent {
+  const _CodexUserMessageContent({
+    required this.text,
+    required this.attachments,
+  });
+
+  final String text;
+  final List<Map<String, dynamic>> attachments;
+}
+
+_CodexUserMessageContent _codexExtractUserMessageContent(dynamic value) {
+  final text = StringBuffer();
+  final attachments = <Map<String, dynamic>>[];
+
+  void visit(dynamic node) {
+    if (node == null) return;
+    if (node is String) {
+      text.write(node);
+      return;
+    }
+    if (node is num || node is bool) {
+      text.write(node);
+      return;
+    }
+    if (node is List) {
+      for (final child in node) {
+        visit(child);
+      }
+      return;
+    }
+
+    final map = _asCodexMap(node);
+    if (map == null) {
+      final fallback = node.toString();
+      if (fallback.isNotEmpty) {
+        text.write(fallback);
+      }
+      return;
+    }
+
+    final type = _asCodexString(map['type'])?.toLowerCase();
+    if (_codexBlockTypeLooksText(type)) {
+      final blockText = _codexExtractText(
+        map['text'] ?? map['content'] ?? map['value'] ?? map['input'],
+      );
+      if (blockText.isNotEmpty) {
+        text.write(blockText);
+      }
+      return;
+    }
+
+    if (_codexMapLooksLikeImageBlock(map)) {
+      final attachment = _codexImageAttachmentFromBlock(
+        map,
+        attachments.length,
+      );
+      if (attachment != null) {
+        attachments.add(attachment);
+      }
+      return;
+    }
+
+    for (final key in const <String>[
+      'text',
+      'content',
+      'message',
+      'input',
+      'value',
+      'delta',
+      'summary',
+      'text_elements',
+      'parts',
+      'attachments',
+      'images',
+    ]) {
+      if (!map.containsKey(key)) continue;
+      final beforeTextLength = text.length;
+      final beforeAttachmentLength = attachments.length;
+      visit(map[key]);
+      if (text.length != beforeTextLength ||
+          attachments.length != beforeAttachmentLength) {
+        return;
+      }
+    }
+
+    final fallback = _codexExtractText(map);
+    if (fallback.isNotEmpty) {
+      text.write(fallback);
+    }
+  }
+
+  visit(value);
+  return _CodexUserMessageContent(
+    text: text.toString(),
+    attachments: List<Map<String, dynamic>>.unmodifiable(attachments),
+  );
+}
+
+bool _codexBlockTypeLooksText(String? type) {
+  if (type == null) return false;
+  final normalized = type.replaceAll('-', '_');
+  return normalized == 'text' ||
+      normalized == 'input_text' ||
+      normalized == 'message_text';
+}
+
+bool _codexBlockTypeLooksImage(String? type) {
+  if (type == null) return false;
+  final normalized = type.replaceAll('-', '_');
+  return normalized == 'image' ||
+      normalized == 'input_image' ||
+      normalized == 'image_url' ||
+      normalized == 'screenshot' ||
+      normalized.endsWith('_image');
+}
+
+bool _codexMapLooksLikeImageBlock(Map<String, dynamic> map) {
+  final type = _asCodexString(map['type'])?.toLowerCase();
+  if (_codexBlockTypeLooksImage(type)) {
+    return true;
+  }
+  final mimeType = _asCodexString(
+    map['mimeType'] ??
+        map['mime_type'] ??
+        map['mediaType'] ??
+        map['media_type'],
+  )?.toLowerCase();
+  if (mimeType?.startsWith('image/') == true) {
+    return true;
+  }
+  for (final key in const <String>[
+    'image',
+    'imageUrl',
+    'image_url',
+    'dataUrl',
+    'data_url',
+  ]) {
+    if (map.containsKey(key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Map<String, dynamic>? _codexImageAttachmentFromBlock(
+  Map<String, dynamic> map,
+  int index,
+) {
+  final source =
+      _codexImageStringFromValue(map['dataUrl']) ??
+      _codexImageStringFromValue(map['data_url']) ??
+      _codexImageStringFromValue(map['url']) ??
+      _codexImageStringFromValue(map['imageUrl']) ??
+      _codexImageStringFromValue(map['image_url']) ??
+      _codexImageStringFromValue(map['image']) ??
+      _codexImageStringFromValue(map['src']) ??
+      _codexImageStringFromValue(map['source']);
+  final path =
+      _asCodexString(
+        map['path'] ??
+            map['filePath'] ??
+            map['file_path'] ??
+            map['filename'] ??
+            map['fileName'],
+      ) ??
+      (source != null && !_codexImageSourceIsUrl(source) ? source : null);
+  final url = source != null && _codexImageSourceIsUrl(source) ? source : null;
+  final rawBase64 = _codexImageBase64FromBlock(map);
+  final mimeType = _codexImageMimeType(
+    explicit:
+        map['mimeType'] ??
+        map['mime_type'] ??
+        map['mediaType'] ??
+        map['media_type'],
+    source: url,
+    path: path,
+  );
+  final dataUrl = url?.startsWith('data:') == true
+      ? url
+      : (rawBase64 == null
+            ? null
+            : 'data:${mimeType ?? 'image/png'};base64,$rawBase64');
+  final effectiveUrl = dataUrl ?? url;
+  final effectivePath = dataUrl == null && url == null ? path : null;
+
+  if ((effectiveUrl ?? '').isEmpty && (effectivePath ?? '').isEmpty) {
+    return null;
+  }
+
+  final attachment = <String, dynamic>{
+    'id': 'codex-image-$index',
+    'name': _codexImageAttachmentName(
+      map: map,
+      source: effectiveUrl,
+      path: effectivePath,
+      mimeType: mimeType,
+      index: index,
+    ),
+    'isImage': true,
+    'sendToModel': true,
+  };
+  if (mimeType != null) {
+    attachment['mimeType'] = mimeType;
+  }
+  if (dataUrl != null) {
+    attachment['dataUrl'] = dataUrl;
+  } else if (effectiveUrl != null) {
+    attachment['url'] = effectiveUrl;
+  }
+  if (effectivePath != null) {
+    attachment['path'] = effectivePath;
+  }
+  return attachment;
+}
+
+String? _codexImageStringFromValue(dynamic value) {
+  if (value == null) return null;
+  if (value is String) {
+    final text = value.trim();
+    return text.isEmpty ? null : text;
+  }
+  final map = _asCodexMap(value);
+  if (map != null) {
+    for (final key in const <String>[
+      'url',
+      'dataUrl',
+      'data_url',
+      'src',
+      'source',
+      'path',
+    ]) {
+      final nested = _codexImageStringFromValue(map[key]);
+      if (nested != null) {
+        return nested;
+      }
+    }
+  }
+  return null;
+}
+
+String? _codexImageBase64FromBlock(Map<String, dynamic> map) {
+  final raw = _asCodexString(map['base64'] ?? map['b64_json']);
+  if (raw == null || raw.startsWith('data:')) {
+    return null;
+  }
+  return raw;
+}
+
+bool _codexImageSourceIsUrl(String value) {
+  final normalized = value.trim().toLowerCase();
+  return normalized.startsWith('data:') ||
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://');
+}
+
+String? _codexImageMimeType({
+  required dynamic explicit,
+  required String? source,
+  required String? path,
+}) {
+  final explicitText = _asCodexString(explicit)?.toLowerCase();
+  if (explicitText != null) {
+    return explicitText.startsWith('image/')
+        ? explicitText
+        : 'image/$explicitText';
+  }
+  final dataMime = _codexMimeTypeFromDataUrl(source);
+  if (dataMime != null) {
+    return dataMime;
+  }
+  return _codexImageMimeTypeFromPath(path ?? source ?? '');
+}
+
+String? _codexMimeTypeFromDataUrl(String? value) {
+  final source = value?.trim() ?? '';
+  if (!source.toLowerCase().startsWith('data:')) {
+    return null;
+  }
+  final comma = source.indexOf(',');
+  final meta = comma == -1 ? source.substring(5) : source.substring(5, comma);
+  final mime = meta.split(';').first.trim().toLowerCase();
+  return mime.startsWith('image/') ? mime : null;
+}
+
+String? _codexImageMimeTypeFromPath(String value) {
+  final path = value.split('?').first.split('#').first.toLowerCase();
+  if (path.endsWith('.png')) return 'image/png';
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  if (path.endsWith('.gif')) return 'image/gif';
+  if (path.endsWith('.webp')) return 'image/webp';
+  if (path.endsWith('.bmp')) return 'image/bmp';
+  if (path.endsWith('.heic')) return 'image/heic';
+  if (path.endsWith('.heif')) return 'image/heif';
+  return null;
+}
+
+String _codexImageAttachmentName({
+  required Map<String, dynamic> map,
+  required String? source,
+  required String? path,
+  required String? mimeType,
+  required int index,
+}) {
+  final explicitName = _asCodexString(
+    map['name'] ?? map['fileName'] ?? map['filename'],
+  );
+  if (explicitName != null) {
+    return explicitName;
+  }
+  final pathName = _codexPathNameWithoutQuery(path);
+  if (pathName != null) {
+    return pathName;
+  }
+  final sourceName = _codexPathNameWithoutQuery(source);
+  if (sourceName != null) {
+    return sourceName;
+  }
+  final extension = switch (mimeType) {
+    'image/jpeg' => 'jpg',
+    'image/gif' => 'gif',
+    'image/webp' => 'webp',
+    'image/bmp' => 'bmp',
+    'image/heic' => 'heic',
+    'image/heif' => 'heif',
+    _ => 'png',
+  };
+  return index == 0 ? 'image.$extension' : 'image-${index + 1}.$extension';
+}
+
+String? _codexPathNameWithoutQuery(String? value) {
+  final raw = value?.trim() ?? '';
+  if (raw.isEmpty || raw.toLowerCase().startsWith('data:')) {
+    return null;
+  }
+  final withoutQuery = raw.split('?').first.split('#').first;
+  return _codexLastPathSegment(withoutQuery);
 }
 
 String _codexExtractText(dynamic value) {

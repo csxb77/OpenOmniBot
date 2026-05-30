@@ -108,6 +108,7 @@ class AgentToolEventData {
   final String terminalOutputDelta;
   final String? terminalSessionId;
   final String terminalStreamState;
+  final Map<String, dynamic> raw;
   final String? workspaceId;
   final String? interruptedBy;
   final String? interruptionReason;
@@ -135,6 +136,7 @@ class AgentToolEventData {
     this.terminalOutputDelta = '',
     this.terminalSessionId,
     this.terminalStreamState = '',
+    this.raw = const <String, dynamic>{},
     this.workspaceId,
     this.interruptedBy,
     this.interruptionReason,
@@ -146,7 +148,11 @@ class AgentToolEventData {
   });
 
   factory AgentToolEventData.fromMap(Map<dynamic, dynamic>? map) {
-    final raw = map ?? const {};
+    final raw = Map<String, dynamic>.from(
+      (map ?? const <dynamic, dynamic>{}).map(
+        (key, value) => MapEntry(key.toString(), value),
+      ),
+    );
     return AgentToolEventData(
       taskId: (raw['taskId'] ?? '').toString(),
       cardId: (raw['cardId'] ?? '').toString(),
@@ -165,6 +171,7 @@ class AgentToolEventData {
       terminalOutputDelta: (raw['terminalOutputDelta'] ?? '').toString(),
       terminalSessionId: raw['terminalSessionId']?.toString(),
       terminalStreamState: (raw['terminalStreamState'] ?? '').toString(),
+      raw: raw,
       workspaceId: raw['workspaceId']?.toString(),
       interruptedBy: raw['interruptedBy']?.toString(),
       interruptionReason: raw['interruptionReason']?.toString(),

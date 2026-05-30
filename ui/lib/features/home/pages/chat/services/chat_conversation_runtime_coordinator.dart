@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
@@ -21,6 +22,7 @@ import 'package:ui/services/link_preview_service.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/utils/data_parser.dart';
+import 'package:ui/services/codex_diff_parser.dart';
 
 const String kChatRuntimeModeNormal = 'normal';
 const String kChatRuntimeModeOpenClaw = 'openclaw';
@@ -3116,10 +3118,49 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           );
     final existingTerminalOutput = (existingCardData['terminalOutput'] ?? '')
         .toString();
-    final terminalOutput = event.toolType == 'terminal'
+    final isFileChangeTool = _isCodexFileChangeTool(event, existingCardData);
+    final effectiveToolType = isFileChangeTool ? 'file' : event.toolType;
+    final terminalOutput = effectiveToolType == 'terminal'
         ? _resolveTerminalOutput(existing: existingTerminalOutput, event: event)
         : '';
-    final cardData = {
+    final diffSource = _agentToolDiffSource(
+      event,
+      resultPreviewJson: resultPreviewJson,
+      rawResultJson: rawResultJson,
+      summary: summary,
+      progress: progress,
+    );
+    final diffText = isFileChangeTool
+        ? _resolveAgentFileDiffText(
+            existingCardData: existingCardData,
+            source: diffSource,
+            outputText: terminalOutput,
+            progress: progress,
+            summary: summary,
+          )
+        : '';
+    final diffSummary = diffText.isEmpty ? null : parseCodexDiffText(diffText);
+    final diffPreview = diffSummary == null
+        ? ''
+        : summarizeCodexDiff(diffSummary);
+    final effectiveSummary = isFileChangeTool && diffPreview.isNotEmpty
+        ? diffPreview
+        : summary.isNotEmpty
+        ? summary
+        : (existingCardData['summary'] ?? '').toString();
+    final effectiveProgress = isFileChangeTool && diffPreview.isNotEmpty
+        ? diffPreview
+        : progress.isNotEmpty
+        ? progress
+        : (existingCardData['progress'] ?? '').toString();
+    final filePath = isFileChangeTool
+        ? extractCodexDiffPath(diffSource) ??
+              (diffSummary?.primaryPath.trim().isNotEmpty == true
+                  ? diffSummary!.primaryPath
+                  : null) ??
+              (existingCardData['filePath'] ?? '').toString()
+        : '';
+    final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
       'taskId': taskId,
       'toolName': event.toolName,
@@ -3130,18 +3171,14 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       'cardId': event.cardId.isNotEmpty
           ? event.cardId
           : (existingCardData['cardId'] ?? cardId).toString(),
-      'toolType': event.toolType,
+      'toolType': effectiveToolType,
       'serverName': event.serverName,
       'status': status,
       'reasoning_content':
           _normalizeReasoningContent(reasoningContent) ??
           (existingCardData['reasoning_content'] ?? '').toString(),
-      'summary': summary.isNotEmpty
-          ? summary
-          : (existingCardData['summary'] ?? '').toString(),
-      'progress': progress.isNotEmpty
-          ? progress
-          : (existingCardData['progress'] ?? '').toString(),
+      'summary': effectiveSummary,
+      'progress': effectiveProgress,
       'subagentStatusText': event.subagentStatusText.isNotEmpty
           ? event.subagentStatusText
           : (existingCardData['subagentStatusText'] ?? '').toString(),
@@ -3176,12 +3213,22 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           ? event.actions
           : (existingCardData['actions'] ?? const []),
       'success': event.success,
-      'showTerminalOutput': event.toolType == 'terminal',
+      'showTerminalOutput': effectiveToolType == 'terminal',
       'showRawResult': event.rawResultJson.isNotEmpty,
       'showArtifactAction': event.artifacts.isNotEmpty,
-      'showScheduleAction': event.toolType == 'schedule',
-      'showAlarmAction': event.toolType == 'alarm',
+      'showScheduleAction': effectiveToolType == 'schedule',
+      'showAlarmAction': effectiveToolType == 'alarm',
     };
+    if (isFileChangeTool) {
+      cardData.addAll(<String, dynamic>{
+        'diffText': diffText,
+        'showDiff': diffText.isNotEmpty,
+        'filePath': filePath,
+        'changedFiles': diffSummary?.changedFileCount ?? 0,
+        'additions': diffSummary?.additions ?? 0,
+        'deletions': diffSummary?.deletions ?? 0,
+      });
+    }
 
     if (index == -1) {
       runtime.messages.insert(
@@ -3327,6 +3374,93 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       return _trimTerminalOutput(existing + event.terminalOutputDelta);
     }
     return existing;
+  }
+
+  bool _isCodexFileChangeTool(
+    AgentToolEventData event,
+    Map<String, dynamic> existingCardData,
+  ) {
+    final toolType = event.toolType.trim();
+    if (toolType == 'file' ||
+        (existingCardData['toolType'] ?? '').toString().trim() == 'file') {
+      return true;
+    }
+    final toolName = event.toolName.trim();
+    if (toolName == 'codex.file') {
+      return true;
+    }
+    if (_valueHasFileChangeType(event.raw)) {
+      return true;
+    }
+    return _jsonHasFileChangeType(event.argsJson) ||
+        _jsonHasFileChangeType(event.rawResultJson) ||
+        _jsonHasFileChangeType(event.resultPreviewJson);
+  }
+
+  bool _jsonHasFileChangeType(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    try {
+      final decoded = jsonDecode(trimmed);
+      return _valueHasFileChangeType(decoded);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _valueHasFileChangeType(dynamic value) {
+    if (value is Map) {
+      final map = value.map((key, nested) => MapEntry(key.toString(), nested));
+      final type = (map['type'] ?? '').toString();
+      if (type == 'fileChange') {
+        return true;
+      }
+      return map.values.any(_valueHasFileChangeType);
+    }
+    if (value is Iterable) {
+      return value.any(_valueHasFileChangeType);
+    }
+    return false;
+  }
+
+  Map<String, dynamic> _agentToolDiffSource(
+    AgentToolEventData event, {
+    required String resultPreviewJson,
+    required String rawResultJson,
+    required String summary,
+    required String progress,
+  }) {
+    return <String, dynamic>{
+      ...event.raw,
+      'toolName': event.toolName,
+      'toolType': event.toolType,
+      'argsJson': event.argsJson,
+      'resultPreviewJson': resultPreviewJson,
+      'rawResultJson': rawResultJson,
+      'summary': summary,
+      'progress': progress,
+    };
+  }
+
+  String _resolveAgentFileDiffText({
+    required Map<String, dynamic> existingCardData,
+    required Map<String, dynamic> source,
+    required String outputText,
+    required String progress,
+    required String summary,
+  }) {
+    final current = extractCodexDiffText(
+      source,
+      outputText: outputText,
+      progress: progress,
+      summary: summary,
+    );
+    if (current != null && current.trim().isNotEmpty) {
+      return current;
+    }
+    return (existingCardData['diffText'] ?? '').toString().trim();
   }
 
   String _resolveToolStatus(AgentToolEventData event) {

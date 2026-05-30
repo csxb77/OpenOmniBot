@@ -191,6 +191,99 @@ void main() {
     expect(find.text('工作区'), findsOneWidget);
   });
 
+  testWidgets('file diff card expands diff inline instead of opening sheet', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'status': 'success',
+              'displayName': '文件修改',
+              'toolTitle': '更新 main.dart',
+              'toolType': 'file',
+              'summary': '1 个文件 · +2 -1',
+              'changedFiles': 1,
+              'additions': 2,
+              'deletions': 1,
+              'filePath': 'lib/main.dart',
+              'diffText': '''
+diff --git a/lib/main.dart b/lib/main.dart
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,3 +1,4 @@
+-old line
++new line
++another line
+ same line
+''',
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('更新 '), findsOneWidget);
+    expect(find.text('main.dart'), findsOneWidget);
+    expect(find.textContaining('+2 -1', findRichText: true), findsOneWidget);
+    expect(find.textContaining('-old line', findRichText: true), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('inline-file-diff-title-toggle')),
+    );
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.byKey(kAgentToolDetailSheetKey), findsNothing);
+    expect(find.text('lib/main.dart'), findsNothing);
+    expect(
+      find.textContaining('-old line', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('+new line', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('same line', findRichText: true),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('file diff title filename tap shows full path tooltip', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'status': 'success',
+              'displayName': '文件修改',
+              'toolTitle': '更新 main.dart',
+              'toolType': 'file',
+              'filePath': 'lib/main.dart',
+              'diffText': '''
+diff --git a/lib/main.dart b/lib/main.dart
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,2 +1,2 @@
+-old line
++new line
+''',
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('main.dart'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('lib/main.dart'), findsOneWidget);
+    expect(find.textContaining('-old line', findRichText: true), findsNothing);
+  });
+
   testWidgets('tool card title follows appearance text color', (tester) async {
     const customTextColor = Color(0xFFEEE6D7);
 

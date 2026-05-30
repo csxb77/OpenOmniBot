@@ -62,7 +62,11 @@ class CodexAppServerManager private constructor(
             "remoteEnabled" to runtime.remoteConfig.enabled,
             "remoteBridgeUrl" to runtime.remoteConfig.bridgeUrl,
             "remoteCwd" to runtime.remoteConfig.cwd,
-            "remoteConfigured" to runtime.remoteConfig.isConfigured
+            "remoteConfigured" to runtime.remoteConfig.isConfigured,
+            "remoteTransport" to probe.details["appServerTransport"],
+            "remoteDesktopAvailable" to probe.details["desktopAppServerAvailable"],
+            "remoteActiveConnections" to probe.details["activeConnections"],
+            "remoteUptimeMs" to probe.details["uptimeMs"]
         )
     }
 
@@ -861,7 +865,8 @@ class CodexAppServerManager private constructor(
         return CodexProbe(
             ready = probe.ready,
             version = probe.version,
-            error = probe.error
+            error = probe.error,
+            details = probe.details
         )
     }
 
@@ -931,7 +936,8 @@ class CodexAppServerManager private constructor(
     private data class CodexProbe(
         val ready: Boolean,
         val version: String?,
-        val error: String?
+        val error: String?,
+        val details: Map<String, Any?> = emptyMap()
     )
 
     companion object {
