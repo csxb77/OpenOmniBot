@@ -6,6 +6,7 @@ import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_transcript.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/app_background_service.dart';
+import 'package:ui/services/codex_diff_parser.dart';
 import 'package:ui/theme/theme_context.dart';
 
 class AgentToolSummaryCard extends StatefulWidget {
@@ -150,6 +151,7 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     required Color statusTagBackgroundColor,
     required Color statusTagTextColor,
   }) {
+    final diffStatLabel = _resolveDiffStatLabel(cardData);
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(999),
@@ -181,6 +183,10 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
                           style: titleStyle,
                         ),
                 ),
+                if (diffStatLabel != null) ...[
+                  const SizedBox(width: 8),
+                  _DiffStatBadge(label: diffStatLabel),
+                ],
                 const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -204,6 +210,54 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+String? _resolveDiffStatLabel(Map<String, dynamic> cardData) {
+  if ((cardData['toolType'] ?? '').toString() != 'file') {
+    return null;
+  }
+  final additions = _asNonNegativeInt(cardData['additions']);
+  final deletions = _asNonNegativeInt(cardData['deletions']);
+  final changedFiles = _asNonNegativeInt(cardData['changedFiles']);
+  if (changedFiles <= 0 && additions <= 0 && deletions <= 0) {
+    return null;
+  }
+  return formatCodexDiffStat(additions: additions, deletions: deletions);
+}
+
+int _asNonNegativeInt(dynamic value) {
+  final parsed = value is int
+      ? value
+      : value is num
+      ? value.toInt()
+      : int.tryParse(value?.toString() ?? '') ?? 0;
+  return parsed < 0 ? 0 : parsed;
+}
+
+class _DiffStatBadge extends StatelessWidget {
+  const _DiffStatBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: context.omniPalette.textSecondary,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+          height: 1,
         ),
       ),
     );

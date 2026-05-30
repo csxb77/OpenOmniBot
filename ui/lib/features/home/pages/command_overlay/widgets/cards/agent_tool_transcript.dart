@@ -4,8 +4,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
+import 'package:ui/features/home/pages/command_overlay/widgets/cards/codex_diff_viewer.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
 import 'package:ui/services/chat_detail_sheet_preferences.dart';
+import 'package:ui/services/codex_diff_parser.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
@@ -148,6 +150,9 @@ IconData resolveAgentToolStatusIcon(String status, String toolType) {
   }
   if (toolType == 'browser') {
     return Icons.language_rounded;
+  }
+  if (toolType == 'file') {
+    return Icons.edit_note_rounded;
   }
   if (toolType == 'calendar') {
     return Icons.calendar_month_rounded;
@@ -793,13 +798,17 @@ class _AgentToolDetailSheetFrameState
     if (heightFactor == null) {
       return;
     }
-    unawaited(
-      ChatDetailSheetPreferences.saveHeightFactor(
-        heightFactor,
-        min: _minHeightFactor,
-        max: _maxHeightFactor,
-      ),
-    );
+    try {
+      unawaited(
+        ChatDetailSheetPreferences.saveHeightFactor(
+          heightFactor,
+          min: _minHeightFactor,
+          max: _maxHeightFactor,
+        ).catchError((_) {}),
+      );
+    } catch (_) {
+      // Storage may not be initialized in tests or cold-start edge cases.
+    }
   }
 
   @override
@@ -812,12 +821,7 @@ class _AgentToolDetailSheetFrameState
           mediaQuery.viewInsets.bottom,
     );
     final heightFactor =
-        _heightFactor ??
-        ChatDetailSheetPreferences.resolveHeightFactor(
-          fallback: _initialHeightFactor(mediaQuery.size.height),
-          min: _minHeightFactor,
-          max: _maxHeightFactor,
-        );
+        _heightFactor ?? _resolveStoredHeightFactor(mediaQuery.size.height);
     const borderRadius = BorderRadius.vertical(top: Radius.circular(24));
 
     return SafeArea(
@@ -870,6 +874,18 @@ class _AgentToolDetailSheetFrameState
       ),
     );
   }
+
+  double _resolveStoredHeightFactor(double viewportHeight) {
+    try {
+      return ChatDetailSheetPreferences.resolveHeightFactor(
+        fallback: _initialHeightFactor(viewportHeight),
+        min: _minHeightFactor,
+        max: _maxHeightFactor,
+      );
+    } catch (_) {
+      return _initialHeightFactor(viewportHeight);
+    }
+  }
 }
 
 class _AgentToolDetailContent extends StatelessWidget {
@@ -895,7 +911,9 @@ class _AgentToolDetailContent extends StatelessWidget {
     final typeLabel = resolveAgentToolTypeLabel(cardData);
     final status = (cardData['status'] ?? 'running').toString();
     final statusLabel = resolveAgentToolStatusLabel(cardData);
-    final detailSpan = _buildDetailTextSpan(transcript);
+    final diffSummary = _resolveDiffSummary(cardData);
+    final isDiffView = diffSummary?.files.isNotEmpty == true;
+    final detailSpan = isDiffView ? null : _buildDetailTextSpan(transcript);
 
     return Column(
       children: [
@@ -925,14 +943,36 @@ class _AgentToolDetailContent extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: SingleChildScrollView(
-            padding: scrollPadding,
-            child: SelectableText.rich(detailSpan),
-          ),
+          child: isDiffView
+              ? CodexDiffViewer(summary: diffSummary!, padding: scrollPadding)
+              : SingleChildScrollView(
+                  padding: scrollPadding,
+                  child: SelectableText.rich(detailSpan!),
+                ),
         ),
       ],
     );
   }
+}
+
+CodexDiffSummary? _resolveDiffSummary(Map<String, dynamic> cardData) {
+  final diffText = (cardData['diffText'] ?? '').toString();
+  final extracted = extractCodexDiffText(
+    <String, dynamic>{
+      ...cardData,
+      if (diffText.isNotEmpty) 'diffText': diffText,
+    },
+    outputText: diffText.isNotEmpty
+        ? diffText
+        : resolveAgentToolTerminalOutput(cardData),
+    progress: (cardData['progress'] ?? '').toString(),
+    summary: (cardData['summary'] ?? '').toString(),
+  );
+  if (extracted == null || extracted.trim().isEmpty) {
+    return null;
+  }
+  final summary = parseCodexDiffText(extracted);
+  return summary.files.isEmpty ? null : summary;
 }
 
 class _DialogMetaTag extends StatelessWidget {

@@ -191,6 +191,32 @@ void main() {
     expect(find.text('工作区'), findsOneWidget);
   });
 
+  testWidgets('file diff card surfaces compact diff stats', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'status': 'running',
+              'displayName': '文件修改',
+              'toolTitle': '更新 main.dart',
+              'toolType': 'file',
+              'summary': '1 个文件 · +2 -1',
+              'changedFiles': 1,
+              'additions': 2,
+              'deletions': 1,
+              'filePath': 'lib/main.dart',
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('更新 main.dart'), findsOneWidget);
+    expect(find.text('文件'), findsOneWidget);
+    expect(find.text('+2 -1'), findsOneWidget);
+  });
+
   testWidgets('tool card title follows appearance text color', (tester) async {
     const customTextColor = Color(0xFFEEE6D7);
 

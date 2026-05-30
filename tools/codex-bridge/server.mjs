@@ -15,7 +15,10 @@ import { WebSocketServer } from 'ws';
 const require = createRequire(import.meta.url);
 const qrcode = require('qrcode-terminal');
 const WebSocketClient = require('ws');
+const bridgePackage = require('./package.json');
 const isWindows = process.platform === 'win32';
+const bridgeStartedAt = Date.now();
+let activeConnections = 0;
 
 function printHelp() {
   console.log(`Omnibot Codex Bridge
@@ -1391,14 +1394,19 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       ok: transportReady,
       ready: transportReady,
+      bridgeVersion: bridgePackage.version || null,
       codexVersion: version.version || null,
       codexBin,
       resolvedCodexBin: version.resolvedCodexBin || codexBin,
       appServerTransport,
+      transportReady,
       desktopAppServerSocket: desktopSocketPath,
       desktopAppServerAvailable: desktopSocketAvailable,
       cwd: bridgeCwd,
       authRequired: Boolean(token),
+      activeConnections,
+      uptimeMs: Date.now() - bridgeStartedAt,
+      platform: process.platform,
       error: version.error || null,
     });
     return;
@@ -1517,6 +1525,8 @@ wss.on('connection', async (ws, req) => {
   let desktopAppServer = null;
   let activeTransport = null;
   let initialized = false;
+  let connectionCounted = true;
+  activeConnections += 1;
 
   function send(type, extra = {}) {
     if (ws.readyState === 1) {
@@ -1711,8 +1721,16 @@ wss.on('connection', async (ws, req) => {
     });
   });
 
-  ws.on('close', closeCodex);
-  ws.on('error', closeCodex);
+  function closeConnection() {
+    if (connectionCounted) {
+      connectionCounted = false;
+      activeConnections = Math.max(0, activeConnections - 1);
+    }
+    closeCodex();
+  }
+
+  ws.on('close', closeConnection);
+  ws.on('error', closeConnection);
 });
 
 server.listen(port, host);
@@ -1721,6 +1739,7 @@ const advertised = advertisedHosts();
 const primaryBridgeUrl = bridgeWebSocketUrl(advertised[0].address);
 const payload = quickConnectPayload(primaryBridgeUrl);
 console.log(`\n${color.heading('Omnibot Codex bridge')}`);
+logField('Bridge version', bridgePackage.version || 'unknown', color.accent);
 logField('Listening', `ws://${host}:${port}/codex`, color.green);
 logField('Health check', `http://${host}:${port}/health`, color.prompt);
 logField('Directory browser', `http://${host}:${port}/fs/list`, color.prompt);

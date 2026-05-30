@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:ui/features/home/pages/codex/codex_remote_directory_picker.dart';
+import 'package:ui/features/home/pages/codex/codex_remote_workspace_browser.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/conversation_model.dart';
@@ -22,7 +25,10 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
   CodexStatus _status = CodexStatus.disconnected;
   String? _error;
   bool _isLoading = true;
+  bool _isStartingSession = false;
+  bool _isSwitchingWorkspace = false;
   String? _openingThreadId;
+  _CodexSessionFilter _filter = _CodexSessionFilter.all;
   StreamSubscription<Map<String, dynamic>>? _codexEventSubscription;
   Timer? _remotePollTimer;
   Timer? _eventRefreshDebounce;
@@ -86,16 +92,27 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
         _error = null;
       });
     }
+    CodexStatus? lastStatus;
     try {
       var status = await CodexAppServerService.status();
+      lastStatus = status;
       if (status.ready && !status.connected) {
         status = await CodexAppServerService.connect();
+        lastStatus = status;
       }
       if (!status.ready) {
-        throw StateError(
-          status.error ??
-              (_isEnglish ? 'Codex runtime is unavailable' : 'Codex 运行时不可用'),
-        );
+        if (!mounted) return;
+        setState(() {
+          _status = status;
+          if (showLoading) {
+            _sessions = const <_CodexSessionSummary>[];
+          }
+          _isLoading = false;
+          _error =
+              status.error ??
+              (_isEnglish ? 'Codex runtime is unavailable' : 'Codex 运行时不可用');
+        });
+        return;
       }
       final payloads = <Map<String, dynamic>>[];
       if (status.runtime == 'remote' || status.remoteEnabled) {
@@ -127,6 +144,12 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
           if (a.active != b.active) {
             return a.active ? -1 : 1;
           }
+          if (a.loaded != b.loaded) {
+            return a.loaded ? -1 : 1;
+          }
+          if (a.archived != b.archived) {
+            return a.archived ? 1 : -1;
+          }
           final byUpdatedAt = (b.updatedAtMs ?? 0).compareTo(
             a.updatedAtMs ?? 0,
           );
@@ -143,6 +166,9 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        if (lastStatus != null) {
+          _status = lastStatus;
+        }
         _isLoading = false;
         _error = error.toString();
       });
@@ -214,6 +240,424 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
     }
   }
 
+  Future<void> _startRemoteSession() async {
+    if (_isStartingSession || !_isRemoteRuntime) {
+      return;
+    }
+    setState(() {
+      _isStartingSession = true;
+    });
+    try {
+      CodexStatus status = _status;
+      if (!status.connected) {
+        status = await CodexAppServerService.connect();
+      }
+      final cwd = _workspacePathForStatus(status);
+      final response = await CodexAppServerService.startThread(
+        cwd: cwd.isEmpty ? null : cwd,
+      );
+      final threadId = _threadIdFromResponse(response);
+      if (threadId == null) {
+        throw StateError(
+          _isEnglish
+              ? 'Codex did not return a thread id'
+              : 'Codex 未返回 thread id',
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _status = status;
+      });
+      GoRouterManager.push(
+        '/home/chat',
+        extra: ConversationThreadTarget.codexSession(
+          threadId: threadId,
+          runtime: 'remote',
+          requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+        ),
+      );
+      unawaited(_loadSessions(showLoading: false));
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        _isEnglish
+            ? 'Failed to start remote session: $error'
+            : '创建远程 session 失败：$error',
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStartingSession = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _switchRemoteWorkspace() async {
+    if (_isSwitchingWorkspace || !_isRemoteRuntime) {
+      return;
+    }
+    setState(() {
+      _isSwitchingWorkspace = true;
+    });
+    try {
+      final config = await CodexAppServerService.readLocalConfig();
+      if (!mounted) return;
+      if (!config.remoteEnabled || config.remoteBridgeUrl.trim().isEmpty) {
+        showToast(
+          _isEnglish
+              ? 'Remote Codex Bridge is not configured'
+              : '远程 Codex Bridge 尚未配置',
+          type: ToastType.warning,
+        );
+        return;
+      }
+      final selected = await showCodexRemoteDirectoryPicker(
+        context: context,
+        remoteBridgeUrl: config.remoteBridgeUrl,
+        remoteBridgeToken: config.remoteBridgeToken,
+        initialPath: config.remoteCwd,
+      );
+      if (!mounted || selected == null || selected.trim().isEmpty) {
+        return;
+      }
+      final nextCwd = selected.trim();
+      if (nextCwd == config.remoteCwd.trim()) {
+        return;
+      }
+      await CodexAppServerService.writeLocalConfig(
+        baseUrl: config.baseUrl,
+        model: config.model,
+        apiKey: config.apiKey,
+        remoteEnabled: true,
+        remoteBridgeUrl: config.remoteBridgeUrl,
+        remoteBridgeToken: config.remoteBridgeToken,
+        remoteCwd: nextCwd,
+      );
+      final status = await CodexAppServerService.status();
+      if (!mounted) return;
+      setState(() {
+        _status = status;
+      });
+      showToast(
+        _isEnglish
+            ? 'Workspace switched to ${_lastPathSegment(nextCwd) ?? nextCwd}'
+            : '已切换到 ${_lastPathSegment(nextCwd) ?? nextCwd}',
+        type: ToastType.success,
+      );
+      unawaited(_loadSessions(showLoading: false));
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        _isEnglish ? 'Failed to switch workspace: $error' : '切换工作目录失败：$error',
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSwitchingWorkspace = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showSessionActions(_CodexSessionSummary session) async {
+    final action = await showModalBottomSheet<_CodexSessionAction>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.omniPalette.surfacePrimary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        final palette = context.omniPalette;
+        final maxHeight = MediaQuery.sizeOf(sheetContext).height * 0.82;
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: palette.borderStrong,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      session.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'PingFang SC',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSessionActionTile(
+                      sheetContext,
+                      icon: Icons.open_in_new_rounded,
+                      label: _isEnglish ? 'Open session' : '打开 Session',
+                      action: _CodexSessionAction.open,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSessionActionTile(
+                      sheetContext,
+                      icon: Icons.folder_open_rounded,
+                      label: _isEnglish ? 'Open workspace' : '打开工作区',
+                      action: _CodexSessionAction.workspace,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSessionActionTile(
+                      sheetContext,
+                      icon: Icons.drive_file_rename_outline_rounded,
+                      label: _isEnglish ? 'Rename' : '重命名',
+                      action: _CodexSessionAction.rename,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSessionActionTile(
+                      sheetContext,
+                      icon: session.archived
+                          ? Icons.unarchive_outlined
+                          : Icons.archive_outlined,
+                      label: session.archived
+                          ? (_isEnglish ? 'Unarchive' : '取消归档')
+                          : (_isEnglish ? 'Archive' : '归档'),
+                      action: session.archived
+                          ? _CodexSessionAction.unarchive
+                          : _CodexSessionAction.archive,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildSessionActionTile(
+                      sheetContext,
+                      icon: Icons.copy_rounded,
+                      label: _isEnglish ? 'Copy thread id' : '复制 Thread ID',
+                      action: _CodexSessionAction.copyThreadId,
+                    ),
+                    if (session.cwd.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _buildSessionActionTile(
+                        sheetContext,
+                        icon: Icons.content_copy_rounded,
+                        label: _isEnglish ? 'Copy workspace path' : '复制工作区路径',
+                        action: _CodexSessionAction.copyCwd,
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      tileColor: palette.surfaceSecondary,
+                      leading: Icon(
+                        Icons.close_rounded,
+                        color: palette.textPrimary,
+                      ),
+                      title: Text(
+                        _isEnglish ? 'Cancel' : '取消',
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontWeight: FontWeight.w500,
+                          fontFamily: 'PingFang SC',
+                        ),
+                      ),
+                      onTap: () => Navigator.of(sheetContext).pop(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _CodexSessionAction.open:
+        await _openSession(session);
+      case _CodexSessionAction.workspace:
+        await _openSessionWorkspace(session);
+      case _CodexSessionAction.rename:
+        await _renameSession(session);
+      case _CodexSessionAction.archive:
+        await _setArchived(session, archived: true);
+      case _CodexSessionAction.unarchive:
+        await _setArchived(session, archived: false);
+      case _CodexSessionAction.copyThreadId:
+        await _copyText(
+          session.threadId,
+          _isEnglish ? 'Thread id copied' : '已复制 Thread ID',
+        );
+      case _CodexSessionAction.copyCwd:
+        await _copyText(
+          session.cwd,
+          _isEnglish ? 'Workspace path copied' : '已复制工作区路径',
+        );
+    }
+  }
+
+  Widget _buildSessionActionTile(
+    BuildContext sheetContext, {
+    required IconData icon,
+    required String label,
+    required _CodexSessionAction action,
+    bool destructive = false,
+  }) {
+    final palette = context.omniPalette;
+    final color = destructive ? const Color(0xFFE53935) : palette.textPrimary;
+    return ListTile(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      tileColor: palette.surfaceSecondary,
+      leading: Icon(icon, color: color),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w600,
+          fontFamily: 'PingFang SC',
+        ),
+      ),
+      onTap: () => Navigator.of(sheetContext).pop(action),
+    );
+  }
+
+  Future<void> _renameSession(_CodexSessionSummary session) async {
+    final nextName = (await AppDialog.input(
+      context,
+      title: _isEnglish ? 'Rename session' : '重命名 Session',
+      hintText: _isEnglish ? 'Session name' : 'Session 名称',
+      initialValue: session.title,
+      confirmText: _isEnglish ? 'Save' : '保存',
+      cancelText: _isEnglish ? 'Cancel' : '取消',
+    ))?.trim();
+    if (!mounted || nextName == null) return;
+    if (nextName.isEmpty) {
+      showToast(
+        _isEnglish ? 'Name is required' : '名称不能为空',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (nextName == session.title) {
+      return;
+    }
+    try {
+      await CodexAppServerService.setThreadName(
+        threadId: session.threadId,
+        name: nextName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _sessions = _sessions
+            .map(
+              (entry) => entry.threadId == session.threadId
+                  ? entry.copyWith(title: nextName)
+                  : entry,
+            )
+            .toList(growable: false);
+      });
+      showToast(
+        _isEnglish ? 'Session renamed' : 'Session 已重命名',
+        type: ToastType.success,
+      );
+      unawaited(_loadSessions(showLoading: false));
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        _isEnglish ? 'Rename failed: $error' : '重命名失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
+  Future<void> _setArchived(
+    _CodexSessionSummary session, {
+    required bool archived,
+  }) async {
+    try {
+      if (archived) {
+        await CodexAppServerService.archiveThread(threadId: session.threadId);
+      } else {
+        await CodexAppServerService.unarchiveThread(threadId: session.threadId);
+      }
+      if (!mounted) return;
+      setState(() {
+        _sessions = _sessions
+            .map(
+              (entry) => entry.threadId == session.threadId
+                  ? entry.copyWith(archived: archived)
+                  : entry,
+            )
+            .toList(growable: false);
+      });
+      showToast(
+        archived
+            ? (_isEnglish ? 'Session archived' : 'Session 已归档')
+            : (_isEnglish ? 'Session restored' : 'Session 已恢复'),
+        type: ToastType.success,
+      );
+      unawaited(_loadSessions(showLoading: false));
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        archived
+            ? (_isEnglish ? 'Archive failed: $error' : '归档失败：$error')
+            : (_isEnglish ? 'Unarchive failed: $error' : '取消归档失败：$error'),
+        type: ToastType.error,
+      );
+    }
+  }
+
+  Future<void> _copyText(String text, String successMessage) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    showToast(successMessage, type: ToastType.success);
+  }
+
+  Future<void> _openSessionWorkspace(_CodexSessionSummary session) async {
+    try {
+      final config = await CodexAppServerService.readLocalConfig();
+      if (!mounted) return;
+      final workspacePath = session.cwd.trim().isNotEmpty
+          ? session.cwd.trim()
+          : config.remoteCwd.trim();
+      if (config.remoteBridgeUrl.trim().isEmpty || workspacePath.isEmpty) {
+        showToast(
+          _isEnglish ? 'Remote workspace is not configured' : '远程工作区尚未配置',
+          type: ToastType.warning,
+        );
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _CodexSessionWorkspacePage(
+            title: session.cwdLabel.isNotEmpty
+                ? session.cwdLabel
+                : (_isEnglish ? 'Remote workspace' : '远程工作区'),
+            workspacePath: workspacePath,
+            remoteBridgeUrl: config.remoteBridgeUrl,
+            remoteBridgeToken: config.remoteBridgeToken,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        _isEnglish ? 'Failed to open workspace: $error' : '打开工作区失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
   String get _title => _status.runtime == 'remote'
       ? (_isEnglish ? 'Remote Codex Sessions' : '远程 Codex Sessions')
       : (_isEnglish ? 'Local Codex Sessions' : '本地 Codex Sessions');
@@ -234,7 +678,7 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
-    if (_error != null) {
+    if (_error != null && !_isRemoteRuntime && _sessions.isEmpty) {
       return _CodexSessionsStateView(
         icon: Icons.error_outline_rounded,
         title: _isEnglish ? 'Unable to load sessions' : '无法加载 Sessions',
@@ -243,51 +687,390 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
         onAction: () => unawaited(_loadSessions()),
       );
     }
-    if (_sessions.isEmpty) {
-      return _CodexSessionsStateView(
-        icon: Icons.history_rounded,
-        title: _isEnglish ? 'No Codex sessions' : '暂无 Codex Sessions',
-        subtitle: _status.runtime == 'remote'
-            ? (_isEnglish
-                  ? 'The remote PC Bridge returned no sessions.'
-                  : '远程 PC Bridge 暂无可用 session。')
-            : (_isEnglish
-                  ? 'Local Codex returned no sessions.'
-                  : '本地 Codex 暂无可用 session。'),
-        actionLabel: _isEnglish ? 'Reload' : '刷新',
-        onAction: () => unawaited(_loadSessions()),
-      );
-    }
-    final palette = context.omniPalette;
-    return ListView.separated(
+    final visibleSessions = _filteredSessions;
+    return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
-      itemCount: _sessions.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final session = _sessions[index];
-        final opening = _openingThreadId == session.threadId;
-        return Material(
-          color: palette.surfacePrimary,
-          borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: opening ? null : () => unawaited(_openSession(session)),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-              child: Row(
+      children: [
+        _buildOverviewPanel(),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          _buildInlineState(
+            icon: Icons.error_outline_rounded,
+            title: _isEnglish ? 'Bridge unavailable' : 'Bridge 不可用',
+            subtitle: _error!,
+            actionLabel: _isEnglish ? 'Retry' : '重试',
+            onAction: () => unawaited(_loadSessions()),
+          ),
+        ],
+        const SizedBox(height: 12),
+        _buildFilterBar(),
+        const SizedBox(height: 10),
+        if (_sessions.isEmpty && _error == null)
+          _buildInlineState(
+            icon: Icons.history_rounded,
+            title: _isEnglish ? 'No Codex sessions' : '暂无 Codex Sessions',
+            subtitle: _status.runtime == 'remote'
+                ? (_isEnglish
+                      ? 'The remote PC Bridge returned no sessions.'
+                      : '远程 PC Bridge 暂无可用 session。')
+                : (_isEnglish
+                      ? 'Local Codex returned no sessions.'
+                      : '本地 Codex 暂无可用 session。'),
+          )
+        else if (_sessions.isNotEmpty && visibleSessions.isEmpty)
+          _buildInlineState(
+            icon: Icons.filter_alt_off_rounded,
+            title: _isEnglish
+                ? 'No sessions in this filter'
+                : '当前筛选下暂无 Session',
+            subtitle: _isEnglish
+                ? 'Switch filters or refresh after the bridge syncs.'
+                : '切换筛选，或等待 Bridge 同步后刷新。',
+          )
+        else
+          for (var index = 0; index < visibleSessions.length; index++) ...[
+            _buildSessionRow(session: visibleSessions[index]),
+            if (index != visibleSessions.length - 1) const SizedBox(height: 8),
+          ],
+      ],
+    );
+  }
+
+  List<_CodexSessionSummary> get _filteredSessions {
+    return _sessions
+        .where((session) {
+          return switch (_filter) {
+            _CodexSessionFilter.all => true,
+            _CodexSessionFilter.active =>
+              !session.archived && (session.active || session.loaded),
+            _CodexSessionFilter.recent =>
+              !session.archived && !session.active && !session.loaded,
+            _CodexSessionFilter.archived => session.archived,
+          };
+        })
+        .toList(growable: false);
+  }
+
+  Widget _buildOverviewPanel() {
+    final palette = context.omniPalette;
+    final stats = _CodexSessionStats.from(_sessions);
+    final isRemote = _isRemoteRuntime;
+    final ready = _status.ready;
+    final workspacePath = _workspacePathForStatus(_status);
+    final bridgeLabel = _bridgeLabel(_status.remoteBridgeUrl);
+    final transport = _status.remoteTransport?.trim() ?? '';
+    final activeConnections = _status.remoteActiveConnections;
+    final uptimeLabel = _formatUptime(_status.remoteUptimeMs);
+    return Material(
+      color: palette.surfacePrimary,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color:
+                        (isRemote
+                                ? palette.accentPrimary
+                                : palette.textSecondary)
+                            .withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isRemote ? Icons.hub_rounded : Icons.terminal_rounded,
+                    size: 19,
+                    color: isRemote
+                        ? palette.accentPrimary
+                        : palette.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isRemote
+                            ? (_isEnglish ? 'Remote PC Bridge' : '远程 PC Bridge')
+                            : (_isEnglish
+                                  ? 'Local Alpine Codex'
+                                  : '本地 Alpine Codex'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          height: 1.25,
+                          fontFamily: 'PingFang SC',
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        [
+                          ready
+                              ? (_isEnglish ? 'Ready' : '可用')
+                              : (_isEnglish ? 'Offline' : '离线'),
+                          if (_status.connected)
+                            _isEnglish ? 'connected' : '已连接',
+                          if (bridgeLabel.isNotEmpty) bridgeLabel,
+                          if (transport.isNotEmpty) transport,
+                          if (activeConnections != null)
+                            _isEnglish
+                                ? '$activeConnections clients'
+                                : '$activeConnections 个连接',
+                          if (uptimeLabel.isNotEmpty) uptimeLabel,
+                        ].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 11.5,
+                          height: 1.35,
+                          fontFamily: 'PingFang SC',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _StatusPill(
+                  label: ready
+                      ? (_isEnglish ? 'Live' : '在线')
+                      : (_isEnglish ? 'Down' : '不可用'),
+                  color: ready
+                      ? const Color(0xFF1F9D55)
+                      : const Color(0xFFE53935),
+                ),
+              ],
+            ),
+            if (workspacePath.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildWorkspaceLine(workspacePath),
+            ],
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetricChip(
+                  label: _isEnglish ? 'Sessions' : '总数',
+                  value: '${stats.total}',
+                ),
+                _MetricChip(
+                  label: _isEnglish ? 'Running' : '运行中',
+                  value: '${stats.active}',
+                ),
+                _MetricChip(
+                  label: _isEnglish ? 'Loaded' : '已载入',
+                  value: '${stats.loaded}',
+                ),
+                _MetricChip(
+                  label: _isEnglish ? 'Archived' : '已归档',
+                  value: '${stats.archived}',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (isRemote)
+                  FilledButton.icon(
+                    key: const Key('codex-sessions-new-remote-session-button'),
+                    onPressed: ready && !_isStartingSession
+                        ? () => unawaited(_startRemoteSession())
+                        : null,
+                    icon: _isStartingSession
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_rounded, size: 17),
+                    label: Text(_isEnglish ? 'New' : '新建'),
+                  ),
+                if (isRemote)
+                  OutlinedButton.icon(
+                    key: const Key('codex-sessions-switch-workspace-button'),
+                    onPressed: ready && !_isSwitchingWorkspace
+                        ? () => unawaited(_switchRemoteWorkspace())
+                        : null,
+                    icon: _isSwitchingWorkspace
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.folder_open_rounded, size: 17),
+                    label: Text(_isEnglish ? 'Workspace' : '工作区'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () => GoRouterManager.push('/home/codex_setting'),
+                  icon: const Icon(Icons.tune_rounded, size: 17),
+                  label: Text(_isEnglish ? 'Settings' : '设置'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkspaceLine(String workspacePath) {
+    final palette = context.omniPalette;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: palette.surfaceSecondary,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.folder_outlined, size: 16, color: palette.textTertiary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              workspacePath,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 11.5,
+                height: 1.3,
+                fontFamily: 'PingFang SC',
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+            padding: EdgeInsets.zero,
+            tooltip: _isEnglish ? 'Copy path' : '复制路径',
+            onPressed: () => unawaited(
+              _copyText(
+                workspacePath,
+                _isEnglish ? 'Workspace path copied' : '已复制工作区路径',
+              ),
+            ),
+            icon: Icon(
+              Icons.copy_rounded,
+              size: 15,
+              color: palette.textTertiary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterBar() {
+    final stats = _CodexSessionStats.from(_sessions);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildFilterChip(
+            filter: _CodexSessionFilter.all,
+            label: _isEnglish ? 'All ${stats.total}' : '全部 ${stats.total}',
+          ),
+          const SizedBox(width: 8),
+          _buildFilterChip(
+            filter: _CodexSessionFilter.active,
+            label: _isEnglish
+                ? 'Live ${stats.active + stats.loaded}'
+                : '在线 ${stats.active + stats.loaded}',
+          ),
+          const SizedBox(width: 8),
+          _buildFilterChip(
+            filter: _CodexSessionFilter.recent,
+            label: _isEnglish ? 'Recent ${stats.recent}' : '最近 ${stats.recent}',
+          ),
+          const SizedBox(width: 8),
+          _buildFilterChip(
+            filter: _CodexSessionFilter.archived,
+            label: _isEnglish
+                ? 'Archived ${stats.archived}'
+                : '已归档 ${stats.archived}',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required _CodexSessionFilter filter,
+    required String label,
+  }) {
+    final palette = context.omniPalette;
+    final selected = _filter == filter;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      labelStyle: TextStyle(
+        color: selected ? Colors.white : palette.textSecondary,
+        fontSize: 12,
+        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        fontFamily: 'PingFang SC',
+      ),
+      selectedColor: palette.accentPrimary,
+      backgroundColor: palette.surfacePrimary,
+      side: BorderSide(
+        color: selected
+            ? palette.accentPrimary
+            : palette.borderSubtle.withValues(alpha: 0.9),
+      ),
+      onSelected: (_) {
+        setState(() {
+          _filter = filter;
+        });
+      },
+    );
+  }
+
+  Widget _buildSessionRow({required _CodexSessionSummary session}) {
+    final palette = context.omniPalette;
+    final opening = _openingThreadId == session.threadId;
+    final statusColor = _statusColorForSession(session);
+    return Material(
+      color: palette.surfacePrimary,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: opening ? null : () => unawaited(_openSession(session)),
+        onLongPress: () => unawaited(_showSessionActions(session)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
                   Container(
                     width: 34,
                     height: 34,
                     decoration: BoxDecoration(
-                      color: palette.accentPrimary.withValues(alpha: 0.12),
+                      color: statusColor.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      Icons.code_rounded,
+                      session.archived
+                          ? Icons.inventory_2_outlined
+                          : Icons.code_rounded,
                       size: 18,
-                      color: palette.accentPrimary,
+                      color: statusColor,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -295,59 +1078,195 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          session.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            height: 1.35,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: statusColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 7),
+                            Expanded(
+                              child: Text(
+                                session.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.35,
+                                  fontFamily: 'PingFang SC',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          [
-                            if (session.archived)
-                              LegacyTextLocalizer.localize('已归档'),
-                            if (session.active)
-                              LegacyTextLocalizer.localize('活动中'),
-                            if (!session.active &&
-                                session.statusLabel.isNotEmpty)
-                              session.statusLabel,
-                            if (session.cwdLabel.isNotEmpty) session.cwdLabel,
-                            if (session.timeLabel.isNotEmpty) session.timeLabel,
-                          ].join(' · '),
+                          _sessionMetaLine(session),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: palette.textSecondary,
                             fontSize: 11,
                             height: 1.35,
+                            fontFamily: 'PingFang SC',
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 6),
                   opening
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Icon(
-                          Icons.chevron_right_rounded,
-                          color: palette.textTertiary,
+                      : IconButton(
+                          visualDensity: VisualDensity.compact,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 34,
+                            height: 34,
+                          ),
+                          padding: EdgeInsets.zero,
+                          tooltip: _isEnglish
+                              ? 'Session actions'
+                              : 'Session 操作',
+                          onPressed: () =>
+                              unawaited(_showSessionActions(session)),
+                          icon: Icon(
+                            Icons.more_horiz_rounded,
+                            color: palette.textTertiary,
+                          ),
                         ),
                 ],
               ),
+              if (session.preview.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  session.preview,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.textSecondary,
+                    fontSize: 12,
+                    height: 1.38,
+                    fontFamily: 'PingFang SC',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _StatusPill(
+                    label: session.statusLabel,
+                    color: statusColor,
+                    compact: true,
+                  ),
+                  if (session.cwdLabel.isNotEmpty)
+                    _SessionTag(
+                      icon: Icons.folder_outlined,
+                      label: session.cwdLabel,
+                    ),
+                  if (session.branch.isNotEmpty)
+                    _SessionTag(
+                      icon: Icons.account_tree_outlined,
+                      label: session.branch,
+                    ),
+                  if (session.model.isNotEmpty)
+                    _SessionTag(
+                      icon: Icons.memory_rounded,
+                      label: session.model,
+                    ),
+                  if (session.timeLabel.isNotEmpty)
+                    _SessionTag(
+                      icon: Icons.schedule_rounded,
+                      label: session.timeLabel,
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInlineState({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    final palette = context.omniPalette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 36),
+      child: Column(
+        children: [
+          Icon(icon, size: 30, color: palette.textTertiary),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'PingFang SC',
             ),
           ),
-        );
-      },
+          const SizedBox(height: 5),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 12,
+              height: 1.45,
+              fontFamily: 'PingFang SC',
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: onAction,
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: Text(actionLabel),
+            ),
+          ],
+        ],
+      ),
     );
+  }
+
+  String _sessionMetaLine(_CodexSessionSummary session) {
+    return [
+      if (session.archived) LegacyTextLocalizer.localize('已归档'),
+      if (session.cwd.isNotEmpty) session.cwd,
+      if (session.timeLabel.isNotEmpty) session.timeLabel,
+      if (session.threadId.isNotEmpty) _shortThreadId(session.threadId),
+    ].join(' · ');
+  }
+
+  Color _statusColorForSession(_CodexSessionSummary session) {
+    if (session.archived) {
+      return context.omniPalette.textTertiary;
+    }
+    if (session.active) {
+      return const Color(0xFF1F9D55);
+    }
+    if (session.loaded) {
+      return context.omniPalette.accentPrimary;
+    }
+    return context.omniPalette.textSecondary;
   }
 }
 
@@ -410,6 +1329,211 @@ class _CodexSessionsStateView extends StatelessWidget {
   }
 }
 
+class _CodexSessionWorkspacePage extends StatelessWidget {
+  const _CodexSessionWorkspacePage({
+    required this.title,
+    required this.workspacePath,
+    required this.remoteBridgeUrl,
+    required this.remoteBridgeToken,
+  });
+
+  final String title;
+  final String workspacePath;
+  final String remoteBridgeUrl;
+  final String remoteBridgeToken;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    return Scaffold(
+      backgroundColor: palette.pageBackground,
+      appBar: CommonAppBar(title: title, primary: true),
+      body: SafeArea(
+        top: false,
+        child: CodexRemoteWorkspaceBrowser(
+          workspacePath: workspacePath,
+          remoteBridgeUrl: remoteBridgeUrl,
+          remoteBridgeToken: remoteBridgeToken,
+        ),
+      ),
+    );
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: palette.surfaceSecondary,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: palette.textPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'PingFang SC',
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              fontFamily: 'PingFang SC',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.color,
+    this.compact = false,
+  });
+
+  final String label;
+  final Color color;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 8,
+        vertical: compact ? 3 : 4,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color,
+          fontSize: compact ? 10.5 : 11,
+          fontWeight: FontWeight.w700,
+          height: 1.2,
+          fontFamily: 'PingFang SC',
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionTag extends StatelessWidget {
+  const _SessionTag({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: palette.surfaceSecondary,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: palette.textTertiary),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 10.5,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'PingFang SC',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _CodexSessionFilter { all, active, recent, archived }
+
+enum _CodexSessionAction {
+  open,
+  workspace,
+  rename,
+  archive,
+  unarchive,
+  copyThreadId,
+  copyCwd,
+}
+
+class _CodexSessionStats {
+  const _CodexSessionStats({
+    required this.total,
+    required this.active,
+    required this.loaded,
+    required this.archived,
+    required this.recent,
+  });
+
+  final int total;
+  final int active;
+  final int loaded;
+  final int archived;
+  final int recent;
+
+  factory _CodexSessionStats.from(List<_CodexSessionSummary> sessions) {
+    final active = sessions
+        .where((session) => !session.archived && session.active)
+        .length;
+    final loaded = sessions
+        .where(
+          (session) => !session.archived && session.loaded && !session.active,
+        )
+        .length;
+    final archived = sessions.where((session) => session.archived).length;
+    final recent = sessions
+        .where(
+          (session) => !session.archived && !session.active && !session.loaded,
+        )
+        .length;
+    return _CodexSessionStats(
+      total: sessions.length,
+      active: active,
+      loaded: loaded,
+      archived: archived,
+      recent: recent,
+    );
+  }
+}
+
 class _CodexSessionSummary {
   const _CodexSessionSummary({
     required this.threadId,
@@ -419,6 +1543,11 @@ class _CodexSessionSummary {
     required this.archived,
     required this.status,
     required this.active,
+    required this.loaded,
+    this.preview = '',
+    this.model = '',
+    this.branch = '',
+    this.sourceKind = '',
   });
 
   final String threadId;
@@ -428,6 +1557,40 @@ class _CodexSessionSummary {
   final bool archived;
   final String status;
   final bool active;
+  final bool loaded;
+  final String preview;
+  final String model;
+  final String branch;
+  final String sourceKind;
+
+  _CodexSessionSummary copyWith({
+    String? title,
+    String? cwd,
+    int? updatedAtMs,
+    bool? archived,
+    String? status,
+    bool? active,
+    bool? loaded,
+    String? preview,
+    String? model,
+    String? branch,
+    String? sourceKind,
+  }) {
+    return _CodexSessionSummary(
+      threadId: threadId,
+      title: title ?? this.title,
+      cwd: cwd ?? this.cwd,
+      updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+      archived: archived ?? this.archived,
+      status: status ?? this.status,
+      active: active ?? this.active,
+      loaded: loaded ?? this.loaded,
+      preview: preview ?? this.preview,
+      model: model ?? this.model,
+      branch: branch ?? this.branch,
+      sourceKind: sourceKind ?? this.sourceKind,
+    );
+  }
 
   String get cwdLabel {
     final segment = _lastPathSegment(cwd);
@@ -440,8 +1603,17 @@ class _CodexSessionSummary {
   String get timeLabel => _formatSessionTime(updatedAtMs);
 
   String get statusLabel {
+    if (archived) {
+      return LegacyTextLocalizer.localize('已归档');
+    }
+    if (active) {
+      return LegacyTextLocalizer.localize('活动中');
+    }
+    if (loaded) {
+      return LegacyTextLocalizer.localize('已载入');
+    }
     if (status.isEmpty) {
-      return '';
+      return LegacyTextLocalizer.localize('空闲');
     }
     final normalized = status.toLowerCase();
     return switch (normalized) {
@@ -449,6 +1621,23 @@ class _CodexSessionSummary {
       'loaded' => LegacyTextLocalizer.localize('已载入'),
       'idle' => LegacyTextLocalizer.localize('空闲'),
       _ => status,
+    };
+  }
+
+  Map<String, dynamic> toDebugMap() {
+    return <String, dynamic>{
+      'threadId': threadId,
+      'title': title,
+      'cwd': cwd,
+      'updatedAtMs': updatedAtMs,
+      'archived': archived,
+      'status': status,
+      'active': active,
+      'loaded': loaded,
+      'preview': preview,
+      'model': model,
+      'branch': branch,
+      'sourceKind': sourceKind,
     };
   }
 }
@@ -475,7 +1664,8 @@ List<_CodexSessionSummary> _extractCodexSessions(List<dynamic> payloads) {
           updatedAtMs: null,
           archived: false,
           status: 'loaded',
-          active: true,
+          active: false,
+          loaded: true,
         ),
       );
       return;
@@ -501,6 +1691,24 @@ List<_CodexSessionSummary> _extractCodexSessions(List<dynamic> payloads) {
             threadMap?['status'] ??
             threadMap?['state'],
       );
+      final active =
+          _boolValue(
+            map['active'] ??
+                map['isActive'] ??
+                map['is_active'] ??
+                threadMap?['active'] ??
+                threadMap?['isActive'],
+          ) ??
+          _statusLooksActive(status);
+      final loaded =
+          _boolValue(
+            map['loaded'] ??
+                map['isLoaded'] ??
+                map['is_loaded'] ??
+                threadMap?['loaded'] ??
+                threadMap?['isLoaded'],
+          ) ??
+          _statusLooksLoaded(status);
       _mergeCodexSession(
         sessionsById,
         _CodexSessionSummary(
@@ -520,6 +1728,47 @@ List<_CodexSessionSummary> _extractCodexSessions(List<dynamic> payloads) {
           cwd:
               _stringValue(
                 map['cwd'] ?? threadMap?['cwd'] ?? map['worktree'],
+              ) ??
+              '',
+          preview:
+              _stringValue(
+                map['summary'] ??
+                    map['subtitle'] ??
+                    map['description'] ??
+                    map['latestMessage'] ??
+                    map['latest_message'] ??
+                    threadMap?['summary'] ??
+                    threadMap?['subtitle'] ??
+                    threadMap?['description'] ??
+                    threadMap?['latestMessage'],
+              ) ??
+              '',
+          model:
+              _stringValue(
+                map['model'] ??
+                    map['modelId'] ??
+                    map['model_id'] ??
+                    threadMap?['model'] ??
+                    threadMap?['modelId'] ??
+                    threadMap?['model_id'],
+              ) ??
+              '',
+          branch:
+              _stringValue(
+                map['branch'] ??
+                    map['gitBranch'] ??
+                    map['git_branch'] ??
+                    threadMap?['branch'] ??
+                    threadMap?['gitBranch'] ??
+                    threadMap?['git_branch'],
+              ) ??
+              '',
+          sourceKind:
+              _stringValue(
+                map['sourceKind'] ??
+                    map['source_kind'] ??
+                    threadMap?['sourceKind'] ??
+                    threadMap?['source_kind'],
               ) ??
               '',
           updatedAtMs: _timeValueMs(
@@ -543,18 +1792,8 @@ List<_CodexSessionSummary> _extractCodexSessions(List<dynamic> payloads) {
               ) ??
               false,
           status: status ?? '',
-          active:
-              _boolValue(
-                map['active'] ??
-                    map['isActive'] ??
-                    map['is_active'] ??
-                    map['loaded'] ??
-                    map['isLoaded'] ??
-                    map['is_loaded'] ??
-                    threadMap?['active'] ??
-                    threadMap?['isActive'],
-              ) ??
-              _statusLooksActive(status),
+          active: active,
+          loaded: loaded,
         ),
       );
     }
@@ -583,12 +1822,22 @@ void _mergeCodexSession(
   }
   sessionsById[next.threadId] = _CodexSessionSummary(
     threadId: next.threadId,
-    title: next.title.startsWith('Codex ') ? existing.title : next.title,
+    title:
+        next.title.startsWith('Codex ') && !existing.title.startsWith('Codex ')
+        ? existing.title
+        : next.title,
     cwd: next.cwd.isNotEmpty ? next.cwd : existing.cwd,
     updatedAtMs: _maxNullableInt(existing.updatedAtMs, next.updatedAtMs),
     archived: next.archived || existing.archived,
     status: next.status.isNotEmpty ? next.status : existing.status,
     active: next.active || existing.active,
+    loaded: next.loaded || existing.loaded,
+    preview: next.preview.isNotEmpty ? next.preview : existing.preview,
+    model: next.model.isNotEmpty ? next.model : existing.model,
+    branch: next.branch.isNotEmpty ? next.branch : existing.branch,
+    sourceKind: next.sourceKind.isNotEmpty
+        ? next.sourceKind
+        : existing.sourceKind,
   );
 }
 
@@ -612,8 +1861,13 @@ bool _statusLooksActive(String? status) {
       normalized == 'busy' ||
       normalized == 'inprogress' ||
       normalized == 'inflight' ||
-      normalized == 'executing' ||
-      normalized == 'loaded';
+      normalized == 'executing';
+}
+
+bool _statusLooksLoaded(String? status) {
+  final normalized =
+      status?.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '') ?? '';
+  return normalized == 'loaded' || normalized == 'ready';
 }
 
 int? _maxNullableInt(int? a, int? b) {
@@ -753,6 +2007,81 @@ String _formatSessionTime(int? timestampMs) {
   return '${time.month.toString().padLeft(2, '0')}/${time.day.toString().padLeft(2, '0')} $hh:$mm';
 }
 
+String _workspacePathForStatus(CodexStatus status) {
+  return (status.remoteCwd ?? status.cwd ?? '').trim();
+}
+
+String _bridgeLabel(String? url) {
+  final raw = url?.trim() ?? '';
+  if (raw.isEmpty) {
+    return '';
+  }
+  try {
+    final uri = Uri.parse(raw.contains('://') ? raw : 'ws://$raw');
+    final host = uri.host.trim();
+    if (host.isEmpty) {
+      return raw;
+    }
+    return uri.hasPort ? '$host:${uri.port}' : host;
+  } catch (_) {
+    return raw;
+  }
+}
+
+String _shortThreadId(String threadId) {
+  final normalized = threadId.trim();
+  if (normalized.length <= 8) {
+    return normalized;
+  }
+  return '...${normalized.substring(normalized.length - 8)}';
+}
+
+String _formatUptime(int? uptimeMs) {
+  if (uptimeMs == null || uptimeMs <= 0) {
+    return '';
+  }
+  final totalMinutes = (uptimeMs / Duration.millisecondsPerMinute).floor();
+  if (totalMinutes < 1) {
+    return '<1m';
+  }
+  if (totalMinutes < 60) {
+    return '${totalMinutes}m';
+  }
+  final hours = totalMinutes ~/ 60;
+  final minutes = totalMinutes % 60;
+  if (hours < 24) {
+    return minutes == 0 ? '${hours}h' : '${hours}h ${minutes}m';
+  }
+  final days = hours ~/ 24;
+  final remainingHours = hours % 24;
+  return remainingHours == 0 ? '${days}d' : '${days}d ${remainingHours}h';
+}
+
+String? _threadIdFromResponse(Map<String, dynamic> response) {
+  return _stringValue(response['threadId']) ??
+      _stringValue(response['thread_id']) ??
+      _stringValue(response['id']) ??
+      _stringValue(_asStringMap(response['thread'])?['id']);
+}
+
+Map<String, dynamic>? _asStringMap(dynamic value) {
+  if (value is! Map) {
+    return null;
+  }
+  return value.map((key, nestedValue) {
+    return MapEntry(key.toString(), nestedValue);
+  });
+}
+
+@visibleForTesting
+List<Map<String, dynamic>> extractCodexSessionSummariesForTesting(
+  List<dynamic> payloads,
+) {
+  return _extractCodexSessions(
+    payloads,
+  ).map((session) => session.toDebugMap()).toList(growable: false);
+}
+
 const Set<String> _threadNestedSkipKeys = <String>{
   'messages',
   'turns',
@@ -768,6 +2097,17 @@ const Set<String> _threadSummaryKeys = <String>{
   'preview',
   'threadName',
   'thread_name',
+  'summary',
+  'subtitle',
+  'description',
+  'latestMessage',
+  'latest_message',
+  'model',
+  'modelId',
+  'model_id',
+  'branch',
+  'gitBranch',
+  'git_branch',
   'archived',
   'isArchived',
   'is_archived',

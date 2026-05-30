@@ -76,6 +76,41 @@ void main() {
     expect(cardData['terminalOutput'], 'file.txt\n');
   });
 
+  test('maps file diffs into first-class diff tool cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/fileChange/outputDelta',
+          'params': {
+            'turnId': 'turn-1',
+            'itemId': 'file-1',
+            'path': 'lib/main.dart',
+            'delta': '''
+diff --git a/lib/main.dart b/lib/main.dart
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -1,2 +1,2 @@
+-old line
++new line
+ same line
+''',
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['type'], 'agent_tool_summary');
+    expect(cardData['toolType'], 'file');
+    expect(cardData['showDiff'], isTrue);
+    expect(cardData['filePath'], 'lib/main.dart');
+    expect(cardData['additions'], 1);
+    expect(cardData['deletions'], 1);
+    expect(cardData['summary'], contains('+1 -1'));
+    expect((cardData['diffText'] ?? '').toString(), contains('diff --git'));
+  });
+
   test('uses file paths for concise file change tool titles', () {
     reducer.reduce(
       runtime: runtime,
@@ -603,9 +638,7 @@ void main() {
     );
 
     final completedCard = runtime.messages
-        .firstWhere(
-          (message) => message.cardData?['type'] == 'deep_thinking',
-        )
+        .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
         .cardData!;
     expect(completedCard['startTime'], startedStartTime);
     expect(completedCard['stage'], ThinkingStage.complete.value);
@@ -908,61 +941,56 @@ void main() {
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test(
-    'top-level error with willRetry=false finalizes the active turn',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'turn/started',
-            'params': {'threadId': 'thread-1', 'turnId': 'turn-1'},
+  test('top-level error with willRetry=false finalizes the active turn', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/started',
+          'params': {'threadId': 'thread-1', 'turnId': 'turn-1'},
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/reasoning/textDelta',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'itemId': 'reason-1',
+            'delta': 'thinking',
           },
         },
-      );
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'item/reasoning/textDelta',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'itemId': 'reason-1',
-              'delta': 'thinking',
-            },
+      },
+    );
+
+    expect(runtime.isAiResponding, isTrue);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'error',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'willRetry': false,
+            'message': 'connection lost',
           },
         },
-      );
+      },
+    );
 
-      expect(runtime.isAiResponding, isTrue);
-
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'error',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'willRetry': false,
-              'message': 'connection lost',
-            },
-          },
-        },
-      );
-
-      expect(runtime.isAiResponding, isFalse);
-      expect(runtime.currentDispatchTaskId, isNull);
-      final thinking = runtime.messages
-          .firstWhere(
-            (message) => message.cardData?['type'] == 'deep_thinking',
-          )
-          .cardData!;
-      expect(thinking['isLoading'], isFalse);
-      expect(thinking['stage'], ThinkingStage.complete.value);
-    },
-  );
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTaskId, isNull);
+    final thinking = runtime.messages
+        .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
+        .cardData!;
+    expect(thinking['isLoading'], isFalse);
+    expect(thinking['stage'], ThinkingStage.complete.value);
+  });
 
   test('top-level error with willRetry=true keeps the turn active', () {
     reducer.reduce(
@@ -998,26 +1026,30 @@ void main() {
     'snapshot renders reasoning as loading even when item.status is completed '
     'while turn is active',
     () {
-      final messages = codexMessagesFromThreadResponseForTesting({
-        'thread': {
-          'id': 'thread-1',
-          'status': {'type': 'active'},
-          'turns': [
-            {
-              'id': 'turn-1',
-              'status': 'inProgress',
-              'items': [
-                {
-                  'id': 'reason-1',
-                  'type': 'reasoning',
-                  'status': 'completed',
-                  'summary': ['done reasoning'],
-                },
-              ],
-            },
-          ],
+      final messages = codexMessagesFromThreadResponseForTesting(
+        {
+          'thread': {
+            'id': 'thread-1',
+            'status': {'type': 'active'},
+            'turns': [
+              {
+                'id': 'turn-1',
+                'status': 'inProgress',
+                'items': [
+                  {
+                    'id': 'reason-1',
+                    'type': 'reasoning',
+                    'status': 'completed',
+                    'summary': ['done reasoning'],
+                  },
+                ],
+              },
+            ],
+          },
         },
-      }, active: true, activeTurnId: 'turn-1');
+        active: true,
+        activeTurnId: 'turn-1',
+      );
 
       final cardData = messages.first.cardData!;
       expect(cardData['type'], 'deep_thinking');

@@ -16,6 +16,10 @@ class CodexStatus {
     this.remoteBridgeUrl,
     this.remoteCwd,
     this.remoteConfigured = false,
+    this.remoteTransport,
+    this.remoteDesktopAvailable,
+    this.remoteActiveConnections,
+    this.remoteUptimeMs,
   });
 
   final bool connected;
@@ -29,6 +33,10 @@ class CodexStatus {
   final String? remoteBridgeUrl;
   final String? remoteCwd;
   final bool remoteConfigured;
+  final String? remoteTransport;
+  final bool? remoteDesktopAvailable;
+  final int? remoteActiveConnections;
+  final int? remoteUptimeMs;
 
   bool get canConnect => ready;
 
@@ -46,6 +54,10 @@ class CodexStatus {
       remoteBridgeUrl: _stringOrNull(source['remoteBridgeUrl']),
       remoteCwd: _stringOrNull(source['remoteCwd']),
       remoteConfigured: source['remoteConfigured'] == true,
+      remoteTransport: _stringOrNull(source['remoteTransport']),
+      remoteDesktopAvailable: _boolOrNull(source['remoteDesktopAvailable']),
+      remoteActiveConnections: _intOrNull(source['remoteActiveConnections']),
+      remoteUptimeMs: _intOrNull(source['remoteUptimeMs']),
     );
   }
 
@@ -660,6 +672,17 @@ int? _intOrNull(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '');
+}
+
+bool? _boolOrNull(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value.toInt() != 0;
+  final normalized = value?.toString().trim().toLowerCase() ?? '';
+  return switch (normalized) {
+    'true' || '1' || 'yes' => true,
+    'false' || '0' || 'no' => false,
+    _ => null,
+  };
 }
 
 double? _doubleOrNull(dynamic value) {
