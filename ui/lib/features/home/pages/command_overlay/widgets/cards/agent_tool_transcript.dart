@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/codex_diff_viewer.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
@@ -137,51 +138,51 @@ Color resolveAgentToolStatusColor(String status) {
 
 IconData resolveAgentToolStatusIcon(String status, String toolType) {
   if (status == 'timeout') {
-    return Icons.hourglass_top_rounded;
+    return LucideIcons.hourglass;
   }
   if (status == 'interrupted') {
-    return Icons.stop_circle_outlined;
+    return LucideIcons.stopCircle;
   }
   if (status == 'error') {
-    return Icons.error_outline_rounded;
+    return LucideIcons.triangleAlert;
   }
   if (toolType == 'terminal') {
-    return Icons.terminal_rounded;
+    return LucideIcons.squareTerminal;
   }
   if (toolType == 'browser') {
-    return Icons.language_rounded;
+    return LucideIcons.globe;
   }
   if (toolType == 'search') {
-    return Icons.search_rounded;
+    return LucideIcons.search;
   }
   if (toolType == 'image') {
-    return Icons.image_outlined;
+    return LucideIcons.image;
   }
   if (toolType == 'file') {
-    return Icons.edit_note_rounded;
+    return LucideIcons.filePenLine;
   }
   if (toolType == 'calendar') {
-    return Icons.calendar_month_rounded;
+    return LucideIcons.calendarDays;
   }
   if (toolType == 'alarm' || toolType == 'schedule') {
-    return Icons.alarm_rounded;
+    return LucideIcons.alarmClock;
   }
   if (toolType == 'memory') {
-    return Icons.psychology_alt_rounded;
+    return LucideIcons.brain;
   }
   if (toolType == 'workspace') {
-    return Icons.folder_outlined;
+    return LucideIcons.folder;
   }
   if (toolType == 'subagent') {
-    return Icons.hub_outlined;
+    return LucideIcons.network;
   }
   if (toolType == 'review') {
-    return Icons.rate_review_outlined;
+    return LucideIcons.messageSquare;
   }
   if (toolType == 'mcp') {
-    return Icons.extension_outlined;
+    return LucideIcons.puzzle;
   }
-  return Icons.check_circle_outline_rounded;
+  return LucideIcons.circleCheck;
 }
 
 TextSpan _buildDetailTextSpan(AgentToolTranscript transcript) {

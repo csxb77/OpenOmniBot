@@ -68,8 +68,13 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
         (event['method'] ??
                 (event['message'] is Map
                     ? (event['message'] as Map)['method']
+                    : null) ??
+                event['type'] ??
+                (event['message'] is Map
+                    ? (event['message'] as Map)['type']
                     : null))
             ?.toString()
+            .replaceAll('.', '/')
             .trim() ??
         '';
     if (method.isEmpty || !_isRemoteRuntime) {
@@ -77,7 +82,8 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
     }
     if (!method.startsWith('thread/') &&
         !method.startsWith('turn/') &&
-        !method.startsWith('item/')) {
+        !method.startsWith('item/') &&
+        !method.startsWith('rawResponseItem/')) {
       return;
     }
     _eventRefreshDebounce?.cancel();
@@ -2255,9 +2261,26 @@ const Set<String> _nonThreadItemTypes = <String>{
   'agentmessage',
   'reasoning',
   'commandexecution',
+  'local_shell_call',
+  'commandexec',
+  'processexecution',
   'filechange',
   'tool',
   'mcptoolcall',
+  'dynamictoolcall',
+  'function_call',
+  'function_call_output',
+  'custom_tool_call',
+  'custom_tool_call_output',
+  'tool_search_call',
+  'tool_search_output',
+  'websearch',
+  'web_search_call',
+  'imageview',
+  'imagegeneration',
+  'image_generation_call',
+  'collabagenttoolcall',
+  'collabtoolcall',
   'usermessage',
   'plan',
   'serverrequest',

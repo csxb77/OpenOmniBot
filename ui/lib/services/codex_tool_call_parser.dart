@@ -41,7 +41,7 @@ CodexToolCallInfo normalizeCodexToolCall(
   String? fallbackTitle,
   String fallbackStatus = 'running',
 }) {
-  final type = _firstString([itemType, raw['type']]) ?? '';
+  final type = canonicalCodexItemType(_firstString([itemType, raw['type']]));
   final arguments = _normalizedArguments(raw);
   final rawToolName = _resolveToolName(raw, itemType: type);
   final toolType = _inferToolType(
@@ -103,6 +103,28 @@ CodexToolCallInfo normalizeCodexToolCall(
   );
 }
 
+String canonicalCodexItemType(String? itemType) {
+  final normalized = itemType?.trim() ?? '';
+  if (normalized.isEmpty) {
+    return '';
+  }
+  return const <String, String>{
+        'agent_message': 'agentMessage',
+        'user_message': 'userMessage',
+        'command_execution': 'commandExecution',
+        'file_change': 'fileChange',
+        'mcp_tool_call': 'mcpToolCall',
+        'dynamic_tool_call': 'dynamicToolCall',
+        'web_search': 'webSearch',
+        'image_view': 'imageView',
+        'image_generation': 'imageGeneration',
+        'collab_agent_tool_call': 'collabAgentToolCall',
+        'collab_tool_call': 'collabToolCall',
+        'todo_list': 'plan',
+      }[normalized] ??
+      normalized;
+}
+
 String normalizeCodexToolStatus(
   Map<String, dynamic> raw, {
   String fallbackStatus = 'running',
@@ -146,6 +168,7 @@ String normalizeCodexToolStatus(
     }
     if (normalized == 'cancelled' ||
         normalized == 'canceled' ||
+        normalized == 'incomplete' ||
         normalized == 'interrupted' ||
         normalized == 'aborted') {
       return 'interrupted';
@@ -172,38 +195,86 @@ bool codexToolStatusIsExplicit(Map<String, dynamic> raw) {
 }
 
 String codexToolCardSuffix(String toolType, {String? itemType}) {
-  if (itemType == 'commandExecution' || toolType == 'terminal') {
-    return 'command';
-  }
-  if (itemType == 'fileChange' || toolType == 'file') {
+  final canonicalItemType = canonicalCodexItemType(itemType);
+  if (canonicalItemType == 'fileChange' || toolType == 'file') {
     return 'file';
   }
-  if (itemType == 'plan' || toolType == 'plan') {
+  if (canonicalItemType == 'plan' || toolType == 'plan') {
     return 'plan';
+  }
+  if (toolType == 'search') {
+    return 'search';
+  }
+  if (toolType == 'workspace') {
+    return 'workspace';
+  }
+  if (toolType == 'browser') {
+    return 'browser';
+  }
+  if (toolType == 'image') {
+    return 'image';
+  }
+  if (_isCommandLikeItemType(canonicalItemType) || toolType == 'terminal') {
+    return 'command';
   }
   return 'tool';
 }
 
 bool isCodexToolItemType(String itemType) {
+  final canonicalItemType = canonicalCodexItemType(itemType);
   return const <String>{
     'commandExecution',
+    'local_shell_call',
+    'commandExec',
+    'processExecution',
     'fileChange',
     'tool',
     'mcpToolCall',
     'dynamicToolCall',
+    'function_call',
+    'function_call_output',
+    'custom_tool_call',
+    'custom_tool_call_output',
+    'tool_search_call',
+    'tool_search_output',
     'webSearch',
+    'web_search_call',
     'imageView',
     'imageGeneration',
+    'image_generation_call',
     'collabAgentToolCall',
     'collabToolCall',
     'plan',
+  }.contains(canonicalItemType);
+}
+
+bool isCodexToolOutputItemType(String itemType) {
+  return const <String>{
+    'function_call_output',
+    'custom_tool_call_output',
+    'tool_search_output',
   }.contains(itemType);
+}
+
+bool _isCommandLikeItemType(String? itemType) {
+  final canonicalItemType = canonicalCodexItemType(itemType);
+  return canonicalItemType == 'commandExecution' ||
+      itemType == 'local_shell_call' ||
+      canonicalItemType == 'commandExec' ||
+      canonicalItemType == 'processExecution';
 }
 
 Map<String, dynamic> _normalizedArguments(Map<String, dynamic> raw) {
   final args = <String, dynamic>{};
   final parsed = _toolArguments(raw);
   args.addAll(parsed);
+  for (final key in const ['command', 'cmd']) {
+    final normalizedCommand = _commandFromValue(args[key]);
+    if (normalizedCommand != null) {
+      args[key] = normalizedCommand;
+    }
+  }
+  final action = _asStringMap(raw['action']);
 
   void add(String key, dynamic value) {
     if (args.containsKey(key) || value == null) {
@@ -227,25 +298,164 @@ Map<String, dynamic> _normalizedArguments(Map<String, dynamic> raw) {
     'url',
     'uri',
     'path',
+    'file',
+    'target',
     'filePath',
     'file_path',
     'filename',
     'fileName',
+    'pattern',
+    'regex',
+    'glob',
+    'include',
+    'queryText',
+    'query_text',
     'action',
     'tool',
     'server',
     'namespace',
     'prompt',
+    'execution',
+    'items',
   ]) {
-    add(key, raw[key]);
+    final value = key == 'command' || key == 'cmd'
+        ? _commandFromValue(raw[key])
+        : raw[key];
+    add(key, value);
   }
+  add('command', _commandFromValue(action?['command']));
+  add('cmd', _commandFromValue(raw['command']));
+  add('workingDirectory', action?['working_directory']);
+  add('workingDirectory', action?['workingDirectory']);
+  add('cwd', action?['cwd']);
   if (raw['changes'] != null) {
     add('changes', raw['changes']);
   }
   if (raw['files'] != null) {
     add('files', raw['files']);
   }
+  final parsedCommands = <Map<String, dynamic>>[
+    ..._codexParsedCommands(raw),
+    ..._codexParsedCommands(parsed),
+    ..._codexParsedCommands(action),
+  ];
+  if (parsedCommands.isNotEmpty) {
+    args['parsedCommands'] = parsedCommands;
+  }
   return args;
+}
+
+List<Map<String, dynamic>> _codexParsedCommands(dynamic value) {
+  if (value is List) {
+    return value
+        .whereType<Map>()
+        .map(
+          (entry) =>
+              entry.map((key, nested) => MapEntry(key.toString(), nested)),
+        )
+        .toList(growable: false);
+  }
+  if (value is Map) {
+    for (final key in const <String>[
+      'parsedCommands',
+      'parsed_commands',
+      'parsedCmd',
+      'parsed_cmd',
+      'commandActions',
+      'command_actions',
+    ]) {
+      final raw = value[key];
+      if (raw is List) {
+        return _codexParsedCommands(raw);
+      }
+    }
+  }
+  return const <Map<String, dynamic>>[];
+}
+
+CodexParsedCommandAction? _firstCodexCommandAction(
+  Map<String, dynamic> arguments,
+) {
+  final list = _codexParsedCommands(arguments);
+  if (list.isEmpty) {
+    return null;
+  }
+  CodexParsedCommandAction? fallback;
+  for (final entry in list) {
+    final typeRaw = _firstString([entry['type']]);
+    if (typeRaw == null) {
+      continue;
+    }
+    final normalized = typeRaw.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9]+'),
+      '_',
+    );
+    final mappedType = switch (normalized) {
+      'read' => 'read',
+      'list_files' || 'listfiles' || 'list' => 'listFiles',
+      'search' || 'grep' || 'find' => 'search',
+      _ => 'unknown',
+    };
+    final action = CodexParsedCommandAction(
+      type: mappedType,
+      command:
+          _commandFromValue(entry['command']) ??
+          _commandFromValue(entry['cmd']),
+      name: _firstString([entry['name']]),
+      path: _firstString([entry['path']]),
+      query: _firstString([entry['query']]),
+    );
+    if (mappedType != 'unknown') {
+      return action;
+    }
+    fallback ??= action;
+  }
+  return fallback;
+}
+
+String? _titleFromParsedCommandAction(CodexParsedCommandAction action) {
+  switch (action.type) {
+    case 'read':
+      final target =
+          action.name ??
+          (action.path == null ? null : _lastPathSegment(action.path!)) ??
+          action.path;
+      if (target != null && target.isNotEmpty) {
+        return 'Read $target';
+      }
+      return null;
+    case 'listFiles':
+      final target = action.path;
+      if (target == null || target.isEmpty) {
+        return 'List files';
+      }
+      return 'List ${_lastPathSegment(target) ?? target}';
+    case 'search':
+      if (action.query != null && action.query!.isNotEmpty) {
+        return 'Search: ${action.query}';
+      }
+      if (action.path != null && action.path!.isNotEmpty) {
+        return 'Search ${_lastPathSegment(action.path!) ?? action.path}';
+      }
+      return null;
+  }
+  return null;
+}
+
+class CodexParsedCommandAction {
+  const CodexParsedCommandAction({
+    required this.type,
+    this.command,
+    this.name,
+    this.path,
+    this.query,
+  });
+
+  final String type;
+  final String? command;
+  final String? name;
+  final String? path;
+  final String? query;
 }
 
 Map<String, dynamic> _toolArguments(Map<String, dynamic> raw) {
@@ -274,6 +484,10 @@ Map<String, dynamic> _toolArguments(Map<String, dynamic> raw) {
 String? _resolveToolName(Map<String, dynamic> raw, {required String itemType}) {
   final toolValue = raw['tool'];
   final toolString = toolValue is String ? toolValue : null;
+  final actionType = _firstString([_asStringMap(raw['action'])?['type']]);
+  if (itemType == 'local_shell_call' && actionType != null) {
+    return 'local_shell.$actionType';
+  }
   return _firstString([
     raw['toolName'],
     raw['tool_name'],
@@ -282,6 +496,7 @@ String? _resolveToolName(Map<String, dynamic> raw, {required String itemType}) {
     raw['function_name'],
     _asStringMap(raw['function'])?['name'],
     _asStringMap(raw['tool'])?['name'],
+    raw['execution'],
     toolString,
   ]);
 }
@@ -293,19 +508,37 @@ String _inferToolType({
   required String? toolName,
   required Map<String, dynamic> arguments,
 }) {
+  final canonicalItemType = canonicalCodexItemType(itemType);
   final explicit = explicitToolType?.trim();
   if (explicit != null && explicit.isNotEmpty) {
     return explicit;
   }
-  switch (itemType) {
+  switch (canonicalItemType) {
     case 'commandExecution':
-      return 'terminal';
+    case 'local_shell_call':
+    case 'commandExec':
+    case 'processExecution':
+      final action = _firstCodexCommandAction(arguments);
+      if (action != null) {
+        switch (action.type) {
+          case 'read':
+          case 'listFiles':
+            return 'workspace';
+          case 'search':
+            return 'search';
+        }
+      }
+      return _inferToolTypeFromCommand(arguments) ?? 'terminal';
     case 'fileChange':
       return 'file';
     case 'webSearch':
+    case 'web_search_call':
+    case 'tool_search_call':
+    case 'tool_search_output':
       return 'search';
     case 'imageView':
     case 'imageGeneration':
+    case 'image_generation_call':
       return 'image';
     case 'collabAgentToolCall':
     case 'collabToolCall':
@@ -317,6 +550,10 @@ String _inferToolType({
   final fullName = (toolName ?? '').trim().toLowerCase();
   final shortName = _shortToolName(fullName).toLowerCase();
   final name = '$fullName $shortName';
+  final commandToolType = _inferToolTypeFromCommand(arguments);
+  if (commandToolType != null && _looksLikeCommandToolName(name)) {
+    return commandToolType;
+  }
   if (_containsAny(name, const [
     'terminal',
     'shell',
@@ -338,6 +575,13 @@ String _inferToolType({
   }
   if (_containsAny(name, const [
     'read',
+    'view',
+    'open_file',
+    'read_file',
+    'read_text',
+    'read_many_files',
+    'cat',
+    'sed',
     'list',
     'glob',
     'grep',
@@ -362,7 +606,7 @@ String _inferToolType({
   if (_containsAny(name, const ['memory'])) {
     return 'memory';
   }
-  if (itemType == 'mcpToolCall') {
+  if (canonicalItemType == 'mcpToolCall') {
     return 'mcp';
   }
   final fallback = fallbackToolType?.trim();
@@ -370,6 +614,67 @@ String _inferToolType({
     return fallback;
   }
   return 'tool';
+}
+
+String? _inferToolTypeFromCommand(Map<String, dynamic> arguments) {
+  final command = _firstString([arguments['command'], arguments['cmd']]);
+  if (command == null) {
+    return null;
+  }
+  final normalized = command.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return null;
+  }
+  if (RegExp(
+    r'(^|[;&|]\s*)(git\s+grep|rg|grep|fd|find|ag|ack)\b',
+  ).hasMatch(normalized)) {
+    return 'search';
+  }
+  return null;
+}
+
+bool _looksLikeCommandToolName(String name) {
+  return _containsAny(name, const [
+    'terminal',
+    'shell',
+    'exec',
+    'command',
+    'bash',
+    'zsh',
+    'powershell',
+  ]);
+}
+
+bool _shouldUseSearchTitle({
+  required String itemType,
+  required String toolType,
+  required String? toolName,
+  required Map<String, dynamic> arguments,
+}) {
+  if (toolType != 'search') {
+    return false;
+  }
+  if (_inferToolTypeFromCommand(arguments) == 'search') {
+    return true;
+  }
+  final canonicalItemType = canonicalCodexItemType(itemType);
+  if (canonicalItemType == 'webSearch' ||
+      canonicalItemType == 'tool_search_call' ||
+      canonicalItemType == 'tool_search_output') {
+    return true;
+  }
+  final shortName = toolName == null
+      ? ''
+      : _shortToolName(toolName).trim().toLowerCase();
+  return const <String>{
+    'rg',
+    'grep',
+    'git_grep',
+    'search',
+    'search_files',
+    'file_search',
+    'tool_search',
+  }.contains(shortName);
 }
 
 String _resolveToolTitle(
@@ -380,6 +685,7 @@ String _resolveToolTitle(
   required Map<String, dynamic> arguments,
   required String? fallbackTitle,
 }) {
+  final canonicalItemType = canonicalCodexItemType(itemType);
   final explicit = _firstString([
     raw['toolTitle'],
     raw['tool_title'],
@@ -394,12 +700,22 @@ String _resolveToolTitle(
     return _compactTitle(explicit, maxLength: 48);
   }
 
-  if (itemType == 'commandExecution' || toolType == 'terminal') {
+  if (_isCommandLikeItemType(canonicalItemType) || toolType == 'terminal') {
+    final action = _firstCodexCommandAction(arguments);
+    if (action != null) {
+      final actionTitle = _titleFromParsedCommandAction(action);
+      if (actionTitle != null) {
+        return _compactTitle(actionTitle, maxLength: 48);
+      }
+    }
     final command = _firstString([
       raw['command'],
       arguments['command'],
       raw['cmd'],
       arguments['cmd'],
+      _commandFromValue(_asStringMap(raw['action'])?['command']),
+      raw['processId'],
+      raw['processHandle'],
     ]);
     if (command != null) {
       return _compactTitle(command, maxLength: 48);
@@ -409,7 +725,7 @@ String _resolveToolTitle(
         : 'Codex command';
   }
 
-  if (itemType == 'fileChange' || toolType == 'file') {
+  if (canonicalItemType == 'fileChange' || toolType == 'file') {
     final path = _resolvePath(raw, arguments);
     if (path != null) {
       return _compactTitle(
@@ -422,11 +738,12 @@ String _resolveToolTitle(
         : 'Codex file change';
   }
 
-  if (itemType == 'webSearch') {
+  if (canonicalItemType == 'webSearch' || itemType == 'web_search_call') {
     final query = _firstString([
       raw['query'],
       arguments['query'],
       arguments['q'],
+      _asStringMap(raw['action'])?['query'],
     ]);
     if (query != null) {
       return _compactTitle('Search: $query', maxLength: 48);
@@ -434,7 +751,32 @@ String _resolveToolTitle(
     return 'Web search';
   }
 
-  if (itemType == 'imageView') {
+  if (_shouldUseSearchTitle(
+    itemType: itemType,
+    toolType: toolType,
+    toolName: toolName,
+    arguments: arguments,
+  )) {
+    final command = _firstString([arguments['command'], arguments['cmd']]);
+    if (command != null) {
+      return _compactTitle(command, maxLength: 48);
+    }
+    final query = _firstString([
+      raw['query'],
+      arguments['query'],
+      arguments['q'],
+      raw['execution'],
+      arguments['execution'],
+    ]);
+    if (query != null) {
+      return _compactTitle('Search: $query', maxLength: 48);
+    }
+    return fallbackTitle?.trim().isNotEmpty == true
+        ? _compactTitle(fallbackTitle!, maxLength: 48)
+        : 'Codex search';
+  }
+
+  if (canonicalItemType == 'imageView') {
     final path = _resolvePath(raw, arguments);
     if (path != null) {
       return _compactTitle(
@@ -445,11 +787,12 @@ String _resolveToolTitle(
     return 'View image';
   }
 
-  if (itemType == 'imageGeneration') {
+  if (canonicalItemType == 'imageGeneration') {
     return 'Generate image';
   }
 
-  if (itemType == 'collabAgentToolCall' || itemType == 'collabToolCall') {
+  if (canonicalItemType == 'collabAgentToolCall' ||
+      canonicalItemType == 'collabToolCall') {
     final prompt = _firstString([raw['prompt'], arguments['prompt']]);
     if (prompt != null) {
       return _compactTitle('Subagent: $prompt', maxLength: 48);
@@ -458,8 +801,40 @@ String _resolveToolTitle(
     return _compactTitle(name, maxLength: 48);
   }
 
-  if (itemType == 'plan' || toolType == 'plan') {
+  if (canonicalItemType == 'plan' || toolType == 'plan') {
     return 'Codex plan';
+  }
+
+  if (isCodexToolOutputItemType(itemType)) {
+    final outputName = toolName == null ? null : _shortToolName(toolName);
+    if (outputName != null && outputName.isNotEmpty) {
+      return _compactTitle('$outputName output', maxLength: 48);
+    }
+    return fallbackTitle?.trim().isNotEmpty == true
+        ? _compactTitle(fallbackTitle!, maxLength: 48)
+        : 'Codex tool output';
+  }
+
+  // node_repl/js and other MCP/dynamic/custom/function invocations frequently
+  // carry a human-readable `title` (or `description`) in arguments — surface
+  // that as the card title so the user sees "Refine flavor parsing" instead
+  // of bare `js`. Applies to BOTH the raw `function_call` ResponseItem path
+  // (rawResponseItem/completed) AND the projected MCP/dynamic notification
+  // path; falls through to the catch-all below when no title is provided.
+  if (canonicalItemType == 'mcpToolCall' ||
+      canonicalItemType == 'dynamicToolCall' ||
+      canonicalItemType == 'function_call' ||
+      itemType == 'custom_tool_call') {
+    final invocationTitle = _firstString([
+      arguments['title'],
+      raw['title'],
+      arguments['description'],
+      arguments['summary'],
+      raw['description'],
+    ]);
+    if (invocationTitle != null) {
+      return _compactTitle(invocationTitle, maxLength: 64);
+    }
   }
 
   final shortName = toolName == null ? null : _shortToolName(toolName);
@@ -473,13 +848,21 @@ String _resolveToolTitle(
     arguments['url'],
     arguments['uri'],
     arguments['path'],
+    arguments['file'],
+    arguments['target'],
     arguments['filePath'],
     arguments['file_path'],
     arguments['filename'],
     arguments['fileName'],
+    arguments['pattern'],
+    arguments['regex'],
+    arguments['glob'],
+    arguments['include'],
     raw['query'],
     raw['url'],
     raw['path'],
+    raw['file'],
+    raw['target'],
   ]);
   if (detail != null) {
     final operationTitle = _operationTitle(shortName, detail);
@@ -515,7 +898,12 @@ String? _operationTitle(String? shortName, String detail) {
   if (name == 'read' ||
       name == 'read_file' ||
       name == 'readfile' ||
-      name == 'view_file') {
+      name == 'view_file' ||
+      name == 'open_file' ||
+      name == 'read_text' ||
+      name == 'read_many_files' ||
+      name == 'cat' ||
+      name == 'sed') {
     return 'Read $target';
   }
   if (name == 'list' ||
@@ -531,6 +919,10 @@ String? _operationTitle(String? shortName, String detail) {
     return 'Edit $target';
   }
   if (name == 'grep' ||
+      name == 'rg' ||
+      name == 'fd' ||
+      name == 'find' ||
+      name == 'glob' ||
       name == 'search' ||
       name == 'search_files' ||
       name == 'file_search') {
@@ -542,11 +934,15 @@ String? _operationTitle(String? shortName, String detail) {
 String? _resolvePath(Map<String, dynamic> raw, Map<String, dynamic> args) {
   return _firstString([
     raw['path'],
+    raw['file'],
+    raw['target'],
     raw['filePath'],
     raw['file_path'],
     raw['filename'],
     raw['fileName'],
     args['path'],
+    args['file'],
+    args['target'],
     args['filePath'],
     args['file_path'],
     args['filename'],
@@ -591,22 +987,57 @@ String? _firstPathFromList(dynamic value) {
 }
 
 String _defaultToolName(String itemType, String toolType) {
-  if (itemType == 'mcpToolCall') {
-    return 'codex.mcp';
+  final canonicalItemType = canonicalCodexItemType(itemType);
+  if (canonicalItemType == 'local_shell_call') {
+    return 'codex.localShell';
   }
-  if (itemType == 'dynamicToolCall') {
-    return 'codex.dynamicTool';
+  if (canonicalItemType == 'commandExec') {
+    return 'codex.commandExec';
   }
-  if (itemType == 'webSearch') {
+  if (canonicalItemType == 'processExecution') {
+    return 'codex.process';
+  }
+  if (canonicalItemType == 'function_call') {
+    return 'codex.functionCall';
+  }
+  if (canonicalItemType == 'function_call_output') {
+    return 'codex.functionOutput';
+  }
+  if (canonicalItemType == 'custom_tool_call') {
+    return 'codex.customTool';
+  }
+  if (canonicalItemType == 'custom_tool_call_output') {
+    return 'codex.customToolOutput';
+  }
+  if (canonicalItemType == 'tool_search_call') {
+    return 'codex.toolSearch';
+  }
+  if (canonicalItemType == 'tool_search_output') {
+    return 'codex.toolSearchOutput';
+  }
+  if (canonicalItemType == 'web_search_call') {
     return 'codex.webSearch';
   }
-  if (itemType == 'imageView') {
-    return 'codex.imageView';
-  }
-  if (itemType == 'imageGeneration') {
+  if (canonicalItemType == 'image_generation_call') {
     return 'codex.imageGeneration';
   }
-  if (itemType == 'collabAgentToolCall' || itemType == 'collabToolCall') {
+  if (canonicalItemType == 'mcpToolCall') {
+    return 'codex.mcp';
+  }
+  if (canonicalItemType == 'dynamicToolCall') {
+    return 'codex.dynamicTool';
+  }
+  if (canonicalItemType == 'webSearch') {
+    return 'codex.webSearch';
+  }
+  if (canonicalItemType == 'imageView') {
+    return 'codex.imageView';
+  }
+  if (canonicalItemType == 'imageGeneration') {
+    return 'codex.imageGeneration';
+  }
+  if (canonicalItemType == 'collabAgentToolCall' ||
+      canonicalItemType == 'collabToolCall') {
     return 'codex.collabAgent';
   }
   return 'codex.$toolType';
@@ -689,6 +1120,25 @@ String? _string(dynamic value) {
     return value.toString();
   }
   return null;
+}
+
+String? _commandFromValue(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is String) {
+    return value.trim().isEmpty ? null : value;
+  }
+  if (value is List) {
+    final parts = value
+        .map(_string)
+        .whereType<String>()
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    return parts.isEmpty ? null : parts.join(' ');
+  }
+  return _string(value);
 }
 
 int? _asInt(dynamic value) {

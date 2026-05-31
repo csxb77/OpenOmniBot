@@ -341,12 +341,30 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     ChatIslandDisplayLayer chatIslandDisplayLayer = ChatIslandDisplayLayer.mode,
     String? lastAgentToolType,
     ChatBrowserSessionSnapshot? browserSessionSnapshot,
+    bool preserveLiveStreamingState = false,
   }) {
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,
     );
+    // When the caller is polling a remote codex thread while reducer push
+    // events are still actively streaming into this runtime, we MUST NOT
+    // blow away the push-driven streaming state. Otherwise the chat list
+    // collapses for a single frame between each poll tick — the symptom
+    // the user calls "codex 输出时自动折叠了一下又展开"。
+    //
+    // In that mode we only refresh the visible message list and conversation
+    // metadata; everything else (isAiResponding, currentAiMessages,
+    // currentThinkingMessages, currentDispatchTaskId, …) stays exactly as
+    // the reducer left it.
+    if (preserveLiveStreamingState) {
+      runtime.messages.replaceAllMessages(messages);
+      runtime.conversation = conversation ?? runtime.conversation;
+      _pruneCodexReplayDeltaOffsets(runtime, messages);
+      notifyListeners();
+      return;
+    }
     _flushRuntimeStreamingText(runtime);
     runtime.messages.replaceAllMessages(messages);
     runtime.conversation = conversation ?? runtime.conversation;
@@ -3307,6 +3325,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         : '';
     final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
+      'uiStyle': event.uiStyle.isNotEmpty
+          ? event.uiStyle
+          : (existingCardData['uiStyle'] ?? '').toString(),
       'taskId': taskId,
       'toolName': event.toolName,
       'displayName': event.displayName,

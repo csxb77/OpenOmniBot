@@ -768,6 +768,30 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
 
   @override
   void _handleCodexAppServerEvent(Map<String, dynamic> event) {
+    final diagnosticMethod = _diagnosticEventMethod(event);
+    _codexEventDiagnosticCounter.update(
+      diagnosticMethod,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    // Log every event individually so the user can `adb logcat -s flutter:V`
+    // (or `flutter logs`) during a Codex turn and verify exactly which
+    // app-server methods are reaching the Flutter side. If lines like
+    //   [Codex/E] item/started:commandExecution
+    //   [Codex/E] item/completed:commandExecution
+    // do not show up while pwd/ls/cat run, the events are being dropped
+    // upstream (codex app-server -> codex-bridge -> Kotlin -> EventChannel).
+    debugPrint('[Codex/E] $diagnosticMethod');
+    final totalEvents = _codexEventDiagnosticCounter.values.fold<int>(
+      0,
+      (sum, count) => sum + count,
+    );
+    if (totalEvents % 32 == 0 || diagnosticMethod == 'turn/completed') {
+      debugPrint(
+        '[Codex/E] === counters @$totalEvents === '
+        '${_codexEventDiagnosticCounter.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
+      );
+    }
     final remoteCodex = _isRemoteCodexConfigured();
     final eventThreadId = _codexEventThreadId(event);
     final explicitConversationId = _asCodexInt(event['conversationId']);
@@ -788,6 +812,10 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
             : mappedRemoteConversationId) ??
         _currentConversationIdByMode[ChatPageMode.codex];
     if (conversationId == null) {
+      debugPrint(
+        '[Codex] dropping $diagnosticMethod — no conversationId '
+        '(remoteCodex=$remoteCodex, eventThreadId=$eventThreadId)',
+      );
       return;
     }
     if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
@@ -1231,22 +1259,37 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
     if (!mounted) {
       return;
     }
+    // Detect reducer push-driven streaming. When push events have populated
+    // currentAiMessages / currentThinkingMessages on the runtime, the 2s poll
+    // must not overwrite isAiResponding / dispatch ids / streaming buffers —
+    // otherwise the timeline flips to isActive=false for one frame between
+    // each tick and the codex run group visibly collapses-then-expands while
+    // codex is still outputting (the symptom the user reported).
+    final hasLivePushStreaming =
+        runtime != null &&
+        (runtime.currentAiMessages.isNotEmpty ||
+            runtime.currentThinkingMessages.isNotEmpty);
+    final preserveLiveStreamingState = fromPoll && hasLivePushStreaming;
     setState(() {
       _activeCodexRemoteRuntimeId = runtimeId;
       _activeCodexThreadId = resolvedThreadId;
-      _activeCodexTurnId = activeTurnId;
+      if (!preserveLiveStreamingState) {
+        _activeCodexTurnId = activeTurnId;
+      }
       if (status != null) {
         _codexStatus = status;
       }
       _currentConversationIdByMode[ChatPageMode.codex] = runtimeId;
       _currentConversationByMode[ChatPageMode.codex] = conversation;
-      _isAiRespondingByMode[ChatPageMode.codex] = isAiResponding;
-      _isExecutingTaskByMode[ChatPageMode.codex] = isAiResponding;
-      _isDeepThinkingByMode[ChatPageMode.codex] = isAiResponding;
-      _currentThinkingStageByMode[ChatPageMode.codex] = isAiResponding
-          ? ThinkingStage.thinking.value
-          : ThinkingStage.complete.value;
-      _currentDispatchTaskIdByMode[ChatPageMode.codex] = activeTaskId;
+      if (!preserveLiveStreamingState) {
+        _isAiRespondingByMode[ChatPageMode.codex] = isAiResponding;
+        _isExecutingTaskByMode[ChatPageMode.codex] = isAiResponding;
+        _isDeepThinkingByMode[ChatPageMode.codex] = isAiResponding;
+        _currentThinkingStageByMode[ChatPageMode.codex] = isAiResponding
+            ? ThinkingStage.thinking.value
+            : ThinkingStage.complete.value;
+        _currentDispatchTaskIdByMode[ChatPageMode.codex] = activeTaskId;
+      }
       _messagesByMode[ChatPageMode.codex]!
         ..clear()
         ..addAll(messages);
@@ -1275,6 +1318,7 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
           : ThinkingStage.complete.value,
       lastAgentTaskId: activeTaskId,
       chatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+      preserveLiveStreamingState: preserveLiveStreamingState,
     );
     if (activeTaskId != null) {
       _runtimeCoordinator.registerTask(
@@ -1516,32 +1560,85 @@ String? _asCodexString(dynamic value) {
 }
 
 String? _codexEventThreadId(Map<String, dynamic> event) {
-  final direct = _asCodexString(event['threadId'] ?? event['thread_id']);
+  return _codexThreadIdFromEnvelope(event);
+}
+
+/// Top-level diagnostic counter that survives navigation. Used purely for
+/// `flutter logs` / `adb logcat` introspection — the user reported that
+/// exec_command tool cards do not surface in our UI even though the codex
+/// session rollout contains 18 of them; this counter shows whether the
+/// `rawResponseItem/completed` notifications actually reach the Flutter side.
+final Map<String, int> _codexEventDiagnosticCounter = <String, int>{};
+
+String _diagnosticEventMethod(Map<String, dynamic> event) {
+  final method = _asCodexString(event['method']);
+  if (method != null) {
+    if (method == 'codex/event') {
+      final params = _asCodexMap(event['params']) ?? const <String, dynamic>{};
+      final msg = _asCodexMap(params['msg']);
+      final msgType = _asCodexString(msg?['type']);
+      if (msgType != null) {
+        return 'codex/event:$msgType';
+      }
+    }
+    if (method == 'rawResponseItem/completed' ||
+        method == 'item/started' ||
+        method == 'item/completed') {
+      final params = _asCodexMap(event['params']) ?? const <String, dynamic>{};
+      final item = _asCodexMap(params['item']);
+      final itemType = _asCodexString(item?['type']);
+      if (itemType != null) {
+        final name = _asCodexString(item?['name']);
+        if (name != null) {
+          return '$method:$itemType:$name';
+        }
+        return '$method:$itemType';
+      }
+    }
+    return method;
+  }
+  final message = _asCodexMap(event['message']);
+  return _asCodexString(message?['method']) ?? '<unknown>';
+}
+
+const List<String> _codexEnvelopeKeys = <String>[
+  'message',
+  'payload',
+  'data',
+  'event',
+  'notification',
+  'params',
+  'result',
+];
+
+String? _codexThreadIdFromEnvelope(dynamic value, {int depth = 0}) {
+  if (depth > 6) {
+    return null;
+  }
+  final map = _asCodexMap(value);
+  if (map == null) {
+    return null;
+  }
+  final direct = _asCodexString(map['threadId'] ?? map['thread_id']);
   if (direct != null) {
     return direct;
   }
-  final params = _asCodexMap(event['params']);
-  final fromParams = _asCodexString(
-    params?['threadId'] ?? params?['thread_id'],
-  );
-  if (fromParams != null) {
-    return fromParams;
+  final thread = _asCodexMap(map['thread']);
+  final threadId = _asCodexString(thread?['id']);
+  if (threadId != null) {
+    return threadId;
   }
-  final thread = _asCodexMap(params?['thread']);
-  final fromThread = _asCodexString(thread?['id']);
-  if (fromThread != null) {
-    return fromThread;
+  for (final key in _codexEnvelopeKeys) {
+    final nested = map[key];
+    if (nested == null) {
+      continue;
+    }
+    final nestedThreadId = _codexThreadIdFromEnvelope(nested, depth: depth + 1);
+    if (nestedThreadId != null) {
+      return nestedThreadId;
+    }
   }
-  final message = _asCodexMap(event['message']);
-  final messageParams = _asCodexMap(message?['params']);
-  final fromMessageParams = _asCodexString(
-    messageParams?['threadId'] ?? messageParams?['thread_id'],
-  );
-  if (fromMessageParams != null) {
-    return fromMessageParams;
-  }
-  final messageThread = _asCodexMap(messageParams?['thread']);
-  return _asCodexString(messageThread?['id']);
+  return null;
 }
 
 int _remoteCodexRuntimeId(String seed) {
@@ -1814,6 +1911,633 @@ String? _codexTurnIdAt(List<dynamic> turns, int index) {
   return _asCodexString(turn['id']) ?? 'turn-$index';
 }
 
+List<Map<String, dynamic>> _codexHistoricalItemsFromTurn(
+  Map<String, dynamic> turn,
+) {
+  final items = <Map<String, dynamic>>[];
+  final seen = <String, int>{};
+
+  void addItem(Map<String, dynamic> item) {
+    final normalized = _codexNormalizeHistoricalItem(item);
+    if (normalized == null) {
+      return;
+    }
+    final key = _codexHistoricalItemDedupeKey(normalized);
+    final existingIndex = seen[key];
+    if (existingIndex != null) {
+      items[existingIndex] = _codexMergeHistoricalItemSnapshot(
+        items[existingIndex],
+        normalized,
+      );
+      return;
+    }
+    seen[key] = items.length;
+    items.add(normalized);
+  }
+
+  void addFromValue(dynamic value) {
+    if (value is List) {
+      for (final entry in value) {
+        addFromValue(entry);
+      }
+      return;
+    }
+    final item = _codexHistoricalItemFromValue(value);
+    if (item != null) {
+      addItem(item);
+    }
+  }
+
+  for (final key in const <String>[
+    'items',
+    'outputItems',
+    'output_items',
+    'responseItems',
+    'response_items',
+    'rawItems',
+    'raw_items',
+    'messages',
+    'events',
+    'inputItems',
+    'input_items',
+  ]) {
+    addFromValue(turn[key]);
+  }
+
+  final worklog = _asCodexMap(turn['worklog']);
+  addFromValue(worklog?['messages']);
+  return items;
+}
+
+Map<String, dynamic> _codexMergeHistoricalItemSnapshot(
+  Map<String, dynamic> existing,
+  Map<String, dynamic> incoming,
+) {
+  final merged = Map<String, dynamic>.from(existing);
+  for (final entry in incoming.entries) {
+    final value = entry.value;
+    if (value == null) {
+      continue;
+    }
+    if (value is String && value.trim().isEmpty) {
+      continue;
+    }
+    merged[entry.key] = value;
+  }
+  return merged;
+}
+
+Map<String, dynamic>? _codexHistoricalItemFromValue(dynamic value) {
+  final map = _asCodexMap(value);
+  if (map == null) {
+    return null;
+  }
+  final direct = _codexNormalizeHistoricalItem(map);
+  if (direct != null) {
+    return direct;
+  }
+  for (final key in const <String>[
+    'item',
+    'rawItem',
+    'raw_item',
+    'responseItem',
+    'response_item',
+  ]) {
+    final nested = _codexHistoricalItemFromValue(map[key]);
+    if (nested != null) {
+      return _codexMergeEnvelopeIds(map, nested);
+    }
+  }
+  final params = _asCodexMap(map['params']);
+  if (params != null) {
+    final nested = _codexHistoricalItemFromValue(params);
+    if (nested != null) {
+      return _codexMergeEnvelopeIds(map, nested);
+    }
+  }
+  final protocolItem = _codexHistoricalItemFromProtocolEvent(params ?? map);
+  if (protocolItem != null) {
+    return _codexMergeEnvelopeIds(map, protocolItem);
+  }
+  final methodItem = _codexHistoricalItemFromEventMethod(
+    _asCodexString(map['method'] ?? map['type']),
+    params ?? map,
+  );
+  if (methodItem != null) {
+    return _codexMergeEnvelopeIds(map, methodItem);
+  }
+  for (final key in _codexEnvelopeKeys) {
+    if (key == 'params') {
+      continue;
+    }
+    final nested = _codexHistoricalItemFromValue(map[key]);
+    if (nested != null) {
+      return _codexMergeEnvelopeIds(map, nested);
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic>? _codexHistoricalItemFromEventMethod(
+  String? rawMethod,
+  Map<String, dynamic> params,
+) {
+  final method = (rawMethod ?? '')
+      .trim()
+      .replaceAll('.', '/')
+      .replaceAll('/command_execution/', '/commandExecution/')
+      .replaceAll('/file_change/', '/fileChange/')
+      .replaceAll('/mcp_tool_call/', '/mcpToolCall/');
+  if (method.isEmpty) {
+    return null;
+  }
+  if (method.contains('commandExecution') ||
+      method == 'command/exec/outputDelta' ||
+      method == 'command/exec/completed' ||
+      method == 'process/outputDelta' ||
+      method == 'process/exited') {
+    return _codexNormalizeHistoricalItem(<String, dynamic>{
+      ...params,
+      'id':
+          _asCodexString(
+            params['itemId'] ??
+                params['item_id'] ??
+                params['processId'] ??
+                params['process_id'] ??
+                params['processHandle'] ??
+                params['process_handle'],
+          ) ??
+          _asCodexString(params['id']),
+      'type': method.contains('process')
+          ? 'processExecution'
+          : method.contains('command/exec')
+          ? 'commandExec'
+          : 'commandExecution',
+      'aggregatedOutput':
+          params['aggregatedOutput'] ??
+          params['aggregated_output'] ??
+          params['output'] ??
+          params['delta'] ??
+          params['text'],
+      'status': params['status'] ?? 'completed',
+    });
+  }
+  if (method.contains('fileChange') || method == 'turn/diff/updated') {
+    return _codexNormalizeHistoricalItem(<String, dynamic>{
+      ...params,
+      'id':
+          _asCodexString(params['itemId'] ?? params['item_id']) ??
+          _asCodexString(params['id']),
+      'type': 'fileChange',
+      'status': params['status'] ?? 'completed',
+    });
+  }
+  if (method.contains('mcpToolCall')) {
+    return _codexNormalizeHistoricalItem(<String, dynamic>{
+      ...params,
+      'id':
+          _asCodexString(params['itemId'] ?? params['item_id']) ??
+          _asCodexString(params['id']),
+      'type': 'mcpToolCall',
+      'status': params['status'] ?? 'completed',
+    });
+  }
+  return null;
+}
+
+Map<String, dynamic>? _codexHistoricalItemFromProtocolEvent(
+  Map<String, dynamic> value,
+) {
+  final msg = _codexHistoricalProtocolMsg(value);
+  if (msg == null) {
+    return null;
+  }
+  final msgType = _codexNormalizeProtocolMsgType(_asCodexString(msg['type']));
+  if (msgType.isEmpty) {
+    return null;
+  }
+  final eventId = _asCodexString(value['id']);
+  final callId = _asCodexString(
+    msg['callId'] ??
+        msg['call_id'] ??
+        msg['itemId'] ??
+        msg['item_id'] ??
+        msg['processId'] ??
+        msg['process_id'] ??
+        eventId,
+  );
+  Map<String, dynamic> withIds(Map<String, dynamic> item) {
+    return <String, dynamic>{
+      ..._codexTopLevelIds(value),
+      ..._codexTopLevelIds(msg),
+      if (callId != null) 'id': callId,
+      ...item,
+    };
+  }
+
+  switch (msgType) {
+    case 'item_started':
+    case 'item_completed':
+      final item = _asCodexMap(msg['item']);
+      return item == null ? null : _codexNormalizeHistoricalItem(item);
+    case 'raw_response_item':
+      final item = _asCodexMap(msg['item']);
+      return item == null ? null : _codexNormalizeHistoricalItem(item);
+    case 'agent_message':
+      final text = _codexExtractText(msg['message'] ?? msg['text']);
+      if (text.trim().isEmpty) {
+        return null;
+      }
+      return withIds(<String, dynamic>{
+        'type': 'agentMessage',
+        'message': text,
+      });
+    case 'agent_reasoning':
+    case 'agent_reasoning_raw_content':
+    case 'reasoning_content_delta':
+    case 'reasoning_raw_content_delta':
+      final text = _codexExtractText(msg['delta'] ?? msg['text']);
+      if (text.trim().isEmpty) {
+        return null;
+      }
+      return withIds(<String, dynamic>{'type': 'reasoning', 'summary': text});
+    case 'exec_command_begin':
+    case 'exec_command_output_delta':
+    case 'terminal_interaction':
+    case 'exec_command_end':
+      return _codexNormalizeHistoricalItem(
+        withIds(_codexHistoricalCommandItem(msg, msgType: msgType)),
+      );
+    case 'mcp_tool_call_begin':
+    case 'mcp_tool_call_end':
+      return _codexNormalizeHistoricalItem(
+        withIds(
+          _codexHistoricalMcpToolItem(msg, completed: msgType.endsWith('_end')),
+        ),
+      );
+    case 'web_search_begin':
+    case 'web_search_end':
+      return _codexNormalizeHistoricalItem(
+        withIds(
+          _codexHistoricalWebSearchItem(
+            msg,
+            completed: msgType.endsWith('_end'),
+          ),
+        ),
+      );
+    case 'view_image_tool_call':
+      return _codexNormalizeHistoricalItem(
+        withIds(<String, dynamic>{
+          ...msg,
+          'type': 'imageView',
+          'status': 'completed',
+        }),
+      );
+    case 'patch_apply_begin':
+    case 'patch_apply_updated':
+    case 'patch_apply_end':
+      return _codexNormalizeHistoricalItem(
+        withIds(
+          _codexHistoricalPatchItem(msg, completed: msgType.endsWith('_end')),
+        ),
+      );
+  }
+  return null;
+}
+
+Map<String, dynamic>? _codexHistoricalProtocolMsg(
+  Map<String, dynamic> root, {
+  int depth = 0,
+}) {
+  if (depth > 6) {
+    return null;
+  }
+  final direct = _asCodexMap(root['msg']);
+  if (direct != null) {
+    return direct;
+  }
+  for (final key in const <String>[
+    'params',
+    'message',
+    'payload',
+    'data',
+    'event',
+    'notification',
+    'result',
+  ]) {
+    final nested = _asCodexMap(root[key]);
+    if (nested == null) {
+      continue;
+    }
+    final msg = _codexHistoricalProtocolMsg(nested, depth: depth + 1);
+    if (msg != null) {
+      return msg;
+    }
+  }
+  return null;
+}
+
+String _codexNormalizeProtocolMsgType(String? rawType) {
+  final value = rawType?.trim().toLowerCase() ?? '';
+  if (value.isEmpty) {
+    return '';
+  }
+  return value.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+}
+
+Map<String, dynamic> _codexTopLevelIds(Map<String, dynamic> value) {
+  final ids = <String, dynamic>{};
+  final meta = _asCodexMap(value['_meta']);
+  if (meta != null) {
+    for (final key in const <String>['threadId', 'thread_id']) {
+      if (meta.containsKey(key)) {
+        ids[key] = meta[key];
+      }
+    }
+  }
+  for (final key in const <String>[
+    'threadId',
+    'thread_id',
+    'turnId',
+    'turn_id',
+    'itemId',
+    'item_id',
+  ]) {
+    if (value.containsKey(key)) {
+      ids[key] = value[key];
+    }
+  }
+  return ids;
+}
+
+Map<String, dynamic> _codexHistoricalCommandItem(
+  Map<String, dynamic> msg, {
+  required String msgType,
+}) {
+  final command = _codexCommandTextFromValue(msg['command']);
+  final exitCode = _asCodexInt(msg['exitCode'] ?? msg['exit_code']);
+  final output = msgType == 'exec_command_output_delta'
+      ? _codexHistoricalOutputDelta(msg)
+      : _codexExtractText(
+          msg['aggregatedOutput'] ??
+              msg['aggregated_output'] ??
+              msg['output'] ??
+              msg['stdout'] ??
+              msg['formattedOutput'] ??
+              msg['formatted_output'],
+        );
+  final status =
+      _asCodexString(msg['status']) ??
+      (msgType == 'exec_command_begin'
+          ? 'in_progress'
+          : exitCode == null
+          ? 'completed'
+          : exitCode == 0
+          ? 'completed'
+          : 'failed');
+  return <String, dynamic>{
+    ...msg,
+    'type': 'commandExecution',
+    if (command != null) 'command': command,
+    'cwd': msg['cwd'],
+    'processId': msg['processId'] ?? msg['process_id'],
+    'process_id': msg['process_id'] ?? msg['processId'],
+    'aggregatedOutput': output,
+    'aggregated_output': output,
+    'stdout': msg['stdout'],
+    'stderr': msg['stderr'],
+    'exitCode': exitCode,
+    'exit_code': exitCode,
+    'status': status,
+  };
+}
+
+Map<String, dynamic> _codexHistoricalMcpToolItem(
+  Map<String, dynamic> msg, {
+  required bool completed,
+}) {
+  final invocation =
+      _asCodexMap(msg['invocation']) ?? const <String, dynamic>{};
+  final resultFields = _codexHistoricalMcpResultFields(msg['result']);
+  return <String, dynamic>{
+    ...msg,
+    'type': 'mcpToolCall',
+    'server': invocation['server'] ?? msg['server'],
+    'tool': invocation['tool'] ?? msg['tool'],
+    'arguments': invocation['arguments'] ?? msg['arguments'],
+    'status': completed
+        ? (resultFields['status'] ?? msg['status'] ?? 'completed')
+        : 'in_progress',
+    ...resultFields,
+  };
+}
+
+Map<String, dynamic> _codexHistoricalMcpResultFields(dynamic value) {
+  if (value == null) {
+    return const <String, dynamic>{};
+  }
+  final map = _asCodexMap(value);
+  if (map != null) {
+    if (map.containsKey('Ok') || map.containsKey('ok')) {
+      return <String, dynamic>{
+        'status': 'completed',
+        'result': map['Ok'] ?? map['ok'],
+      };
+    }
+    if (map.containsKey('Err') || map.containsKey('err')) {
+      final error = map['Err'] ?? map['err'];
+      return <String, dynamic>{
+        'status': 'failed',
+        'error': error is Map ? error : <String, dynamic>{'message': error},
+      };
+    }
+  }
+  return <String, dynamic>{'status': 'completed', 'result': value};
+}
+
+Map<String, dynamic> _codexHistoricalWebSearchItem(
+  Map<String, dynamic> msg, {
+  required bool completed,
+}) {
+  final action = _asCodexMap(msg['action']);
+  return <String, dynamic>{
+    ...msg,
+    'type': 'webSearch',
+    'query': msg['query'] ?? action?['query'],
+    'status': completed ? 'completed' : 'in_progress',
+  };
+}
+
+Map<String, dynamic> _codexHistoricalPatchItem(
+  Map<String, dynamic> msg, {
+  required bool completed,
+}) {
+  final success = msg['success'];
+  return <String, dynamic>{
+    ...msg,
+    'type': 'fileChange',
+    'changes': msg['changes'],
+    'stdout': msg['stdout'],
+    'stderr': msg['stderr'],
+    'success': success,
+    'status':
+        _asCodexString(msg['status']) ??
+        (completed
+            ? success == false
+                  ? 'failed'
+                  : 'completed'
+            : 'in_progress'),
+  };
+}
+
+String? _codexCommandTextFromValue(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is String) {
+    final text = value.trim();
+    return text.isEmpty ? null : text;
+  }
+  if (value is List) {
+    final parts = value
+        .map(_codexExtractText)
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    return parts.isEmpty ? null : parts.join(' ');
+  }
+  final text = _codexExtractText(value).trim();
+  return text.isEmpty ? null : text;
+}
+
+String _codexHistoricalOutputDelta(Map<String, dynamic> msg) {
+  final decoded =
+      _decodeCodexBase64(msg['chunk']) ??
+      _decodeCodexByteList(msg['chunk']) ??
+      _decodeCodexBase64(msg['deltaBase64']) ??
+      _decodeCodexBase64(msg['delta_base64']) ??
+      _codexExtractText(msg['delta'] ?? msg['output'] ?? msg['text']);
+  final stream = _asCodexString(msg['stream'])?.toLowerCase();
+  if (decoded.isEmpty || stream == null || stream == 'stdout') {
+    return decoded;
+  }
+  return '\n[$stream]\n$decoded${decoded.endsWith('\n') ? '' : '\n'}';
+}
+
+String? _decodeCodexBase64(dynamic value) {
+  final encoded = _asCodexString(value);
+  if (encoded == null) {
+    return null;
+  }
+  try {
+    return utf8.decode(base64Decode(encoded), allowMalformed: true);
+  } catch (_) {
+    return null;
+  }
+}
+
+String? _decodeCodexByteList(dynamic value) {
+  if (value is! List) {
+    return null;
+  }
+  final bytes = <int>[];
+  for (final item in value) {
+    final byte = _asCodexInt(item);
+    if (byte == null || byte < 0 || byte > 255) {
+      return null;
+    }
+    bytes.add(byte);
+  }
+  try {
+    return utf8.decode(bytes, allowMalformed: true);
+  } catch (_) {
+    return null;
+  }
+}
+
+Map<String, dynamic> _codexMergeEnvelopeIds(
+  Map<String, dynamic> envelope,
+  Map<String, dynamic> item,
+) {
+  final merged = Map<String, dynamic>.from(item);
+  for (final key in const <String>[
+    'threadId',
+    'thread_id',
+    'turnId',
+    'turn_id',
+    'itemId',
+    'item_id',
+  ]) {
+    if (!merged.containsKey(key) && envelope.containsKey(key)) {
+      merged[key] = envelope[key];
+    }
+  }
+  return merged;
+}
+
+Map<String, dynamic>? _codexNormalizeHistoricalItem(Map<String, dynamic> item) {
+  final normalized = Map<String, dynamic>.from(item);
+  var itemType = canonicalCodexItemType(_asCodexString(normalized['type']));
+  final role = _asCodexString(
+    normalized['role'] ?? _asCodexMap(normalized['author'])?['role'],
+  )?.toLowerCase();
+  if (itemType == 'message' || itemType.isEmpty) {
+    if (role == 'user') {
+      itemType = 'userMessage';
+    } else if (role == 'assistant') {
+      itemType = 'agentMessage';
+    }
+  }
+  if ((itemType == 'output_diff' || itemType == 'pr') &&
+      (normalized['diff'] != null || normalized['output_diff'] != null)) {
+    itemType = 'fileChange';
+    normalized['changes'] ??= normalized['diff'] ?? normalized['output_diff'];
+  }
+  if (itemType.isEmpty) {
+    if (normalized['command'] != null || normalized['cmd'] != null) {
+      itemType = 'commandExecution';
+    } else if (normalized['name'] != null && normalized['arguments'] != null) {
+      itemType = 'function_call';
+    } else if ((normalized['callId'] != null ||
+            normalized['call_id'] != null) &&
+        normalized['output'] != null) {
+      itemType = 'function_call_output';
+    }
+  }
+  if (!_codexLooksLikeHistoricalItemType(itemType)) {
+    return null;
+  }
+  normalized['type'] = itemType;
+  return normalized;
+}
+
+bool _codexLooksLikeHistoricalItemType(String itemType) {
+  final canonical = canonicalCodexItemType(itemType);
+  return canonical == 'userMessage' ||
+      canonical == 'agentMessage' ||
+      canonical == 'reasoning' ||
+      _codexHistoricalToolItemTypes.contains(canonical) ||
+      _codexHistoricalToolOutputItemTypes.contains(canonical);
+}
+
+String _codexHistoricalItemDedupeKey(Map<String, dynamic> item) {
+  final type = canonicalCodexItemType(_asCodexString(item['type']));
+  final id =
+      _asCodexString(
+        item['id'] ??
+            item['itemId'] ??
+            item['item_id'] ??
+            item['callId'] ??
+            item['call_id'] ??
+            item['processId'] ??
+            item['process_id'] ??
+            item['processHandle'] ??
+            item['process_handle'],
+      ) ??
+      _codexStableItemKey(item);
+  return '$type:$id';
+}
+
 bool _codexLatestTurnLooksExternallyActive(Map<String, dynamic> response) {
   final turns = _codexTurnsFromThreadResponse(response);
   if (turns == null || turns.isEmpty) {
@@ -1836,8 +2560,7 @@ bool _codexLatestTurnLooksExternallyActive(Map<String, dynamic> response) {
         _codexTimeValueMs(turn['completedAt'] ?? turn['completed_at']) ??
         _codexTimeValueMs(turn['finishedAt'] ?? turn['finished_at']);
     final hasError = turn['error'] != null;
-    final rawItems = turn['items'];
-    final hasItems = rawItems is List && rawItems.isNotEmpty;
+    final hasItems = _codexHistoricalItemsFromTurn(turn).isNotEmpty;
     if (completedAt == null &&
         !hasError &&
         hasItems &&
@@ -1880,15 +2603,9 @@ String _codexThreadContentSignature(Map<String, dynamic> response) {
         _codexTimeValueMs(turn['completedAt'] ?? turn['completed_at']) ?? '',
       )
       ..write('|');
-    final rawItems = turn['items'];
-    if (rawItems is! List) {
-      continue;
-    }
+    final rawItems = _codexHistoricalItemsFromTurn(turn);
     for (var itemIndex = 0; itemIndex < rawItems.length; itemIndex += 1) {
-      final item = _asCodexMap(rawItems[itemIndex]);
-      if (item == null) {
-        continue;
-      }
+      final item = rawItems[itemIndex];
       buffer
         ..write(_asCodexString(item['id']) ?? '$turnIndex-$itemIndex')
         ..write(',')
@@ -1964,6 +2681,7 @@ List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
     snapshotMessageIds: snapshotById.keys.toSet(),
     snapshotUserTextCounts: _remoteUserMessageTextCounts(snapshotMessages),
   );
+  final snapshotTaskIds = _remoteSnapshotTaskIds(snapshotMessages);
   final mergedById = <String, ChatMessageModel>{};
   for (final snapshot in snapshotMessages) {
     final existing = existingById[snapshot.id];
@@ -1992,6 +2710,7 @@ List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
       existing,
       activeTaskId: activeTaskId,
       isAiResponding: isAiResponding,
+      snapshotTaskIds: snapshotTaskIds,
     )) {
       continue;
     }
@@ -2027,12 +2746,30 @@ bool _shouldPreserveRemoteRuntimeMessage(
   ChatMessageModel message, {
   required String? activeTaskId,
   required bool isAiResponding,
+  required Set<String> snapshotTaskIds,
 }) {
-  if (!isAiResponding || activeTaskId == null) {
-    return false;
+  final isCodexTool = _isCodexToolSummaryMessage(message);
+  if (isAiResponding &&
+      activeTaskId != null &&
+      _messageBelongsToTask(message, activeTaskId)) {
+    return isCodexTool || _isInFlightCodexMessage(message);
   }
-  return _messageBelongsToTask(message, activeTaskId) &&
-      _isInFlightCodexMessage(message);
+  if (isCodexTool) {
+    final taskId = _messageTaskId(message);
+    return taskId != null && snapshotTaskIds.contains(taskId);
+  }
+  return false;
+}
+
+Set<String> _remoteSnapshotTaskIds(List<ChatMessageModel> messages) {
+  final ids = <String>{};
+  for (final message in messages) {
+    final taskId = _messageTaskId(message);
+    if (taskId != null) {
+      ids.add(taskId);
+    }
+  }
+  return ids;
 }
 
 Map<String, int> _remoteUserMessageTextCounts(List<ChatMessageModel> messages) {
@@ -2091,12 +2828,22 @@ bool _messageBelongsToTask(ChatMessageModel message, String? taskId) {
   if (normalizedTaskId.isEmpty) {
     return false;
   }
+  return _messageTaskId(message) == normalizedTaskId;
+}
+
+String? _messageTaskId(ChatMessageModel message) {
   final cardData = message.cardData;
   final parentTaskId =
       _asCodexString(message.streamMeta?['parentTaskId']) ??
       _asCodexString(cardData?['taskId']) ??
       _asCodexString(cardData?['taskID']);
-  return parentTaskId == normalizedTaskId;
+  return parentTaskId;
+}
+
+bool _isCodexToolSummaryMessage(ChatMessageModel message) {
+  final cardData = message.cardData;
+  return cardData?['type'] == 'agent_tool_summary' &&
+      (cardData?['uiStyle'] ?? '').toString().trim() == 'codex_tool';
 }
 
 bool _isInFlightCodexMessage(ChatMessageModel message) {
@@ -2159,17 +2906,18 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
     final turnStartedAt =
         _codexTimeValueMs(turn['startedAt'] ?? turn['started_at']) ??
         DateTime.now().millisecondsSinceEpoch;
-    final rawItems = turn['items'];
-    if (rawItems is! List) {
+    final rawItems = _codexHistoricalItemsFromTurn(turn);
+    if (rawItems.isEmpty) {
       continue;
     }
     for (var itemIndex = 0; itemIndex < rawItems.length; itemIndex += 1) {
-      final item = _asCodexMap(rawItems[itemIndex]);
-      if (item == null) {
-        continue;
-      }
-      final itemType = _asCodexString(item['type']) ?? '';
-      final itemId = _asCodexString(item['id']) ?? '$turnId-item-$itemIndex';
+      final item = rawItems[itemIndex];
+      final itemType = canonicalCodexItemType(_asCodexString(item['type']));
+      final itemId =
+          _asCodexString(item['id']) ??
+          _asCodexString(item['callId']) ??
+          _asCodexString(item['call_id']) ??
+          '$turnId-${_codexStableItemKey(item)}';
       final createdAt = DateTime.fromMillisecondsSinceEpoch(
         (_codexTimeValueMs(
                   item['createdAt'] ??
@@ -2284,6 +3032,117 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
         );
         continue;
       }
+      if (_codexHistoricalToolOutputItemTypes.contains(itemType)) {
+        final outputText = _codexRawOutputText(item).trimRight();
+        final callId =
+            _asCodexString(item['callId']) ?? _asCodexString(item['call_id']);
+        final existingIndex = callId == null
+            ? -1
+            : _codexFindToolMessageIndexForCallId(chronological, callId);
+        if (existingIndex != -1) {
+          final existing = chronological[existingIndex];
+          final existingCardData = Map<String, dynamic>.from(
+            existing.cardData ?? const <String, dynamic>{},
+          );
+          final existingToolType = (existingCardData['toolType'] ?? '')
+              .toString();
+          final terminalOutput = existingToolType == 'terminal'
+              ? [
+                  (existingCardData['terminalOutput'] ?? '')
+                      .toString()
+                      .trimRight(),
+                  outputText,
+                ].where((part) => part.isNotEmpty).join('\n')
+              : (existingCardData['terminalOutput'] ?? '').toString();
+          final summary = outputText.isNotEmpty
+              ? _truncateCodexText(outputText, 96)
+              : (existingCardData['summary'] ?? '').toString();
+          existingCardData.addAll(<String, dynamic>{
+            'status': 'success',
+            'summary': summary,
+            'progress': summary,
+            'resultPreviewJson': _safeCodexJson(item['output'] ?? item),
+            'rawResultJson': _safeCodexJson(item),
+            'terminalOutput': terminalOutput,
+            'terminalOutputDelta': '',
+            'showTerminalOutput':
+                terminalOutput.isNotEmpty || existingToolType == 'terminal',
+          });
+          final existingSeq = _asCodexInt(existing.streamMeta?['seq']) ?? seq;
+          chronological[existingIndex] = existing.copyWith(
+            content: {'cardData': existingCardData, 'id': existing.id},
+            streamMeta: ensureAgentStreamMessageMeta(
+              existing.streamMeta,
+              seq: existingSeq,
+              roundIndex: existingSeq,
+              kind: 'tool_completed',
+              parentTaskId: turnId,
+              entryId: existing.id,
+              isFinal: true,
+            ),
+          );
+          continue;
+        }
+        seq += 1;
+        final outputItemId = itemId.startsWith('$turnId-item-')
+            ? '$turnId-${_codexStableItemKey(item)}'
+            : itemId;
+        final toolInfo = normalizeCodexToolCall(
+          item,
+          itemType: itemType,
+          fallbackToolType: itemType == 'tool_search_output'
+              ? 'search'
+              : 'tool',
+          fallbackStatus: 'success',
+        );
+        final toolKind = codexToolCardSuffix(
+          toolInfo.toolType,
+          itemType: itemType,
+        );
+        final cardId = '$outputItemId-codex-$toolKind';
+        final summary = outputText.isNotEmpty
+            ? _truncateCodexText(outputText, 96)
+            : toolInfo.summary;
+        chronological.add(
+          ChatMessageModel.cardMessage(
+            <String, dynamic>{
+              'type': 'agent_tool_summary',
+              'uiStyle': 'codex_tool',
+              'taskId': turnId,
+              'toolName': toolInfo.toolName,
+              'displayName': toolInfo.displayName,
+              'toolTitle': toolInfo.toolTitle,
+              'cardId': cardId,
+              'toolType': toolInfo.toolType,
+              if (toolInfo.serverName != null)
+                'serverName': toolInfo.serverName,
+              'status': 'success',
+              'summary': summary,
+              'progress': summary,
+              'argsJson': toolInfo.argsJson,
+              'resultPreviewJson': toolInfo.resultPreviewJson,
+              'rawResultJson': toolInfo.rawResultJson,
+              'terminalOutput': toolInfo.toolType == 'terminal'
+                  ? outputText
+                  : '',
+              'terminalOutputDelta': '',
+              'showTerminalOutput': toolInfo.toolType == 'terminal',
+              'showRawResult': true,
+            },
+            id: cardId,
+            streamMeta: ensureAgentStreamMessageMeta(
+              null,
+              seq: seq,
+              roundIndex: seq,
+              kind: 'tool_completed',
+              parentTaskId: turnId,
+              entryId: cardId,
+              isFinal: true,
+            ),
+          ).copyWith(createAt: createdAt),
+        );
+        continue;
+      }
       if (_codexHistoricalToolItemTypes.contains(itemType)) {
         seq += 1;
         final toolInfo = normalizeCodexToolCall(
@@ -2351,6 +3210,7 @@ List<ChatMessageModel> _codexMessagesFromThreadResponse(
             : null;
         final cardData = <String, dynamic>{
           'type': 'agent_tool_summary',
+          'uiStyle': 'codex_tool',
           'taskId': turnId,
           'toolName': toolInfo.toolName,
           'displayName': toolInfo.displayName,
@@ -2836,17 +3696,135 @@ String _safeCodexJson(dynamic value) {
 
 const Set<String> _codexHistoricalToolItemTypes = <String>{
   'commandExecution',
+  'local_shell_call',
+  'commandExec',
+  'processExecution',
   'fileChange',
   'tool',
   'mcpToolCall',
   'dynamicToolCall',
+  'function_call',
+  'custom_tool_call',
+  'tool_search_call',
   'webSearch',
+  'web_search_call',
   'imageView',
   'imageGeneration',
+  'image_generation_call',
   'collabAgentToolCall',
   'collabToolCall',
   'plan',
 };
+
+const Set<String> _codexHistoricalToolOutputItemTypes = <String>{
+  'function_call_output',
+  'custom_tool_call_output',
+  'tool_search_output',
+};
+
+int _codexFindToolMessageIndexForCallId(
+  List<ChatMessageModel> messages,
+  String callId,
+) {
+  final normalizedCallId = callId.trim();
+  if (normalizedCallId.isEmpty) {
+    return -1;
+  }
+  for (var index = messages.length - 1; index >= 0; index -= 1) {
+    final cardData = messages[index].cardData;
+    if ((cardData?['type'] ?? '').toString() != 'agent_tool_summary') {
+      continue;
+    }
+    if (_codexToolCardContainsCallId(cardData!, normalizedCallId)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+bool _codexToolCardContainsCallId(
+  Map<String, dynamic> cardData,
+  String callId,
+) {
+  for (final key in const <String>[
+    'rawResultJson',
+    'resultPreviewJson',
+    'argsJson',
+  ]) {
+    final text = (cardData[key] ?? '').toString().trim();
+    if (text.isEmpty) {
+      continue;
+    }
+    try {
+      if (_codexValueContainsCallId(jsonDecode(text), callId)) {
+        return true;
+      }
+    } catch (_) {
+      continue;
+    }
+  }
+  return false;
+}
+
+bool _codexValueContainsCallId(dynamic value, String callId) {
+  if (value == null) {
+    return false;
+  }
+  if (value is String || value is num || value is bool) {
+    return value.toString() == callId;
+  }
+  final map = _asCodexMap(value);
+  if (map != null) {
+    final direct =
+        _asCodexString(map['callId']) ??
+        _asCodexString(map['call_id']) ??
+        _asCodexString(map['id']);
+    if (direct == callId) {
+      return true;
+    }
+    return map.values.any(
+      (nested) => _codexValueContainsCallId(nested, callId),
+    );
+  }
+  if (value is List) {
+    return value.any((nested) => _codexValueContainsCallId(nested, callId));
+  }
+  return false;
+}
+
+String _codexRawOutputText(Map<String, dynamic> item) {
+  final output = item['output'];
+  final text = _codexExtractText(
+    output ?? item['tools'] ?? item['result'] ?? item['content'],
+  );
+  if (text.trim().isNotEmpty) {
+    return text;
+  }
+  if (output != null) {
+    return _safeCodexJson(output);
+  }
+  return '';
+}
+
+String _codexStableItemKey(Map<String, dynamic> item) {
+  final stablePayload = <String, dynamic>{
+    'type': item['type'],
+    'name': item['name'],
+    'namespace': item['namespace'],
+    'arguments': item['arguments'],
+    'action': item['action'],
+    'execution': item['execution'],
+    'query': item['query'],
+    'output': item['output'],
+    'status': item['status'],
+  };
+  var hash = 0x811c9dc5;
+  for (final codeUnit in _safeCodexJson(stablePayload).codeUnits) {
+    hash ^= codeUnit;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return 'raw-${hash.toRadixString(16).padLeft(8, '0')}';
+}
 
 String? _codexLastPathSegment(String path) {
   final normalized = path.trim().replaceAll(RegExp(r'/+$'), '');

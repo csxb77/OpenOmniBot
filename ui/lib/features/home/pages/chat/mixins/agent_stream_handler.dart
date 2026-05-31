@@ -961,6 +961,9 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
           : '';
       final cardData = <String, dynamic>{
         'type': 'agent_tool_summary',
+        'uiStyle': event.uiStyle.isNotEmpty
+            ? event.uiStyle
+            : (existingCardData['uiStyle'] ?? '').toString(),
         'taskId': taskId,
         'cardId': cardId,
         'toolName': event.toolName,

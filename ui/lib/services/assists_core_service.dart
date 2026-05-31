@@ -98,6 +98,7 @@ class AgentToolEventData {
   final String displayName;
   final String toolTitle;
   final String toolType;
+  final String uiStyle;
   final String? serverName;
   final String status;
   final String argsJson;
@@ -126,6 +127,7 @@ class AgentToolEventData {
     required this.displayName,
     this.toolTitle = '',
     required this.toolType,
+    this.uiStyle = '',
     this.serverName,
     this.status = '',
     this.argsJson = '',
@@ -165,6 +167,7 @@ class AgentToolEventData {
       fallbackStatus: _asNonEmptyString(raw['status']) ?? '',
     );
     final explicitStatus = codexToolStatusIsExplicit(raw);
+    final isCodexTool = itemType != null && isCodexToolItemType(itemType);
     return AgentToolEventData(
       taskId: (raw['taskId'] ?? '').toString(),
       cardId: (raw['cardId'] ?? '').toString(),
@@ -175,6 +178,10 @@ class AgentToolEventData {
           normalized.displayName,
       toolTitle: _asNonEmptyString(raw['toolTitle']) ?? normalized.toolTitle,
       toolType: _asNonEmptyString(raw['toolType']) ?? normalized.toolType,
+      uiStyle:
+          _asNonEmptyString(raw['uiStyle']) ??
+          _asNonEmptyString(raw['ui_style']) ??
+          (isCodexTool ? 'codex_tool' : ''),
       serverName: _asNonEmptyString(raw['serverName']) ?? normalized.serverName,
       status: explicitStatus ? normalized.status : '',
       argsJson:

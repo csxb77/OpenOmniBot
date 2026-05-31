@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_summary_card.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_transcript.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
@@ -118,6 +119,61 @@ void main() {
     expect(sheet, findsNothing);
   });
 
+  testWidgets('codex tool card uses inline tool row style', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: AgentToolSummaryCard(
+              cardData: {
+                'type': 'agent_tool_summary',
+                'status': 'success',
+                'toolTitle': '读取 README.md',
+                'toolType': 'workspace',
+                'summary': '读取完成',
+                'argsJson': jsonEncode({'path': 'README.md'}),
+                'rawResultJson': jsonEncode({'type': 'mcpToolCall'}),
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('读取 README.md'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.folder), findsOneWidget);
+    expect(find.text('工作区'), findsNothing);
+
+    await tester.tap(find.text('读取 README.md'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(kAgentToolDetailSheetKey), findsOneWidget);
+  });
+
+  testWidgets('running codex inline tool title uses shimmer', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: AgentToolSummaryCard(
+              cardData: {
+                'type': 'agent_tool_summary',
+                'status': 'running',
+                'toolTitle': 'Read README.md',
+                'toolType': 'workspace',
+                'summary': 'reading',
+                'rawResultJson': jsonEncode({'type': 'function_call'}),
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Read README.md'), findsOneWidget);
+    expect(find.byType(ShaderMask), findsOneWidget);
+  });
+
   testWidgets(
     'interrupted status shows stopped state without loading spinner',
     (tester) async {
@@ -137,7 +193,7 @@ void main() {
       );
 
       expect(find.text('\u4E2D\u65AD'), findsOneWidget);
-      expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+      expect(find.byIcon(LucideIcons.stopCircle), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );
@@ -161,7 +217,7 @@ void main() {
     );
 
     expect(find.text('超时'), findsOneWidget);
-    expect(find.byIcon(Icons.hourglass_top_rounded), findsOneWidget);
+    expect(find.byIcon(LucideIcons.hourglass), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
@@ -391,7 +447,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(find.text(thinkingLine), findsNothing);
     expect(find.text(firstStatusLine), findsNothing);
     expect(find.text(resultLine), findsOneWidget);
-    expect(find.byIcon(Icons.psychology_alt_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.build_circle_outlined), findsOneWidget);
+    expect(find.byIcon(LucideIcons.brain), findsOneWidget);
+    expect(find.byIcon(LucideIcons.wrench), findsOneWidget);
   });
 }

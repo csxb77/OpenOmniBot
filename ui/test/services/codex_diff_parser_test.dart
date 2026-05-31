@@ -119,6 +119,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     });
 
     expect(event.toolType, 'workspace');
+    expect(event.uiStyle, 'codex_tool');
     expect(event.toolTitle, 'Read README.md');
     expect(event.status, 'success');
     expect(event.argsJson, contains('README.md'));

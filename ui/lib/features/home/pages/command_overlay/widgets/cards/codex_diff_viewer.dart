@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/codex_diff_parser.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
@@ -108,7 +109,7 @@ class _DiffOverviewBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.compare_arrows_rounded, size: 18, color: colors.icon),
+          Icon(LucideIcons.gitCompareArrows, size: 18, color: colors.icon),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -200,10 +201,10 @@ class _DiffFileSection extends StatelessWidget {
                     children: [
                       Icon(
                         file.isNewFile
-                            ? Icons.add_circle_outline_rounded
+                            ? LucideIcons.circlePlus
                             : file.isDeletedFile
-                            ? Icons.remove_circle_outline_rounded
-                            : Icons.description_outlined,
+                            ? LucideIcons.circleMinus
+                            : LucideIcons.fileText,
                         size: 17,
                         color: colors.icon,
                       ),
