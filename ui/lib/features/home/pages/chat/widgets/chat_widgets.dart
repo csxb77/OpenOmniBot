@@ -658,12 +658,17 @@ class _GlassPillIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final isDark = context.isDarkTheme;
+    // 渐变 tint 与 [OmniGlassPanel] 完全对齐(同 alpha)——胶囊模式下
+    // 上半 (trigger) 与下半 (popup) 接缝处不能有任何饱和度差,否则会出现
+    // "上面比下面亮一点"的视觉断层。改之前 _GlassPillIcon 用的是更深的
+    // 0.32/0.18 (dark) / 0.55/0.30 (light),独立存在时手感更"实",但拼成
+    // 胶囊就露馅了。这里统一回 0.26/0.12 (dark) / 0.40/0.18 (light)。
     final topTint = isDark
-        ? palette.surfacePrimary.withValues(alpha: 0.32)
-        : Colors.white.withValues(alpha: 0.55);
+        ? palette.surfacePrimary.withValues(alpha: 0.26)
+        : Colors.white.withValues(alpha: 0.40);
     final bottomTint = isDark
-        ? palette.surfaceSecondary.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.30);
+        ? palette.surfaceSecondary.withValues(alpha: 0.12)
+        : Colors.white.withValues(alpha: 0.18);
     // 深色模式下边线压到 0.06——之前 0.18 在暗底上绕图标一圈,视觉上就是
     // 白色描边的"框",而不是玻璃。和 [OmniGlassPanel] 同步,把"边界"交给
     // 顶部高光 + 渐变 tint + popup 阴影去做,均匀边线退到肉眼几乎察觉不到。
