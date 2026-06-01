@@ -43,11 +43,15 @@ class OmniGlassPanel extends StatelessWidget {
     final bottomTint = isDark
         ? palette.surfaceSecondary.withValues(alpha: 0.12)
         : Colors.white.withValues(alpha: 0.18);
+    // 深色模式下故意把整圈边线压得极弱(0.08)——之前 0.22 在暗底上一圈白线
+    // 看起来就是"PPT 描边",完全没有玻璃感。真玻璃在暗环境里是"边线几乎消
+    // 失、顶部高光独自承担定义边界",所以这里把均匀边线退到肉眼几乎觉察不到,
+    // 让 [highlightColor] 的顶部 1px 渐变去做"光打在玻璃顶上"的活儿。
     final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.22)
+        ? Colors.white.withValues(alpha: 0.08)
         : Colors.white.withValues(alpha: 0.82);
     final highlightColor = isDark
-        ? Colors.white.withValues(alpha: 0.30)
+        ? Colors.white.withValues(alpha: 0.45)
         : Colors.white.withValues(alpha: 0.86);
     final accentGlow = palette.accentPrimary.withValues(
       alpha: isDark ? 0.10 : 0.08,
@@ -97,9 +101,12 @@ class OmniGlassPanel extends StatelessWidget {
             child: Stack(
               children: [
                 if (showTopHighlight)
+                  // 顶部高光横向覆盖更广(8 vs 之前 18),让"光面"延伸出去,
+                  // 不再只是中段一小截亮线——配合深色模式下基本消失的边框,
+                  // 视觉上更接近真实玻璃顶边的反光。
                   Positioned(
-                    left: 18,
-                    right: 18,
+                    left: 8,
+                    right: 8,
                     top: 0,
                     child: Container(
                       height: 1,

@@ -664,8 +664,11 @@ class _GlassPillIcon extends StatelessWidget {
     final bottomTint = isDark
         ? palette.surfaceSecondary.withValues(alpha: 0.18)
         : Colors.white.withValues(alpha: 0.30);
+    // 深色模式下边线压到 0.06——之前 0.18 在暗底上绕图标一圈,视觉上就是
+    // 白色描边的"框",而不是玻璃。和 [OmniGlassPanel] 同步,把"边界"交给
+    // 顶部高光 + 渐变 tint + popup 阴影去做,均匀边线退到肉眼几乎察觉不到。
     final borderColor = isDark
-        ? Colors.white.withValues(alpha: 0.18)
+        ? Colors.white.withValues(alpha: 0.06)
         : Colors.white.withValues(alpha: 0.72);
     final borderSide = BorderSide(color: borderColor);
     final BoxBorder border = omitBottomBorder
