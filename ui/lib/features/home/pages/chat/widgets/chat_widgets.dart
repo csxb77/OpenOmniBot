@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,8 @@ import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/services/home_greeting_settings_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/app_background_service.dart';
 import '../../../../../widgets/app_background_widgets.dart';
@@ -475,37 +478,58 @@ class _ChatAppBarModeShortcutButtonState
     if (_isOpen) {
       return;
     }
-    final buttonBox = context.findRenderObject() as RenderBox?;
-    final overlayBox =
-        Navigator.of(context).overlay?.context.findRenderObject() as RenderBox?;
-    if (buttonBox == null || overlayBox == null) {
+    final anchor = glassPopupAnchorFromContext(context);
+    if (anchor == null) {
       return;
     }
-
     setState(() => _isOpen = true);
-    final buttonOffset = buttonBox.localToGlobal(
-      Offset.zero,
-      ancestor: overlayBox,
-    );
-    final buttonRect = buttonOffset & buttonBox.size;
-    final menuAnchorRect = Rect.fromLTWH(
-      buttonRect.left,
-      buttonRect.bottom + 4,
-      buttonRect.width,
-      buttonRect.height,
-    );
-    final action = await showMenu<_ChatAppBarModeShortcutAction>(
+    final palette = context.omniPalette;
+    final selectedColor = palette.accentPrimary;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final canSelectPureChat =
+        widget.isCodexSelected ||
+        (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
+
+    final action = await showGlassPopup<_ChatAppBarModeShortcutAction>(
       context: context,
-      position: RelativeRect.fromRect(
-        menuAnchorRect,
-        Offset.zero & overlayBox.size,
+      anchor: anchor,
+      // 与上方触发按钮零间距相连——触发按钮玻璃的下边线 == popup 玻璃的上边线,
+      // 拼成一个完整胶囊。
+      verticalGap: 0,
+      child: _ChatAppBarModeShortcutMenuContent(
+        // 宽度与触发按钮 (_kChatAppBarAccessoryButtonSize = 40) 完全一致,
+        // edgeAlign 策略下 popup 的左右边 = 按钮的左右边,垂直对齐到一条线。
+        width: _kChatAppBarAccessoryButtonSize,
+        items: [
+          _ChatAppBarModeShortcutMenuItemData(
+            action: _ChatAppBarModeShortcutAction.agent,
+            iconAsset: _kChatAppBarAgentIconAsset,
+            tooltip: isEnglish ? 'Agent mode' : 'Agent 模式',
+            selected: widget.isAgentSelected,
+            enabled: widget.onAgentTap != null,
+            iconSize: 20,
+          ),
+          _ChatAppBarModeShortcutMenuItemData(
+            action: _ChatAppBarModeShortcutAction.codex,
+            iconAsset: _kChatAppBarCodexIconAsset,
+            tooltip: isEnglish ? 'Codex mode' : 'Codex 模式',
+            selected: widget.isCodexSelected,
+            enabled: !widget.isCodexLoading && widget.onCodexTap != null,
+            iconSize: 20,
+          ),
+          _ChatAppBarModeShortcutMenuItemData(
+            action: _ChatAppBarModeShortcutAction.pureChat,
+            iconAsset: _kChatAppBarPureChatIconAsset,
+            tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
+            selected: widget.isPureChatSelected,
+            enabled: canSelectPureChat,
+            iconSize: 18,
+          ),
+        ],
+        selectedColor: selectedColor,
+        iconTint: widget.iconTint,
+        disabledTint: widget.iconTint.withValues(alpha: 0.42),
       ),
-      color: Colors.transparent,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      constraints: const BoxConstraints(minWidth: 40, maxWidth: 40),
-      items: _buildMenuItems(context),
     );
     if (mounted) {
       setState(() => _isOpen = false);
@@ -523,64 +547,6 @@ class _ChatAppBarModeShortcutButtonState
       case null:
         break;
     }
-  }
-
-  List<PopupMenuEntry<_ChatAppBarModeShortcutAction>> _buildMenuItems(
-    BuildContext context,
-  ) {
-    final palette = context.omniPalette;
-    final selectedColor = palette.accentPrimary;
-    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
-    final canSelectPureChat =
-        widget.isCodexSelected ||
-        (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
-    return <PopupMenuEntry<_ChatAppBarModeShortcutAction>>[
-      PopupMenuItem<_ChatAppBarModeShortcutAction>(
-        key: const ValueKey('chat-app-bar-mode-menu-agent'),
-        value: _ChatAppBarModeShortcutAction.agent,
-        enabled: widget.onAgentTap != null,
-        height: 40,
-        padding: EdgeInsets.zero,
-        child: _ChatAppBarModeShortcutMenuIcon(
-          iconAsset: _kChatAppBarAgentIconAsset,
-          tooltip: isEnglish ? 'Agent mode' : 'Agent 模式',
-          selected: widget.isAgentSelected,
-          selectedColor: selectedColor,
-          iconTint: widget.iconTint,
-        ),
-      ),
-      PopupMenuItem<_ChatAppBarModeShortcutAction>(
-        key: const ValueKey('chat-app-bar-mode-menu-codex'),
-        value: _ChatAppBarModeShortcutAction.codex,
-        enabled: !widget.isCodexLoading && widget.onCodexTap != null,
-        height: 40,
-        padding: EdgeInsets.zero,
-        child: _ChatAppBarModeShortcutMenuIcon(
-          iconAsset: _kChatAppBarCodexIconAsset,
-          tooltip: isEnglish ? 'Codex mode' : 'Codex 模式',
-          selected: widget.isCodexSelected,
-          selectedColor: selectedColor,
-          iconTint: widget.iconTint,
-        ),
-      ),
-      PopupMenuItem<_ChatAppBarModeShortcutAction>(
-        key: const ValueKey('chat-app-bar-mode-menu-pure-chat'),
-        value: _ChatAppBarModeShortcutAction.pureChat,
-        enabled: canSelectPureChat,
-        height: 40,
-        padding: EdgeInsets.zero,
-        child: _ChatAppBarModeShortcutMenuIcon(
-          iconAsset: _kChatAppBarPureChatIconAsset,
-          tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
-          selected: widget.isPureChatSelected,
-          selectedColor: selectedColor,
-          iconSize: 18,
-          iconTint: canSelectPureChat
-              ? widget.iconTint
-              : widget.iconTint.withValues(alpha: 0.42),
-        ),
-      ),
-    ];
   }
 
   String _closedIconAsset() {
@@ -637,6 +603,11 @@ class _ChatAppBarModeShortcutButtonState
         ? selectedColor
         : widget.iconTint;
     final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final icon = Center(
+      child: _isOpen
+          ? _buildOpenIcon(effectiveIconColor)
+          : _buildClosedIcon(effectiveIconColor),
+    );
     return Tooltip(
       message: _isOpen
           ? (isEnglish ? 'Close mode menu' : '收起模式菜单')
@@ -647,10 +618,141 @@ class _ChatAppBarModeShortcutButtonState
         child: SizedBox(
           width: _kChatAppBarAccessoryButtonSize,
           height: _kChatAppBarAccessoryButtonSize,
-          child: Center(
-            child: _isOpen
-                ? _buildOpenIcon(effectiveIconColor)
-                : _buildClosedIcon(effectiveIconColor),
+          // 玻璃 pill 只在 mode 列表展开时显示——平时是干净的图标按钮。
+          // 展开时:上半圆 (radius 20 = 半宽) + 下边直,跟下方 popup 的"上直
+          // 下半圆"无缝拼成一个完整的胶囊形状。
+          child: _isOpen
+              ? _GlassPillIcon(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                  omitBottomBorder: true,
+                  child: icon,
+                )
+              : icon,
+        ),
+      ),
+    );
+  }
+}
+
+/// 给 app bar accessory button 用的小型玻璃 pill 背景 (轻量版 [OmniGlassPanel])。
+/// 适合 40×40 小尺寸按钮,只保留必要的模糊和淡 tint,不带大阴影。
+///
+/// 可传入自定义 [borderRadius] —— 跟下方展开 popup 拼接时用半圆即可
+/// (`BorderRadius.vertical(top: Radius.circular(halfWidth))`)。
+/// 拼接时还应设 [omitBottomBorder] = true,这样下边那条 1px 线不会和 popup 顶边
+/// 的边线/高光在接缝处叠加成可见的"分割线"。
+class _GlassPillIcon extends StatelessWidget {
+  const _GlassPillIcon({
+    required this.child,
+    this.borderRadius = const BorderRadius.all(Radius.circular(999)),
+    this.omitBottomBorder = false,
+  });
+
+  final Widget child;
+  final BorderRadiusGeometry borderRadius;
+  final bool omitBottomBorder;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    final isDark = context.isDarkTheme;
+    final topTint = isDark
+        ? palette.surfacePrimary.withValues(alpha: 0.32)
+        : Colors.white.withValues(alpha: 0.55);
+    final bottomTint = isDark
+        ? palette.surfaceSecondary.withValues(alpha: 0.18)
+        : Colors.white.withValues(alpha: 0.30);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.18)
+        : Colors.white.withValues(alpha: 0.72);
+    final borderSide = BorderSide(color: borderColor);
+    final BoxBorder border = omitBottomBorder
+        ? Border(top: borderSide, left: borderSide, right: borderSide)
+        : Border.all(color: borderColor);
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: borderRadius,
+            border: border,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [topTint, bottomTint],
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatAppBarModeShortcutMenuItemData {
+  const _ChatAppBarModeShortcutMenuItemData({
+    required this.action,
+    required this.iconAsset,
+    required this.tooltip,
+    required this.selected,
+    required this.enabled,
+    this.iconSize = 20,
+  });
+
+  final _ChatAppBarModeShortcutAction action;
+  final String iconAsset;
+  final String tooltip;
+  final bool selected;
+  final bool enabled;
+  final double iconSize;
+}
+
+class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
+  const _ChatAppBarModeShortcutMenuContent({
+    required this.width,
+    required this.items,
+    required this.selectedColor,
+    required this.iconTint,
+    required this.disabledTint,
+  });
+
+  final double width;
+  final List<_ChatAppBarModeShortcutMenuItemData> items;
+  final Color selectedColor;
+  final Color iconTint;
+  final Color disabledTint;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: OmniGlassPanel(
+        // 上边直 + 下半圆 (radius 20 = 半宽),跟上方触发按钮的"上半圆 + 下边直"
+        // 在中线 zero-gap 处无缝拼接,整体看上去是一个完整的胶囊。
+        borderRadius: const BorderRadius.vertical(
+          bottom: Radius.circular(20),
+        ),
+        // 接缝处:省略顶边 1px 边线 + 关闭顶部高光条,
+        // 否则与上方触发按钮的下边线会叠成可见的横线。
+        omitTopBorder: true,
+        showTopHighlight: false,
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final item in items)
+                _ChatAppBarModeShortcutMenuRow(
+                  item: item,
+                  selectedColor: selectedColor,
+                  iconTint: iconTint,
+                  disabledTint: disabledTint,
+                ),
+            ],
           ),
         ),
       ),
@@ -658,37 +760,40 @@ class _ChatAppBarModeShortcutButtonState
   }
 }
 
-class _ChatAppBarModeShortcutMenuIcon extends StatelessWidget {
-  const _ChatAppBarModeShortcutMenuIcon({
-    required this.iconAsset,
-    required this.tooltip,
-    required this.selected,
+class _ChatAppBarModeShortcutMenuRow extends StatelessWidget {
+  const _ChatAppBarModeShortcutMenuRow({
+    required this.item,
     required this.selectedColor,
     required this.iconTint,
-    this.iconSize = 20,
+    required this.disabledTint,
   });
 
-  final String iconAsset;
-  final String tooltip;
-  final bool selected;
+  final _ChatAppBarModeShortcutMenuItemData item;
   final Color selectedColor;
   final Color iconTint;
-  final double iconSize;
+  final Color disabledTint;
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? selectedColor : iconTint;
+    final color = !item.enabled
+        ? disabledTint
+        : (item.selected ? selectedColor : iconTint);
     return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        width: 40,
-        height: 40,
-        child: Center(
-          child: SvgPicture.asset(
-            iconAsset,
-            width: iconSize,
-            height: iconSize,
-            colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+      message: item.tooltip,
+      child: InkWell(
+        onTap: item.enabled
+            ? () => Navigator.of(context).pop(item.action)
+            : null,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: 40,
+          child: Center(
+            child: SvgPicture.asset(
+              item.iconAsset,
+              width: item.iconSize,
+              height: item.iconSize,
+              colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+            ),
           ),
         ),
       ),

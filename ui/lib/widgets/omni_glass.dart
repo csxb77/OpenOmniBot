@@ -13,6 +13,8 @@ class OmniGlassPanel extends StatelessWidget {
     this.width,
     this.height,
     this.forceDark = false,
+    this.omitTopBorder = false,
+    this.showTopHighlight = true,
   });
 
   final Widget child;
@@ -21,6 +23,15 @@ class OmniGlassPanel extends StatelessWidget {
   final double? width;
   final double? height;
   final bool forceDark;
+
+  /// 是否省略**顶边**的 1px 边线（默认 false 即画完整四边）。
+  /// 当 popup 紧贴在另一块玻璃下方（如下拉模式列表贴在触发按钮下边）需要拼成
+  /// 一个完整胶囊时设为 true,避免顶边那条 1px 线在拼接处形成"双线"。
+  final bool omitTopBorder;
+
+  /// 是否绘制顶部 1px 的高光渐变（默认 true）。拼接到上方玻璃时也应关掉,
+  /// 否则在接缝处会出现一截多余的亮线。
+  final bool showTopHighlight;
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +52,15 @@ class OmniGlassPanel extends StatelessWidget {
     final accentGlow = palette.accentPrimary.withValues(
       alpha: isDark ? 0.10 : 0.08,
     );
+
+    final borderSide = BorderSide(color: borderColor);
+    final BoxBorder border = omitTopBorder
+        ? Border(
+            left: borderSide,
+            right: borderSide,
+            bottom: borderSide,
+          )
+        : Border.all(color: borderColor);
 
     return Container(
       width: width,
@@ -67,7 +87,7 @@ class OmniGlassPanel extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: borderRadius,
-              border: Border.all(color: borderColor),
+              border: border,
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -76,23 +96,24 @@ class OmniGlassPanel extends StatelessWidget {
             ),
             child: Stack(
               children: [
-                Positioned(
-                  left: 18,
-                  right: 18,
-                  top: 0,
-                  child: Container(
-                    height: 1,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.transparent,
-                          highlightColor,
-                          Colors.transparent,
-                        ],
+                if (showTopHighlight)
+                  Positioned(
+                    left: 18,
+                    right: 18,
+                    top: 0,
+                    child: Container(
+                      height: 1,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.transparent,
+                            highlightColor,
+                            Colors.transparent,
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
                 Padding(padding: padding, child: child),
               ],
             ),
