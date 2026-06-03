@@ -320,6 +320,14 @@ class _SettingsPageState extends State<SettingsPage> {
             onTap: _mcpEnabled && !_mcpBusy ? _showMcpInfo : null,
           ),
           _SettingItem(
+            icon: Icons.forum_outlined,
+            title: 'IMessage',
+            subtitle: context.trLegacy('微信与 Telegram 消息渠道'),
+            onTap: () {
+              GoRouterManager.push('/home/imessage_setting');
+            },
+          ),
+          _SettingItem(
             icon: Icons.code,
             iconSvg: 'assets/home/termux.svg',
             iconColor: AppColors.buttonPrimary,

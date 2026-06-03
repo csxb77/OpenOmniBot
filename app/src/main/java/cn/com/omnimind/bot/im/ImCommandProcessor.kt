@@ -1,0 +1,211 @@
+package cn.com.omnimind.bot.im
+
+import android.content.Context
+import cn.com.omnimind.bot.webchat.AgentRunService
+import cn.com.omnimind.bot.webchat.ConversationDomainService
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+internal class ImCommandProcessor(
+    context: Context,
+    private val store: ImChannelStore,
+    private val statusTextProvider: (ImInboundMessage, ImPeerSession?) -> String
+) {
+    private val conversationService = ConversationDomainService(context.applicationContext)
+    private val agentRunService = AgentRunService(context.applicationContext)
+
+    suspend fun handle(inbound: ImInboundMessage): ImProcessorResult {
+        val text = inbound.text.trim()
+        if (text.isEmpty()) return ImProcessorResult()
+        val session = store.getSession(inbound.channel, inbound.peerId)
+        if (text.startsWith("/")) {
+            return handleCommand(inbound, session, text)
+        }
+        return handleUserMessage(inbound, session, text)
+    }
+
+    private suspend fun handleCommand(
+        inbound: ImInboundMessage,
+        session: ImPeerSession?,
+        rawText: String
+    ): ImProcessorResult {
+        val parts = rawText.split(Regex("\\s+"), limit = 2)
+        val command = parts.first()
+            .removePrefix("/")
+            .substringBefore('@')
+            .trim()
+            .lowercase()
+        val argument = parts.getOrNull(1)?.trim().orEmpty()
+        return when (command) {
+            "help", "h" -> ImProcessorResult(listOf(helpText()))
+            "status" -> ImProcessorResult(listOf(statusTextProvider(inbound, session)))
+            "new", "mode" -> {
+                val mode = normalizeImConversationMode(argument.ifBlank { "agent" })
+                if (mode == null) {
+                    ImProcessorResult(listOf("未知模式：$argument\n用法：/new [agent|chat|codex]"))
+                } else {
+                    val next = createSession(inbound, mode)
+                    store.saveSession(next)
+                    ImProcessorResult(
+                        listOf("已开启 ${imModeLabel(mode)} 对话。\n直接发送消息即可继续。")
+                    )
+                }
+            }
+
+            "cancel", "stop" -> cancelSessionTask(session)
+            "reset", "close" -> {
+                store.clearSession(inbound.channel, inbound.peerId)
+                ImProcessorResult(listOf("已清除当前 IM 会话，下次消息会默认开启 agent 对话。"))
+            }
+
+            "whoami", "id" -> ImProcessorResult(
+                listOf(
+                    "channel=${inbound.channel.id}\npeerId=${inbound.peerId}" +
+                        inbound.peerDisplayName.takeIf { it.isNotBlank() }?.let { "\nname=$it" }.orEmpty()
+                )
+            )
+
+            else -> ImProcessorResult(listOf("未知指令：/$command\n发送 /help 查看可用指令。"))
+        }
+    }
+
+    private suspend fun handleUserMessage(
+        inbound: ImInboundMessage,
+        currentSession: ImPeerSession?,
+        rawText: String
+    ): ImProcessorResult {
+        val session = currentSession ?: createSession(inbound, "normal").also(store::saveSession)
+        val activeTaskId = session.activeTaskId?.takeIf { it.isNotBlank() }
+        if (activeTaskId != null) {
+            if (session.awaitingInput) {
+                return try {
+                    agentRunService.clarifyTask(activeTaskId, rawText)
+                    store.saveSession(session.copy(awaitingInput = false))
+                    ImProcessorResult(listOf("已提交补充信息。"))
+                } catch (error: Throwable) {
+                    ImProcessorResult(
+                        listOf("提交补充信息失败：${error.message ?: error.javaClass.simpleName}")
+                    )
+                }
+            }
+            return ImProcessorResult(listOf("当前会话已有任务运行中。发送 /cancel 可取消后重新提问。"))
+        }
+
+        val normalized = normalizeUserText(rawText)
+        val taskId = UUID.randomUUID().toString()
+        return try {
+            agentRunService.startConversationRun(
+                conversationId = session.conversationId,
+                request = mapOf(
+                    "taskId" to taskId,
+                    "conversationMode" to session.mode,
+                    "userMessage" to normalized.text
+                )
+            )
+            store.saveSession(
+                session.copy(
+                    activeTaskId = taskId,
+                    awaitingInput = false,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            val notice = if (normalized.truncated) {
+                "消息较长，已保留前 $MAX_INBOUND_CHARS 字处理。\n"
+            } else {
+                ""
+            }
+            ImProcessorResult(
+                replies = listOf("${notice}已发送给 ${imModeLabel(session.mode)}，处理中..."),
+                pendingRun = PendingImRun(
+                    taskId = taskId,
+                    channel = inbound.channel,
+                    peerId = inbound.peerId,
+                    conversationId = session.conversationId,
+                    mode = session.mode
+                )
+            )
+        } catch (error: Throwable) {
+            ImProcessorResult(
+                listOf("启动任务失败：${error.message ?: error.javaClass.simpleName}")
+            )
+        }
+    }
+
+    private suspend fun cancelSessionTask(session: ImPeerSession?): ImProcessorResult {
+        val taskId = session?.activeTaskId?.takeIf { it.isNotBlank() }
+            ?: return ImProcessorResult(listOf("当前 IM 会话没有运行中的任务。"))
+        return try {
+            agentRunService.cancelTask(taskId)
+            store.clearActiveTask(taskId)
+            ImProcessorResult(listOf("已取消当前任务。"))
+        } catch (error: Throwable) {
+            ImProcessorResult(listOf("取消失败：${error.message ?: error.javaClass.simpleName}"))
+        }
+    }
+
+    private suspend fun createSession(
+        inbound: ImInboundMessage,
+        mode: String
+    ): ImPeerSession {
+        val title = buildConversationTitle(inbound)
+        val payload = conversationService.createConversation(
+            title = title,
+            mode = mode,
+            summary = "IM ${inbound.channel.title} ${inbound.peerId}"
+        )
+        val conversationId = readLong(payload["id"])
+            ?: throw IllegalStateException("创建对话失败")
+        return ImPeerSession(
+            channel = inbound.channel,
+            peerId = inbound.peerId,
+            displayName = inbound.peerDisplayName,
+            conversationId = conversationId,
+            mode = mode
+        )
+    }
+
+    private fun buildConversationTitle(inbound: ImInboundMessage): String {
+        val display = inbound.peerDisplayName.takeIf { it.isNotBlank() } ?: inbound.peerId
+        val time = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
+        return "IM ${inbound.channel.title} ${display.take(24)} $time"
+    }
+
+    private fun normalizeUserText(text: String): NormalizedImText {
+        val sanitized = text.trim()
+        if (sanitized.length <= MAX_INBOUND_CHARS) {
+            return NormalizedImText(sanitized, truncated = false)
+        }
+        return NormalizedImText(sanitized.take(MAX_INBOUND_CHARS), truncated = true)
+    }
+
+    private fun helpText(): String {
+        return """
+            可用指令：
+            /new [agent|chat|codex] 开启新对话，默认 agent
+            /status 查看连接和当前会话
+            /cancel 取消当前任务
+            /reset 清除当前 IM 会话
+            /whoami 查看当前 peerId
+            /help 查看本说明
+        """.trimIndent()
+    }
+
+    private fun readLong(value: Any?): Long? {
+        return when (value) {
+            is Number -> value.toLong()
+            is String -> value.toLongOrNull()
+            else -> null
+        }
+    }
+
+    private data class NormalizedImText(
+        val text: String,
+        val truncated: Boolean
+    )
+
+    companion object {
+        private const val MAX_INBOUND_CHARS = 32_000
+    }
+}
