@@ -133,15 +133,21 @@ class OmnibotMarkdownBody extends StatelessWidget {
       if (children.isEmpty) {
         return const SizedBox.shrink();
       }
-      return RepaintBoundary(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: children,
+      return KeyedSubtree(
+        key: const ValueKey('omnibot-markdown-table-root'),
+        child: RepaintBoundary(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: children,
+          ),
         ),
       );
     }
-    return _buildMarkdownBody(context, data);
+    return KeyedSubtree(
+      key: const ValueKey('omnibot-markdown-plain-root'),
+      child: _buildMarkdownBody(context, data),
+    );
   }
 
   Widget _buildMarkdownBody(BuildContext context, String source) {
@@ -870,9 +876,6 @@ class OmnibotTableBuilder extends MarkdownElementBuilder {
                 child: _OmnibotMarkdownTableCell(
                   data: cell.source,
                   baseStyle: cellStyle,
-                  selectable: false,
-                  inlineResourcePlainStyle: inlineResourcePlainStyle,
-                  onResourceOpen: onResourceOpen,
                   textAlign: textAlign,
                 ),
               ),
@@ -998,32 +1001,16 @@ class _OmnibotMarkdownTableCell extends StatelessWidget {
   const _OmnibotMarkdownTableCell({
     required this.data,
     required this.baseStyle,
-    required this.selectable,
-    required this.inlineResourcePlainStyle,
-    required this.onResourceOpen,
     required this.textAlign,
   });
 
   final String data;
   final TextStyle baseStyle;
-  final bool selectable;
-  final bool inlineResourcePlainStyle;
-  final OmnibotResourceOpenCallback? onResourceOpen;
   final TextAlign textAlign;
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTextStyle.merge(
-      style: baseStyle,
-      textAlign: textAlign,
-      child: OmnibotMarkdownBody(
-        data: data,
-        baseStyle: baseStyle,
-        selectable: selectable,
-        inlineResourcePlainStyle: inlineResourcePlainStyle,
-        onResourceOpen: onResourceOpen,
-      ),
-    );
+    return Text(data, style: baseStyle, textAlign: textAlign);
   }
 }
 

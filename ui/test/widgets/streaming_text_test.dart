@@ -171,4 +171,34 @@ void main() {
     expect(find.byType(Table), findsOneWidget);
     expect(find.textContaining('后续说明'), findsOneWidget);
   });
+
+  testWidgets(
+    'StreamingText switches between plain markdown and table safely',
+    (tester) async {
+      const snapshots = <String>[
+        '先输出普通段落',
+        '先输出普通段落\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |',
+        '先输出普通段落\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |\n\n继续输出普通段落',
+        '这次又回到普通 **Markdown** 段落',
+        '这次又回到普通 **Markdown** 段落\n\n| X | Y |\n| --- | --- |\n| 1 | 2 |',
+      ];
+
+      for (final snapshot in snapshots) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StreamingText(
+                enableMarkdown: true,
+                selectable: true,
+                fullText: snapshot,
+                style: const TextStyle(fontSize: 14),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 }
