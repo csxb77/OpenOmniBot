@@ -237,6 +237,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     AssistsMessageService.setOnAgentStreamEventCallback(
       _handleAgentStreamEvent,
     );
+    AssistsMessageService.addOnExternalUserMessageAppendedCallback(
+      _handleExternalUserMessageAppended,
+    );
     AssistsMessageService.setOnAgentPromptTokenUsageCallback(
       _handleAgentPromptTokenUsageChanged,
     );
@@ -1697,7 +1700,137 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     _taskBindings[event.taskId] = binding;
     runtime.currentDispatchTaskId ??= event.taskId;
     runtime.lastAgentTaskId = event.taskId;
+    // 外部任务（IM 等）触发：用户消息已经写入 DB，但可能还没进入 runtime.messages
+    // —— Flutter 的 messagesChanged 事件走的是异步 stream listener（微任务），
+    // 而 agent 流事件是同步回调，常常先到达。这里把缺失的用户消息从 DB 补回来，
+    // 否则聊天页只会看到 agent 的回复，没有用户输入。
+    final userEntryId = '${event.taskId}-user';
+    final alreadyPresent = runtime.messages.any((m) => m.id == userEntryId);
+    if (!alreadyPresent) {
+      unawaited(
+        _reconcileExternalUserMessage(
+          conversationId: conversationId,
+          mode: runtimeMode,
+          userEntryId: userEntryId,
+        ),
+      );
+    }
     return (binding: binding, runtime: runtime);
+  }
+
+  void _handleExternalUserMessageAppended(Map<String, dynamic> data) {
+    // 原生侧（IM 等）写完用户消息后直推过来的 payload —— 不依赖 messagesChanged
+    // 微任务，也不依赖 agent 流事件，直接把用户气泡插入 runtime.messages。
+    final conversationId = _asPositiveInt(data['conversationId']);
+    if (conversationId == null) return;
+    final runtimeMode = _runtimeModeFromConversationMode(
+      (data['mode'] ?? data['conversationMode'] ?? '').toString(),
+    );
+    final runtimeKey = _runtimeKey(
+      conversationId: conversationId,
+      mode: runtimeMode,
+    );
+    final runtime = _runtimes[runtimeKey];
+    if (runtime == null) {
+      // 聊天页还没为这个会话建立 runtime —— 没什么可注入的，等聊天页加载时
+      // 自然会从 DB 读到这条用户消息。
+      return;
+    }
+    final entryId = (data['entryId'] ?? '').toString().trim();
+    if (entryId.isEmpty) return;
+    if (runtime.messages.any((m) => m.id == entryId)) return;
+
+    final text = (data['text'] ?? '').toString();
+    final createdAtMs = _asPositiveInt(data['createdAt']) ??
+        DateTime.now().millisecondsSinceEpoch;
+    final createdAt = DateTime.fromMillisecondsSinceEpoch(createdAtMs);
+    final rawAttachments = data['attachments'];
+    final attachments = rawAttachments is List
+        ? rawAttachments
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item.cast()))
+              .toList()
+        : const <Map<String, dynamic>>[];
+
+    final message = ChatMessageModel(
+      id: entryId,
+      type: 1,
+      user: 1,
+      content: <String, dynamic>{
+        'id': entryId,
+        'text': text,
+        if (attachments.isNotEmpty) 'attachments': attachments,
+      },
+      createAt: createdAt,
+    );
+
+    final insertAt = _findInsertIndexByCreatedAt(
+      runtime.messages,
+      message.createAt,
+    );
+    runtime.messages.insert(insertAt, message);
+    notifyListeners();
+  }
+
+  Future<void> _reconcileExternalUserMessage({
+    required int conversationId,
+    required String mode,
+    required String userEntryId,
+  }) async {
+    final runtimeKey = _runtimeKey(conversationId: conversationId, mode: mode);
+    final runtime = _runtimes[runtimeKey];
+    if (runtime == null) return;
+    if (runtime.messages.any((m) => m.id == userEntryId)) return;
+    final conversationMode = switch (mode) {
+      kChatRuntimeModeOpenClaw => ConversationMode.openclaw,
+      kChatRuntimeModeCodex => ConversationMode.codex,
+      _ => ConversationMode.normal,
+    };
+    try {
+      final result = await ConversationHistoryService.getConversationMessagesPaged(
+        conversationId,
+        mode: conversationMode,
+        limit: 100,
+        offset: 0,
+      );
+      final stillMissingFromRuntime = _runtimes[runtimeKey];
+      if (stillMissingFromRuntime == null) return;
+      if (stillMissingFromRuntime.messages.any((m) => m.id == userEntryId)) {
+        return;
+      }
+      ChatMessageModel? userMessage;
+      for (final message in result.messages) {
+        if (message.id == userEntryId) {
+          userMessage = message;
+          break;
+        }
+      }
+      if (userMessage == null) return;
+      final insertAt = _findInsertIndexByCreatedAt(
+        stillMissingFromRuntime.messages,
+        userMessage.createAt,
+      );
+      stillMissingFromRuntime.messages.insert(insertAt, userMessage);
+      notifyListeners();
+    } catch (_) {
+      // 即使 DB 拉取失败也不要崩溃 —— 后续 messagesChanged 事件还有机会补救。
+    }
+  }
+
+  int _findInsertIndexByCreatedAt(
+    List<ChatMessageModel> messages,
+    DateTime createdAt,
+  ) {
+    // runtime.messages 是降序（最新在 index 0），与 Kotlin sortForDisplay 的
+    // .asReversed() 以及 ChatMessageList 用 timelineEntries.length-1-index 反向
+    // 渲染的约定一致 —— 所有 agent 流事件也都是 runtime.messages.insert(0, ...)。
+    // 因此从前往后找第一条 createAt 不晚于新消息的位置，插在它之前即可。
+    for (var i = 0; i < messages.length; i++) {
+      if (!messages[i].createAt.isAfter(createdAt)) {
+        return i;
+      }
+    }
+    return messages.length;
   }
 
   int? _asPositiveInt(dynamic raw) {

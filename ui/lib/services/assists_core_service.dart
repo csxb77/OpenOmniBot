@@ -290,6 +290,11 @@ class AssistsMessageService {
   static final StreamController<Map<String, dynamic>>
   _browserSessionSnapshotChangedController =
       StreamController<Map<String, dynamic>>.broadcast();
+  // IM/WeChat/Telegram 等外部入口直推的用户消息：
+  // 原生侧在写库后立刻 invokeMethod 发过来，runtime 直接插入气泡，
+  // 不依赖 messagesChanged + DB reload 的事件链。
+  static final List<void Function(Map<String, dynamic>)>
+  _onExternalUserMessageAppendedCallbacks = [];
 
   // 改为回调列表，支持多个监听器
   static final List<ChatTaskMessageCallBack> _onChatTaskMessageCallBacks = [];
@@ -358,6 +363,19 @@ class AssistsMessageService {
               (call.arguments as Map?) ?? const <String, dynamic>{},
             ),
           );
+          break;
+        case 'onExternalUserMessageAppended':
+          final data = Map<String, dynamic>.from(
+            (call.arguments as Map?) ?? const <String, dynamic>{},
+          );
+          for (final callback
+              in List<void Function(Map<String, dynamic>)>.from(
+                _onExternalUserMessageAppendedCallbacks,
+              )) {
+            try {
+              callback(data);
+            } catch (_) {}
+          }
           break;
         case 'onBrowserSessionSnapshotUpdated':
           _browserSessionSnapshotChangedController.add(
@@ -651,6 +669,20 @@ class AssistsMessageService {
     AgentStreamEventCallback? callback,
   ) {
     _onAgentStreamEventCallbacks.remove(callback);
+  }
+
+  static void addOnExternalUserMessageAppendedCallback(
+    void Function(Map<String, dynamic>) callback,
+  ) {
+    if (!_onExternalUserMessageAppendedCallbacks.contains(callback)) {
+      _onExternalUserMessageAppendedCallbacks.add(callback);
+    }
+  }
+
+  static void removeOnExternalUserMessageAppendedCallback(
+    void Function(Map<String, dynamic>) callback,
+  ) {
+    _onExternalUserMessageAppendedCallbacks.remove(callback);
   }
 
   // 发送按钮点击事件到Android端

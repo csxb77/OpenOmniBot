@@ -79,6 +79,21 @@ internal class ImCommandProcessor(
         val session = currentSession ?: createSession(inbound, "normal").also(store::saveSession)
         val activeTaskId = session.activeTaskId?.takeIf { it.isNotBlank() }
         if (activeTaskId != null) {
+            // 当前会话已有运行中的任务：仍然把这条 IM 消息落库为用户气泡，
+            // 否则聊天页上完全看不到这条用户输入（无论是 VLM 补充信息还是被拒绝的追加消息）。
+            val followUpEntryId = "$activeTaskId-user-followup-${System.currentTimeMillis()}"
+            try {
+                conversationService.appendUserMessage(
+                    conversationId = session.conversationId,
+                    conversationMode = session.mode,
+                    entryId = followUpEntryId,
+                    text = rawText
+                )
+            } catch (error: Throwable) {
+                return ImProcessorResult(
+                    listOf("保存补充消息失败：${error.message ?: error.javaClass.simpleName}")
+                )
+            }
             if (session.awaitingInput) {
                 return try {
                     agentRunService.clarifyTask(activeTaskId, rawText)
