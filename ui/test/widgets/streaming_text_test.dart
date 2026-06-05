@@ -139,4 +139,36 @@ void main() {
       expect(markdownBody.data, '**新内容** 😀');
     },
   );
+
+  testWidgets('StreamingText renders streaming markdown tables safely', (
+    tester,
+  ) async {
+    const snapshots = <String>[
+      '表格如下：\n\n| 名称 | 状态 |',
+      '表格如下：\n\n| 名称 | 状态 |\n| --- | --- |',
+      '表格如下：\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |',
+      '表格如下：\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |\n| B | 待处理 |',
+      '表格如下：\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |\n| B | 待处理 |\n\n后续说明',
+    ];
+
+    for (final snapshot in snapshots) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StreamingText(
+              enableMarkdown: true,
+              selectable: true,
+              fullText: snapshot,
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    }
+
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.textContaining('后续说明'), findsOneWidget);
+  });
 }

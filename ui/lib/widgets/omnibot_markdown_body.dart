@@ -107,10 +107,48 @@ class OmnibotMarkdownBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final segments = _splitMarkdownTableSegments(data);
+    if (segments.length > 1 ||
+        (segments.length == 1 && segments.first.tableRows != null)) {
+      final styleSheet = _resolveMarkdownStyleSheet(context, baseStyle);
+      final children = <Widget>[];
+      for (final segment in segments) {
+        final tableRows = segment.tableRows;
+        if (tableRows != null) {
+          children.add(
+            OmnibotTableBuilder(
+              baseStyle: baseStyle,
+              selectable: false,
+              inlineResourcePlainStyle: inlineResourcePlainStyle,
+              onResourceOpen: onResourceOpen,
+            )._buildTableFromRows(context, styleSheet, tableRows),
+          );
+          continue;
+        }
+        if (segment.text.trim().isEmpty) {
+          continue;
+        }
+        children.add(_buildMarkdownBody(context, segment.text));
+      }
+      if (children.isEmpty) {
+        return const SizedBox.shrink();
+      }
+      return RepaintBoundary(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: children,
+        ),
+      );
+    }
+    return _buildMarkdownBody(context, data);
+  }
+
+  Widget _buildMarkdownBody(BuildContext context, String source) {
     final styleSheet = _resolveMarkdownStyleSheet(context, baseStyle);
     return RepaintBoundary(
       child: MarkdownBody(
-        data: _linkifyBareOmnibotUris(_withTrailingInlineToken(data)),
+        data: _linkifyBareOmnibotUris(_withTrailingInlineToken(source)),
         selectable: selectable,
         onTapLink: (text, href, title) {
           if (href == null) return;
@@ -210,6 +248,222 @@ MarkdownStyleSheet buildOmnibotMarkdownStyleSheet(
     ),
     tableBody: baseStyle.copyWith(color: baseColor),
   );
+}
+
+class _OmnibotMarkdownSegment {
+  const _OmnibotMarkdownSegment.text(this.text) : tableRows = null;
+
+  const _OmnibotMarkdownSegment.table(this.tableRows) : text = '';
+
+  final String text;
+  final List<_OmnibotTableRowSpec>? tableRows;
+}
+
+List<_OmnibotMarkdownSegment> _splitMarkdownTableSegments(String source) {
+  final lines = source.split('\n');
+  final segments = <_OmnibotMarkdownSegment>[];
+  final textBuffer = StringBuffer();
+  var index = 0;
+
+  void flushText() {
+    if (textBuffer.isEmpty) {
+      return;
+    }
+    segments.add(_OmnibotMarkdownSegment.text(textBuffer.toString()));
+    textBuffer.clear();
+  }
+
+  while (index < lines.length) {
+    final table = _tryParseMarkdownTable(lines, index);
+    if (table == null) {
+      if (textBuffer.isNotEmpty) {
+        textBuffer.writeln();
+      }
+      textBuffer.write(lines[index]);
+      index += 1;
+      continue;
+    }
+    flushText();
+    segments.add(_OmnibotMarkdownSegment.table(table.rows));
+    index = table.nextLineIndex;
+  }
+
+  flushText();
+  if (segments.isEmpty) {
+    return const <_OmnibotMarkdownSegment>[_OmnibotMarkdownSegment.text('')];
+  }
+  return segments;
+}
+
+_ParsedMarkdownTable? _tryParseMarkdownTable(List<String> lines, int index) {
+  if (index + 1 >= lines.length) {
+    return null;
+  }
+  final divider = lines[index + 1];
+  if (!OmnibotTableSyntax._tableDividerPattern.hasMatch(divider)) {
+    return null;
+  }
+
+  final alignments = _parseMarkdownTableAlignments(divider);
+  if (alignments.isEmpty) {
+    return null;
+  }
+  final headerCells = _parseMarkdownTableCells(lines[index], alignments);
+  if (headerCells.length != alignments.length) {
+    return null;
+  }
+
+  final rows = <_OmnibotTableRowSpec>[
+    _OmnibotTableRowSpec(isHeader: true, cells: headerCells),
+  ];
+  var nextIndex = index + 2;
+  while (nextIndex < lines.length) {
+    final line = lines[nextIndex];
+    if (!_looksLikeMarkdownTableRow(line)) {
+      break;
+    }
+    final cells = _parseMarkdownTableCells(line, alignments);
+    while (cells.length < alignments.length) {
+      cells.add(const _OmnibotTableCellSpec(source: ''));
+    }
+    while (cells.length > alignments.length) {
+      cells.removeLast();
+    }
+    rows.add(_OmnibotTableRowSpec(isHeader: false, cells: cells));
+    nextIndex += 1;
+  }
+
+  return _ParsedMarkdownTable(rows: rows, nextLineIndex: nextIndex);
+}
+
+bool _looksLikeMarkdownTableRow(String line) {
+  final trimmed = line.trim();
+  return trimmed.isNotEmpty && trimmed.contains('|');
+}
+
+List<String?> _parseMarkdownTableAlignments(String line) {
+  final columns = <String?>[];
+  var started = false;
+  var hitDash = false;
+  String? alignment;
+
+  for (var index = 0; index < line.length; index++) {
+    final char = line.codeUnitAt(index);
+    if (char == 32 || char == 9 || (!started && char == 124)) {
+      continue;
+    }
+    started = true;
+
+    if (char == 58) {
+      if (hitDash) {
+        alignment = alignment == 'left' ? 'center' : 'right';
+      } else {
+        alignment = 'left';
+      }
+    }
+
+    if (char == 124) {
+      columns.add(alignment);
+      hitDash = false;
+      alignment = null;
+    } else {
+      hitDash = true;
+    }
+  }
+
+  if (hitDash) {
+    columns.add(alignment);
+  }
+
+  return columns;
+}
+
+List<_OmnibotTableCellSpec> _parseMarkdownTableCells(
+  String line,
+  List<String?> alignments,
+) {
+  final cells = <String>[];
+  var index = _walkPastMarkdownTableOpeningPipe(line);
+  final cellBuffer = StringBuffer();
+
+  while (true) {
+    if (index >= line.length) {
+      cells.add(cellBuffer.toString().trimRight());
+      break;
+    }
+    final char = line.codeUnitAt(index);
+    if (char == 92) {
+      if (index == line.length - 1) {
+        cellBuffer.writeCharCode(char);
+        cells.add(cellBuffer.toString().trimRight());
+        break;
+      }
+      final escaped = line.codeUnitAt(index + 1);
+      if (escaped == 124) {
+        cellBuffer.writeCharCode(escaped);
+      } else {
+        cellBuffer.writeCharCode(char);
+        cellBuffer.writeCharCode(escaped);
+      }
+      index += 2;
+    } else if (char == 124) {
+      cells.add(cellBuffer.toString().trimRight());
+      cellBuffer.clear();
+      index += 1;
+      index = _walkPastMarkdownTableWhitespace(line, index);
+      if (index >= line.length) {
+        break;
+      }
+    } else {
+      cellBuffer.writeCharCode(char);
+      index += 1;
+    }
+  }
+
+  final rowChildren = <_OmnibotTableCellSpec>[];
+  for (var cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+    rowChildren.add(
+      _OmnibotTableCellSpec(
+        source: cells[cellIndex],
+        align: cellIndex < alignments.length ? alignments[cellIndex] : null,
+      ),
+    );
+  }
+  return rowChildren;
+}
+
+int _walkPastMarkdownTableWhitespace(String line, int index) {
+  while (index < line.length) {
+    final char = line.codeUnitAt(index);
+    if (char != 32 && char != 9) {
+      break;
+    }
+    index += 1;
+  }
+  return index;
+}
+
+int _walkPastMarkdownTableOpeningPipe(String line) {
+  var index = 0;
+  while (index < line.length) {
+    final char = line.codeUnitAt(index);
+    if (char == 124) {
+      index += 1;
+      index = _walkPastMarkdownTableWhitespace(line, index);
+    }
+    if (char != 32 && char != 9) {
+      break;
+    }
+    index += 1;
+  }
+  return index;
+}
+
+class _ParsedMarkdownTable {
+  const _ParsedMarkdownTable({required this.rows, required this.nextLineIndex});
+
+  final List<_OmnibotTableRowSpec> rows;
+  final int nextLineIndex;
 }
 
 Map<String, MarkdownElementBuilder> buildOmnibotMarkdownBuilders({
@@ -531,7 +785,16 @@ class OmnibotTableBuilder extends MarkdownElementBuilder {
     TextStyle? parentStyle,
   ) {
     final styleSheet = _resolveMarkdownStyleSheet(context, baseStyle);
-    final tableRows = _buildTableRows(styleSheet, element);
+    final rowSpecs = _buildTableRowSpecs(element);
+    return _buildTableFromRows(context, styleSheet, rowSpecs);
+  }
+
+  Widget _buildTableFromRows(
+    BuildContext context,
+    MarkdownStyleSheet styleSheet,
+    List<_OmnibotTableRowSpec> rowSpecs,
+  ) {
+    final tableRows = _buildFlutterTableRows(styleSheet, rowSpecs);
     if (tableRows.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -550,23 +813,26 @@ class OmnibotTableBuilder extends MarkdownElementBuilder {
     );
   }
 
-  List<TableRow> _buildTableRows(
-    MarkdownStyleSheet styleSheet,
-    md.Element tableElement,
-  ) {
+  List<_OmnibotTableRowSpec> _buildTableRowSpecs(md.Element tableElement) {
     final payload =
         tableElement.attributes[OmnibotTableSyntax.payloadAttribute];
     if (payload == null || payload.isEmpty) {
-      return const <TableRow>[];
+      return const <_OmnibotTableRowSpec>[];
     }
     final decoded = jsonDecode(payload);
     if (decoded is! List) {
-      return const <TableRow>[];
+      return const <_OmnibotTableRowSpec>[];
     }
-    final rowSpecs = decoded
+    return decoded
         .whereType<Map<String, dynamic>>()
         .map(_OmnibotTableRowSpec.fromJson)
         .toList(growable: false);
+  }
+
+  List<TableRow> _buildFlutterTableRows(
+    MarkdownStyleSheet styleSheet,
+    List<_OmnibotTableRowSpec> rowSpecs,
+  ) {
     final rows = <TableRow>[];
     for (final rowSpec in rowSpecs) {
       rows.add(TableRow(children: _buildRowCells(styleSheet, rowSpec)));
