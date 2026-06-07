@@ -233,6 +233,7 @@ dependencies {
     implementation(project(":assists"))
 //    implementation(project(":lib"))
 
+    implementation(libs.openilink.sdk.java)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)

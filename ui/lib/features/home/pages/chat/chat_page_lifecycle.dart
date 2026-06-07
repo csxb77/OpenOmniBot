@@ -711,9 +711,15 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     final runtime = _runtimeForMode(_activeMode);
+    // IM 等外部入口写入用户消息时，原生侧用 reason=external_user_message 通知前端：
+    // 这条消息只在 DB 里、还没进入 runtime.messages，必须强制从 DB 重载，
+    // 否则 agent 流事件先到时 hasInFlightTask=true 会让 in-memory 分支吞掉它。
+    final isExternalUserMessage =
+        event['reason']?.toString() == 'external_user_message';
     await loadConversation(
       conversationId,
-      preferInMemory: runtime?.hasInFlightTask == true,
+      preferInMemory:
+          !isExternalUserMessage && runtime?.hasInFlightTask == true,
       lifecycleToken: lifecycleToken,
     );
     if (!mounted ||

@@ -885,17 +885,19 @@ class AgentOrchestrator(
                 intermediateUpdate = intermediateUpdate,
                 answerTooThinForActionGoal = answerTooThinForActionGoal
             )
+        // 仅在用户目标本身就需要外部动作（actionGoal）时，才把"过渡语/中间态描述"
+        // 视作未完成执行。否则纯聊天里的"接下来…""我先看一下你的想法…"会被误判，
+        // 触发硬编码的 missingToolCallRecovery，导致用户感知到的卡顿与重复回复。
         val taskStillExecuting =
             roundStartsAfterToolResult ||
                 (hasPriorToolCall && (actionIntent || intermediateUpdate)) ||
-                actionIntent ||
-                intermediateUpdate ||
+                (actionGoal && (actionIntent || intermediateUpdate)) ||
                 answerTooThinForActionGoal
         val shouldRecover = taskStillExecuting && !completeFinalAnswer
         val reason = when {
             roundStartsAfterToolResult && !completeFinalAnswer -> "pending_tool_chain"
-            actionIntent && !completeFinalAnswer -> "action_intent_without_tool_call"
-            intermediateUpdate && !completeFinalAnswer -> "intermediate_status_without_result"
+            actionGoal && actionIntent && !completeFinalAnswer -> "action_intent_without_tool_call"
+            actionGoal && intermediateUpdate && !completeFinalAnswer -> "intermediate_status_without_result"
             answerTooThinForActionGoal -> "action_goal_reply_too_thin"
             completeFinalAnswer -> "complete_final_answer"
             else -> "plain_text_terminal_reply"

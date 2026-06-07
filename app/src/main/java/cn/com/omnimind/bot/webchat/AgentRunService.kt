@@ -318,6 +318,7 @@ class AgentRunService(
                 request["conversationMode"]?.toString()
             ),
             "userMessage" to normalizedPayload.userMessage,
+            "userMessageCreatedAt" to (request["userMessageCreatedAt"] as? Number)?.toLong(),
             "attachments" to normalizedPayload.attachments,
             "terminalEnvironment" to AgentRunRequestNormalizer.normalizeMap(request["terminalEnvironment"]),
             "modelOverride" to AgentRunRequestNormalizer.normalizeMap(request["modelOverride"])

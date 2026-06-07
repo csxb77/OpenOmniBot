@@ -20,6 +20,7 @@ import 'pages/settings/workspace_memory_setting_page.dart';
 import 'pages/settings/background_setting_page.dart';
 import 'pages/settings/experience_misc_setting_page.dart';
 import 'pages/settings/home_setting_page.dart';
+import 'pages/settings/imessage_setting_page.dart';
 import 'pages/settings/open_with_omnibot_setting_page.dart';
 import 'pages/settings/storage_usage_page.dart';
 import 'pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
@@ -364,6 +365,16 @@ List<GoRoute> homeRoutes = [
       key: state.pageKey,
       name: 'home/open_with_omnibot_setting',
       child: const OpenWithOmnibotSettingPage(),
+    ),
+  ),
+
+  GoRoute(
+    path: '/home/imessage_setting',
+    name: 'home/imessage_setting',
+    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
+      key: state.pageKey,
+      name: 'home/imessage_setting',
+      child: const ImessageSettingPage(),
     ),
   ),
 

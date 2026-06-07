@@ -142,77 +142,115 @@ class _SettingsPageState extends State<SettingsPage> {
   void _showMcpInfo() {
     final info = _mcpInfo;
     if (info == null || info.endpoint.isEmpty) return;
+    final l10n = context.l10n;
+    final palette = context.omniPalette;
 
     showModalBottomSheet<void>(
       context: context,
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                context.l10n.settingsMcpLocalService,
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 12),
-              Text(context.l10n.settingsMcpAddress),
-              SelectableText(info.endpoint),
-              const SizedBox(height: 8),
-              Text(context.l10n.settingsMcpToken),
-              SelectableText(
-                info.token.isEmpty
-                    ? context.l10n.settingsNotGenerated
-                    : info.token,
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: info.endpoint));
-                      Navigator.of(context).pop();
-                      showToast(context.l10n.settingsCopiedAddress);
-                    },
-                    child: Text(context.l10n.settingsCopyAddress),
+      backgroundColor: palette.surfacePrimary,
+      builder: (sheetContext) {
+        final sheetPalette = sheetContext.omniPalette;
+        final labelStyle = TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: sheetPalette.textSecondary,
+        );
+        final valueStyle = TextStyle(
+          fontSize: 13,
+          color: sheetPalette.textPrimary,
+        );
+        final actionStyle = TextButton.styleFrom(
+          foregroundColor: sheetPalette.accentPrimary,
+          minimumSize: const Size(0, 36),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+        );
+
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.settingsMcpLocalService,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: sheetPalette.textPrimary,
                   ),
-                  TextButton(
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: info.token));
-                      Navigator.of(context).pop();
-                      showToast(context.l10n.settingsCopiedToken);
-                    },
-                    child: Text(context.l10n.settingsCopyToken),
+                ),
+                const SizedBox(height: 12),
+                Text(l10n.settingsMcpAddress, style: labelStyle),
+                SelectableText(info.endpoint, style: valueStyle),
+                const SizedBox(height: 8),
+                Text(l10n.settingsMcpToken, style: labelStyle),
+                SelectableText(
+                  info.token.isEmpty ? l10n.settingsNotGenerated : info.token,
+                  style: valueStyle,
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 2,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      TextButton(
+                        style: actionStyle,
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: info.endpoint));
+                          Navigator.of(sheetContext).pop();
+                          showToast(l10n.settingsCopiedAddress);
+                        },
+                        child: Text(l10n.settingsCopyAddress),
+                      ),
+                      TextButton(
+                        style: actionStyle,
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: info.token));
+                          Navigator.of(sheetContext).pop();
+                          showToast(l10n.settingsCopiedToken);
+                        },
+                        child: Text(l10n.settingsCopyToken),
+                      ),
+                      TextButton(
+                        style: actionStyle,
+                        onPressed: () async {
+                          Navigator.of(sheetContext).pop();
+                          try {
+                            final refreshed =
+                                await McpServerService.refreshToken();
+                            if (!mounted) return;
+                            setState(() {
+                              _mcpInfo = refreshed ?? _mcpInfo;
+                            });
+                            showToast(l10n.settingsTokenRefreshed);
+                          } catch (_) {
+                            showToast(
+                              l10n.settingsTokenRefreshFailed,
+                              type: ToastType.error,
+                            );
+                          }
+                        },
+                        child: Text(l10n.settingsRefreshToken),
+                      ),
+                    ],
                   ),
-                  TextButton(
-                    onPressed: () async {
-                      Navigator.of(context).pop();
-                      try {
-                        final refreshed = await McpServerService.refreshToken();
-                        if (!mounted) return;
-                        setState(() {
-                          _mcpInfo = refreshed ?? _mcpInfo;
-                        });
-                        showToast(context.l10n.settingsTokenRefreshed);
-                      } catch (_) {
-                        showToast(
-                          context.l10n.settingsTokenRefreshFailed,
-                          type: ToastType.error,
-                        );
-                      }
-                    },
-                    child: Text(context.l10n.settingsRefreshToken),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.settingsMcpSecurityNotice,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: sheetPalette.textSecondary,
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                context.l10n.settingsMcpSecurityNotice,
-                style: TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-              const SizedBox(height: 8),
-            ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         );
       },
@@ -320,6 +358,15 @@ class _SettingsPageState extends State<SettingsPage> {
             onTap: _mcpEnabled && !_mcpBusy ? _showMcpInfo : null,
           ),
           _SettingItem(
+            icon: Icons.forum_outlined,
+            iconSvg: 'assets/home/imessage_setting_icon.svg',
+            title: 'IMessage',
+            subtitle: context.trLegacy('微信与 Telegram 消息渠道'),
+            onTap: () {
+              GoRouterManager.push('/home/imessage_setting');
+            },
+          ),
+          _SettingItem(
             icon: Icons.code,
             iconSvg: 'assets/home/termux.svg',
             iconColor: AppColors.buttonPrimary,
@@ -331,6 +378,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           _SettingItem(
             icon: Icons.terminal_rounded,
+            iconSvg: 'assets/home/chat/codex.svg',
             title: 'Codex',
             subtitle: context.trLegacy('本地 Alpine 与远程 PC Bridge'),
             onTap: () {
@@ -386,6 +434,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 }
               } catch (e) {
                 debugPrint('Failed to request installed apps permission: $e');
+                if (!mounted) return;
                 showToast(context.l10n.settingsInstalledAppsPermissionFailed);
               }
             },
