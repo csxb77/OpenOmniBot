@@ -8,7 +8,8 @@ import java.util.UUID
 internal class ImCommandProcessor(
     context: Context,
     private val store: ImChannelStore,
-    private val statusTextProvider: (ImInboundMessage, ImPeerSession?) -> String
+    private val statusTextProvider: (ImInboundMessage, ImPeerSession?) -> String,
+    private val pendingRunNotifier: (PendingImRun) -> Unit = {}
 ) {
     private val conversationService = ConversationDomainService(context.applicationContext)
     private val agentRunService = AgentRunService(context.applicationContext)
@@ -95,20 +96,23 @@ internal class ImCommandProcessor(
             }
             if (session.awaitingInput) {
                 return try {
+                    val pendingRun = PendingImRun(
+                        taskId = activeTaskId,
+                        channel = inbound.channel,
+                        peerId = inbound.peerId,
+                        conversationId = session.conversationId,
+                        mode = session.mode
+                    )
+                    pendingRunNotifier(pendingRun)
                     agentRunService.clarifyTask(activeTaskId, rawText)
                     store.saveSession(session.copy(awaitingInput = false))
-                    ImProcessorResult(
-                        pendingRun = PendingImRun(
-                            taskId = activeTaskId,
-                            channel = inbound.channel,
-                            peerId = inbound.peerId,
-                            conversationId = session.conversationId,
-                            mode = session.mode
-                        )
-                    )
+                    ImProcessorResult(pendingRun = pendingRun)
                 } catch (error: Throwable) {
                     ImProcessorResult(
-                        listOf("提交补充信息失败：${error.message ?: error.javaClass.simpleName}")
+                        replies = listOf(
+                            "提交补充信息失败：${error.message ?: error.javaClass.simpleName}"
+                        ),
+                        finishedTaskId = activeTaskId
                     )
                 }
             }
@@ -132,6 +136,21 @@ internal class ImCommandProcessor(
                 text = normalized.text,
                 createdAt = userMessageCreatedAt
             )
+            val pendingRun = PendingImRun(
+                taskId = taskId,
+                channel = inbound.channel,
+                peerId = inbound.peerId,
+                conversationId = session.conversationId,
+                mode = session.mode
+            )
+            store.saveSession(
+                session.copy(
+                    activeTaskId = taskId,
+                    awaitingInput = false,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            pendingRunNotifier(pendingRun)
             agentRunService.startConversationRun(
                 conversationId = session.conversationId,
                 request = mapOf(
@@ -141,13 +160,6 @@ internal class ImCommandProcessor(
                     "userMessageCreatedAt" to userMessageCreatedAt
                 )
             )
-            store.saveSession(
-                session.copy(
-                    activeTaskId = taskId,
-                    awaitingInput = false,
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
             val replies = if (normalized.truncated) {
                 listOf("消息较长，已保留前 $MAX_INBOUND_CHARS 字处理。")
             } else {
@@ -155,17 +167,13 @@ internal class ImCommandProcessor(
             }
             ImProcessorResult(
                 replies = replies,
-                pendingRun = PendingImRun(
-                    taskId = taskId,
-                    channel = inbound.channel,
-                    peerId = inbound.peerId,
-                    conversationId = session.conversationId,
-                    mode = session.mode
-                )
+                pendingRun = pendingRun
             )
         } catch (error: Throwable) {
+            store.clearActiveTask(taskId)
             ImProcessorResult(
-                listOf("启动任务失败：${error.message ?: error.javaClass.simpleName}")
+                replies = listOf("启动任务失败：${error.message ?: error.javaClass.simpleName}"),
+                finishedTaskId = taskId
             )
         }
     }

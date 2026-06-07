@@ -331,23 +331,11 @@ class _ImessageSettingPageState extends State<ImessageSettingPage> {
         onToggle: (value) => _saveWechat(enabled: value),
       ),
       children: [
-        _buildTextField(
-          controller: _wechatTokenController,
-          label: 'OpeniLink Token',
-          obscureText: !_wechatTokenVisible,
-          suffixIcon: IconButton(
-            tooltip: _wechatTokenVisible
-                ? context.trLegacy('隐藏')
-                : context.trLegacy('显示'),
-            onPressed: () {
-              setState(() => _wechatTokenVisible = !_wechatTokenVisible);
-            },
-            icon: Icon(
-              _wechatTokenVisible
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined,
-            ),
-          ),
+        _buildActionRow(
+          busy: _savingWechat || _requestingWechatQr,
+          primaryLabel: context.trLegacy('扫码绑定'),
+          primaryIcon: Icons.qr_code_rounded,
+          onPrimary: _requestingWechatQr ? null : _requestWechatQr,
         ),
         const SizedBox(height: 10),
         _buildAdvancedToggle(
@@ -360,6 +348,25 @@ class _ImessageSettingPageState extends State<ImessageSettingPage> {
         ),
         if (_wechatAdvancedExpanded) ...[
           const SizedBox(height: 8),
+          _buildTextField(
+            controller: _wechatTokenController,
+            label: 'OpeniLink Token',
+            obscureText: !_wechatTokenVisible,
+            suffixIcon: IconButton(
+              tooltip: _wechatTokenVisible
+                  ? context.trLegacy('隐藏')
+                  : context.trLegacy('显示'),
+              onPressed: () {
+                setState(() => _wechatTokenVisible = !_wechatTokenVisible);
+              },
+              icon: Icon(
+                _wechatTokenVisible
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           _buildTextField(
             controller: _wechatBaseUrlController,
             label: context.trLegacy('Base URL'),
@@ -390,17 +397,14 @@ class _ImessageSettingPageState extends State<ImessageSettingPage> {
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           ),
+          const SizedBox(height: 12),
+          _buildActionRow(
+            busy: _savingWechat || _requestingWechatQr,
+            primaryLabel: context.trLegacy('保存微信'),
+            primaryIcon: Icons.save_outlined,
+            onPrimary: _saveWechat,
+          ),
         ],
-        const SizedBox(height: 12),
-        _buildActionRow(
-          busy: _savingWechat || _requestingWechatQr,
-          primaryLabel: context.trLegacy('保存微信'),
-          primaryIcon: Icons.save_outlined,
-          onPrimary: _saveWechat,
-          secondaryLabel: context.trLegacy('扫码绑定'),
-          secondaryIcon: Icons.qr_code_rounded,
-          onSecondary: _requestingWechatQr ? null : _requestWechatQr,
-        ),
       ],
     );
   }
@@ -564,7 +568,7 @@ class _ImessageSettingPageState extends State<ImessageSettingPage> {
     required bool busy,
     required String primaryLabel,
     required IconData primaryIcon,
-    required VoidCallback onPrimary,
+    required VoidCallback? onPrimary,
     String? secondaryLabel,
     IconData? secondaryIcon,
     VoidCallback? onSecondary,

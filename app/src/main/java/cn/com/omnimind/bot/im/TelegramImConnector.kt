@@ -73,12 +73,10 @@ internal class TelegramImConnector : ImConnector {
     override suspend fun sendTyping(peerId: String) {
         val activeConfig = config.normalized()
         if (activeConfig.botToken.isBlank()) return
-        runCatching {
-            val payload = JSONObject()
-                .put("chat_id", normalizeChatId(peerId))
-                .put("action", "typing")
-            postTelegram(activeConfig, "sendChatAction", payload, readTimeoutMs = 10_000)
-        }
+        val payload = JSONObject()
+            .put("chat_id", normalizeChatId(peerId))
+            .put("action", "typing")
+        postTelegram(activeConfig, "sendChatAction", payload, readTimeoutMs = 10_000)
     }
 
     private suspend fun runPolling(

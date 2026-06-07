@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 object ImChannelManager {
     private const val TAG = "[ImChannelManager]"
+    private const val TYPING_REFRESH_MS = 2_500L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingRuns = ConcurrentHashMap<String, PendingImRun>()
@@ -145,7 +146,8 @@ object ImChannelManager {
                     processor = ImCommandProcessor(
                         applicationContext,
                         requireStore(),
-                        ::buildStatusText
+                        ::buildStatusText,
+                        ::activatePendingRun
                     )
                     ensureRealtimeCollection()
                 }
@@ -166,28 +168,29 @@ object ImChannelManager {
 
     private suspend fun handleInboundMessage(inbound: ImInboundMessage) {
         val activeProcessor = processor ?: return
-        runCatching {
-            if (!inbound.text.trimStart().startsWith("/")) {
-                connectors[inbound.channel]?.sendTyping(inbound.peerId)
+        val warmupTypingJob = if (inbound.text.trimStart().startsWith("/")) {
+            null
+        } else {
+            startTransientTypingIndicator(inbound.channel, inbound.peerId)
+        }
+        try {
+            val result = runCatching { activeProcessor.handle(inbound) }
+                .getOrElse { error ->
+                    ImProcessorResult(
+                        replies = listOf("处理 IM 消息失败：${error.message ?: error.javaClass.simpleName}")
+                    )
+                }
+            result.pendingRun?.let(::activatePendingRun)
+            result.finishedTaskId?.let {
+                pendingRuns.remove(it)
+                agentTextStreams.remove(it)
+                stopTypingIndicator(it)
             }
-        }
-        val result = runCatching { activeProcessor.handle(inbound) }
-            .getOrElse { error ->
-                ImProcessorResult(
-                    replies = listOf("处理 IM 消息失败：${error.message ?: error.javaClass.simpleName}")
-                )
+            result.replies.forEach { reply ->
+                sendChunked(inbound.channel, inbound.peerId, reply)
             }
-        result.pendingRun?.let {
-            pendingRuns[it.taskId] = it
-            startTypingIndicator(it)
-        }
-        result.finishedTaskId?.let {
-            pendingRuns.remove(it)
-            agentTextStreams.remove(it)
-            stopTypingIndicator(it)
-        }
-        result.replies.forEach { reply ->
-            sendChunked(inbound.channel, inbound.peerId, reply)
+        } finally {
+            warmupTypingJob?.cancel()
         }
     }
 
@@ -343,23 +346,51 @@ object ImChannelManager {
         requireStore().clearActiveTask(taskId)
     }
 
+    private fun activatePendingRun(pending: PendingImRun) {
+        pendingRuns[pending.taskId] = pending
+        if (typingJobs[pending.taskId]?.isActive != true) {
+            startTypingIndicator(pending)
+        }
+    }
+
+    private fun startTransientTypingIndicator(
+        channel: ImChannelType,
+        peerId: String
+    ): Job? {
+        val connector = connectors[channel] ?: return null
+        return scope.launch {
+            while (true) {
+                sendTypingSafely(connector, channel, peerId)
+                delay(TYPING_REFRESH_MS)
+            }
+        }
+    }
+
     private fun startTypingIndicator(pending: PendingImRun) {
         stopTypingIndicator(pending.taskId)
         val connector = connectors[pending.channel] ?: return
         typingJobs[pending.taskId] = scope.launch {
             while (pendingRuns.containsKey(pending.taskId)) {
-                runCatching {
-                    connector.sendTyping(pending.peerId)
-                }.onFailure { error ->
-                    OmniLog.w(TAG, "send ${pending.channel.id} typing failed: ${error.message}")
-                }
-                delay(4_000)
+                sendTypingSafely(connector, pending.channel, pending.peerId)
+                delay(TYPING_REFRESH_MS)
             }
         }
     }
 
     private fun stopTypingIndicator(taskId: String) {
         typingJobs.remove(taskId)?.cancel()
+    }
+
+    private suspend fun sendTypingSafely(
+        connector: ImConnector,
+        channel: ImChannelType,
+        peerId: String
+    ) {
+        runCatching {
+            connector.sendTyping(peerId)
+        }.onFailure { error ->
+            OmniLog.w(TAG, "send ${channel.id} typing failed: ${error.message}")
+        }
     }
 
     private data class ImAgentEntryStreamState(

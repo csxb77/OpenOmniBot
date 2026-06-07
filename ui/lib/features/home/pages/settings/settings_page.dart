@@ -378,6 +378,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           _SettingItem(
             icon: Icons.terminal_rounded,
+            iconSvg: 'assets/home/chat/codex.svg',
             title: 'Codex',
             subtitle: context.trLegacy('本地 Alpine 与远程 PC Bridge'),
             onTap: () {
