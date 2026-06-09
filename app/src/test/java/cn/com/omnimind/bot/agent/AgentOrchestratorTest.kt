@@ -525,6 +525,44 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun invalidToolArgumentsBackfillRemainingToolCallIds() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(
+                assistantTurn(
+                    toolCalls = listOf(
+                        toolCall(
+                            name = "file_read",
+                            arguments = "[",
+                            id = "call-read"
+                        ),
+                        toolCall(
+                            name = "file_search",
+                            arguments = """{"query":"README"}""",
+                            id = "call-search"
+                        )
+                    )
+                ),
+                assistantTurn(content = "参数不合法，我改成直接说明原因。")
+            )
+        )
+        val toolExecutor = FakeToolExecutor()
+
+        createOrchestrator(llmClient, toolExecutor).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("读取文件"),
+                executionEnv = FakeExecutionEnvironment("读取文件")
+            )
+        )
+
+        val toolMessages = llmClient.requests[1].messages.filter { it.role == "tool" }
+        assertEquals(2, llmClient.requests.size)
+        assertTrue(toolExecutor.executeCalls.isEmpty())
+        assertEquals(listOf("call-read", "call-search"), toolMessages.map { it.toolCallId })
+        assertTrue(toolMessages.last().content.toString().contains("本轮未执行该工具"))
+    }
+
+    @Test
     fun validationFailureIsFedBackAsToolResultInsteadOfStopping() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = listOf(
@@ -561,6 +599,103 @@ class AgentOrchestratorTest {
         assertEquals(2, llmClient.requests.size)
         assertEquals("tool", llmClient.requests[1].messages.last().role)
         assertTrue(callback.finalChatMessages().last().contains("校验失败"))
+    }
+
+    @Test
+    fun validationFailureBackfillsRemainingToolCallIds() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(
+                assistantTurn(
+                    toolCalls = listOf(
+                        toolCall(
+                            name = "file_read",
+                            arguments = """{"path":"README.md"}""",
+                            id = "call-read"
+                        ),
+                        toolCall(
+                            name = "file_search",
+                            arguments = """{"query":"README"}""",
+                            id = "call-search"
+                        )
+                    )
+                ),
+                assistantTurn(content = "校验失败后，我改成文本解释。")
+            )
+        )
+        val toolExecutor = FakeToolExecutor()
+        val toolCatalog = FakeToolCatalog(
+            validationErrors = mapOf("file_read" to "缺少必填字段")
+        )
+
+        AgentOrchestrator(
+            llmClient = llmClient,
+            toolRegistry = toolCatalog,
+            toolRouter = toolExecutor,
+            eventAdapter = AgentEventAdapter(eventJson),
+            model = "test-model"
+        ).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("读取文件"),
+                executionEnv = FakeExecutionEnvironment("读取文件")
+            )
+        )
+
+        val toolMessages = llmClient.requests[1].messages.filter { it.role == "tool" }
+        assertEquals(2, llmClient.requests.size)
+        assertTrue(toolExecutor.executeCalls.isEmpty())
+        assertEquals(listOf("call-read", "call-search"), toolMessages.map { it.toolCallId })
+        assertTrue(toolMessages.last().content.toString().contains("本轮未执行该工具"))
+    }
+
+    @Test
+    fun exclusiveToolBackfillsRemainingToolCallIds() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(
+                assistantTurn(
+                    toolCalls = listOf(
+                        toolCall(
+                            name = "terminal_execute",
+                            arguments = """{"command":"echo hi"}""",
+                            id = "call-terminal"
+                        ),
+                        toolCall(
+                            name = "file_search",
+                            arguments = """{"query":"README"}""",
+                            id = "call-search"
+                        )
+                    )
+                ),
+                assistantTurn(content = "终端命令执行后，我改成直接说明状态。")
+            )
+        )
+        val toolExecutor = FakeToolExecutor(
+            results = mapOf(
+                "terminal_execute" to listOf(
+                    ToolExecutionResult.TerminalResult(
+                        toolName = "terminal_execute",
+                        summaryText = "命令执行完成",
+                        previewJson = "{}",
+                        rawResultJson = "{}",
+                        success = true
+                    )
+                )
+            )
+        )
+
+        createOrchestrator(llmClient, toolExecutor).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("执行 echo hi"),
+                executionEnv = FakeExecutionEnvironment("执行 echo hi")
+            )
+        )
+
+        val toolMessages = llmClient.requests[1].messages.filter { it.role == "tool" }
+        assertEquals(2, llmClient.requests.size)
+        assertEquals(listOf("terminal_execute"), toolExecutor.executeCalls)
+        assertEquals(listOf("call-terminal", "call-search"), toolMessages.map { it.toolCallId })
+        assertTrue(toolMessages.last().content.toString().contains("本轮未执行该工具"))
     }
 
     @Test
