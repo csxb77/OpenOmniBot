@@ -29,6 +29,7 @@ import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.AiRequestLogStore
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ModelProviderConfig
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
@@ -187,9 +188,33 @@ internal fun resolveChatTaskModelOverride(
 internal fun normalizeReasoningEffort(raw: String?): String? {
     val normalized = raw?.trim()?.lowercase().orEmpty()
     return when (normalized) {
-        "no", "low", "high" -> normalized
+        "no", "low", "high", "xhigh", "max" -> normalized
         else -> null
     }
+}
+
+internal fun resolveAgentReasoningEffort(
+    reasoningEffort: String?,
+    modelOverride: AgentModelOverride?,
+    fallbackProfile: ModelProviderProfile? = runCatching {
+        ModelProviderConfigStore.getEditingProfile()
+    }.getOrNull()
+): String? {
+    if (!reasoningEffort.isNullOrBlank()) {
+        return reasoningEffort
+    }
+    val useOfficialDeepSeekDefault = if (modelOverride != null) {
+        DeepSeekProvider.shouldUseOfficialAdapter(
+            protocolType = modelOverride.protocolType,
+            apiBase = modelOverride.apiBase
+        )
+    } else {
+        DeepSeekProvider.shouldUseOfficialAdapter(
+            protocolType = fallbackProfile?.protocolType,
+            apiBase = fallbackProfile?.baseUrl
+        )
+    }
+    return if (useOfficialDeepSeekDefault) "max" else null
 }
 
 internal data class AgentFinalErrorResolution(
@@ -4013,8 +4038,11 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val modelOverride = resolveAgentModelOverride(
             call.argument<Map<String, Any?>>("modelOverride")
         )
-        val reasoningEffort = normalizeReasoningEffort(
-            call.argument<String>("reasoningEffort")
+        val reasoningEffort = resolveAgentReasoningEffort(
+            normalizeReasoningEffort(
+                call.argument<String>("reasoningEffort")
+            ),
+            modelOverride
         )
         val terminalEnvironment = parseTerminalEnvironmentMap(
             call.argument<Map<String, Any?>>("terminalEnvironment")
@@ -5828,8 +5856,11 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val modelOverride = resolveAgentModelOverride(
             call.argument<Map<String, Any?>>("modelOverride")
         )
-        val reasoningEffort = normalizeReasoningEffort(
-            call.argument<String>("reasoningEffort")
+        val reasoningEffort = resolveAgentReasoningEffort(
+            normalizeReasoningEffort(
+                call.argument<String>("reasoningEffort")
+            ),
+            modelOverride
         )
         workJob.launch {
             try {

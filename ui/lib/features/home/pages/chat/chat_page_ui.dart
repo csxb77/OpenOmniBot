@@ -114,15 +114,19 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     if (route == _SlashCommandPanelRoute.effort &&
         _supportsReasoningEffortCommand) {
       final activeEffort = _activeConversationReasoningEffort;
+      final displayActiveEffort =
+          activeEffort == 'xhigh' ? 'max' : activeEffort;
       final query = _slashCommandRouteQuery(route).toLowerCase();
-      final efforts = <String>['no', 'low', 'high']
+      final efforts = <String>['no', 'low', 'high', 'max']
           .where((effort) {
-            return query.isEmpty || effort.contains(query);
+            return query.isEmpty ||
+                effort.contains(query) ||
+                (effort == 'max' && 'xhigh'.contains(query));
           })
           .toList(growable: false);
       return efforts
           .map((effort) {
-            final isSelected = effort == activeEffort;
+            final isSelected = effort == displayActiveEffort;
             return <String, dynamic>{
               'cardId': 'slash-command-effort-$effort',
               'toolName': effort,
@@ -184,6 +188,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     }
     if (_supportsReasoningEffortCommand) {
       final activeEffort = _activeConversationReasoningEffort;
+      final displayActiveEffort =
+          activeEffort == 'xhigh' ? 'max' : activeEffort;
       commands.add(<String, dynamic>{
         'cardId': 'slash-command-effort',
         'toolName': '/effort',
@@ -191,19 +197,20 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         'displayName': '/effort',
         'toolType': 'command',
         'toolTypeLabel': LegacyTextLocalizer.isEnglish ? 'Thinking' : '思考',
-        'status': activeEffort == null ? 'running' : 'success',
+        'status': displayActiveEffort == null ? 'running' : 'success',
         'statusLabel':
-            activeEffort ?? (LegacyTextLocalizer.isEnglish ? 'Command' : '命令'),
-        'summary': activeEffort == null
+            displayActiveEffort ??
+            (LegacyTextLocalizer.isEnglish ? 'Command' : '命令'),
+        'summary': displayActiveEffort == null
             ? (LegacyTextLocalizer.isEnglish
                   ? 'Set reasoning effort for this session'
                   : '设置当前会话的思考强度')
             : (LegacyTextLocalizer.isEnglish
-                  ? 'Current effort: $activeEffort'
-                  : '当前思考强度：$activeEffort'),
+                  ? 'Current effort: $displayActiveEffort'
+                  : '当前思考强度：$displayActiveEffort'),
         'progress': LegacyTextLocalizer.isEnglish
-            ? 'Choose no, low or high'
-            : '点击后选择 no、low 或 high',
+            ? 'Choose no, low, high or max'
+            : '点击后选择 no、low、high 或 max',
       });
     }
     if (_isOpenClawSurface) {
@@ -456,6 +463,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       case 'no':
       case 'low':
       case 'high':
+      case 'xhigh':
+      case 'max':
         unawaited(_applyConversationReasoningEffort(command));
         _messageController.clear();
         _hideSlashCommandPanel();
