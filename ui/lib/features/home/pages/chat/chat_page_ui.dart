@@ -1745,24 +1745,20 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
 
   @override
   Widget build(BuildContext context) {
-    const edgeInset = 24.0;
     final mediaQuery = MediaQuery.of(context);
     final isHdPadLandscape = _isHdPadLandscapeForMediaQuery(mediaQuery);
     final bottomInset = mediaQuery.viewInsets.bottom;
     final viewPaddingBottom = mediaQuery.viewPadding.bottom;
     final shouldLiftComposerForKeyboard =
         _inputFocusNode.hasFocus || _editingUserMessageId != null;
-    final composerKeyboardLift = shouldLiftComposerForKeyboard
-        ? bottomInset
-        : 0.0;
-    final inputBottomPadding =
-        (viewPaddingBottom + edgeInset - composerKeyboardLift)
-            .clamp(0.0, edgeInset)
-            .toDouble();
-    final keyboardSpacer = resolveChatComposerKeyboardSpacer(
+    final composerKeyboardMetrics = _composerKeyboardMetricsTracker.update(
       shouldLiftComposerForKeyboard: shouldLiftComposerForKeyboard,
       bottomInset: bottomInset,
+      viewPaddingBottom: viewPaddingBottom,
+      safeAreaBottomPadding: mediaQuery.padding.bottom,
     );
+    final inputBottomPadding = composerKeyboardMetrics.inputBottomPadding;
+    final keyboardSpacer = composerKeyboardMetrics.keyboardSpacer;
     final commandPanelBottomOffset =
         (_popupMenuBottomOffset() + inputBottomPadding + keyboardSpacer + 6)
             .toDouble();

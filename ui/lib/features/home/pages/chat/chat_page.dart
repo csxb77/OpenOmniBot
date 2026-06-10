@@ -58,6 +58,7 @@ import 'package:ui/features/home/pages/chat/utils/agent_runtime_attachment_paylo
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
 import 'package:ui/features/home/pages/chat/utils/codex_slash_commands.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
+import 'package:ui/features/home/pages/chat/utils/composer_keyboard_metrics_tracker.dart';
 import 'package:ui/features/home/pages/chat/utils/keyboard_inset_motion_tracker.dart';
 import 'package:ui/features/home/pages/codex/codex_remote_directory_picker.dart';
 import 'package:ui/features/home/pages/codex/codex_remote_workspace_browser.dart';
@@ -190,6 +191,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   };
   final KeyboardInsetMotionTracker _emptyGreetingKeyboardLiftTracker =
       KeyboardInsetMotionTracker();
+  final ComposerKeyboardMetricsTracker _composerKeyboardMetricsTracker =
+      ComposerKeyboardMetricsTracker();
   final Map<ChatPageMode, ChatIslandDisplayLayer>
   _chatIslandDisplayLayerByMode = {
     ChatPageMode.normal: ChatIslandDisplayLayer.mode,
