@@ -14,6 +14,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
+import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_transcript.dart'
+    as native_transcript;
 import 'package:ui/l10n/legacy_text_localizer.dart';
 
 const Color _kPrimaryText = Color(0xFF353E53);
@@ -630,7 +632,6 @@ class WebAgentToolSummaryCard extends StatelessWidget {
     final title = resolveAgentToolTitle(cardData);
     final statusLabel = resolveAgentToolStatusLabel(cardData);
     final typeLabel = resolveAgentToolTypeLabel(cardData);
-    final preview = resolveAgentToolPreview(cardData);
     final statusColor = _statusColor(status);
     final cardBackground = statusColor.withValues(alpha: 0.08);
     final statusTagBackground = Colors.white.withValues(alpha: 0.78);
@@ -641,10 +642,6 @@ class WebAgentToolSummaryCard extends StatelessWidget {
       letterSpacing: 0,
       height: 1.15,
     );
-
-    final tooltipLines = <String>[title];
-    if (preview.isNotEmpty && preview != title) tooltipLines.add(preview);
-    if (statusLabel.isNotEmpty) tooltipLines.add(statusLabel);
 
     final capsule = Material(
       color: Colors.transparent,
@@ -702,35 +699,28 @@ class WebAgentToolSummaryCard extends StatelessWidget {
       ),
     );
 
-    return Tooltip(
-      message: tooltipLines.join('\n'),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
-            minHeight: 34,
-          ),
-          child: Container(
-            margin: const EdgeInsets.only(top: 6, bottom: 2),
-            child: capsule,
-          ),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+          minHeight: 34,
+        ),
+        child: Container(
+          margin: const EdgeInsets.only(top: 6, bottom: 2),
+          child: capsule,
         ),
       ),
     );
   }
 
   void _showDetailSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      useRootNavigator: true,
-      isScrollControlled: true,
-      isDismissible: true,
-      enableDrag: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.28),
-      builder: (_) => _AgentToolDetailSheet(cardData: cardData),
-    );
+    // Delegate to the in-app implementation so the detail sheet renders the
+    // same terminal-style transcript (traffic lights, title, type/status tag,
+    // ANSI-coloured output, diff viewer) as the native chat surface. The
+    // native sheet uses `isDismissible: true` so tapping anywhere on the
+    // dimmed barrier outside the panel closes it.
+    native_transcript.showAgentToolDetailSheet(context, cardData: cardData);
   }
 }
 
@@ -875,230 +865,6 @@ class _FlowingToolTitleState extends State<_FlowingToolTitle>
           child: child,
         );
       },
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Detail sheet (modal bottom sheet)
-// ---------------------------------------------------------------------------
-
-class _AgentToolDetailSheet extends StatelessWidget {
-  const _AgentToolDetailSheet({required this.cardData});
-
-  final Map<String, dynamic> cardData;
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final width = math.min(size.width - 32, 720.0);
-    final maxHeight = size.height * 0.74;
-    final title = resolveAgentToolTitle(cardData);
-    final status = (cardData['status'] ?? 'running').toString();
-    final statusLabel = resolveAgentToolStatusLabel(cardData);
-    final typeLabel = resolveAgentToolTypeLabel(cardData);
-    final preview = resolveAgentToolPreview(cardData);
-    final terminalOutput = resolveAgentToolTerminalOutput(cardData).trim();
-    final argsRaw = (cardData['argsJson'] ?? '').toString();
-    final progress = (cardData['progress'] ?? '').toString().trim();
-    final summary = (cardData['summary'] ?? '').toString().trim();
-    final outputBody = terminalOutput.isNotEmpty
-        ? terminalOutput
-        : (summary != title && summary.isNotEmpty
-              ? summary
-              : (progress.isNotEmpty ? progress : preview));
-    final statusColor = _statusColor(status);
-
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: width,
-              maxHeight: maxHeight,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F1320),
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 28,
-                    offset: Offset(0, 18),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 14, 14, 10),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.18),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            _statusIcon(
-                              status,
-                              (cardData['toolType'] ?? '').toString(),
-                            ),
-                            size: 14,
-                            color: statusColor,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFFF4F7FB),
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.25,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${status == 'running' ? typeLabel : statusLabel}'
-                                '${preview.isEmpty || preview == title ? '' : ' · $preview'}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF8CA0BE),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1.3,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.close_rounded,
-                            color: Color(0xFFB8C5DA),
-                          ),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Color(0x222C3445),
-                  ),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (argsRaw.isNotEmpty) ...[
-                            const _SheetSectionTitle(label: '调用参数'),
-                            const SizedBox(height: 6),
-                            _SheetCodeBlock(text: argsRaw),
-                            const SizedBox(height: 16),
-                          ],
-                          const _SheetSectionTitle(label: '执行结果'),
-                          const SizedBox(height: 6),
-                          if (outputBody.isEmpty)
-                            const _SheetEmptyOutput()
-                          else
-                            _SheetCodeBlock(text: outputBody),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SheetSectionTitle extends StatelessWidget {
-  const _SheetSectionTitle({required this.label});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      LegacyTextLocalizer.localize(label),
-      style: const TextStyle(
-        color: Color(0xFFB8C5DA),
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 1.0,
-      ),
-    );
-  }
-}
-
-class _SheetCodeBlock extends StatelessWidget {
-  const _SheetCodeBlock({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0x1A2A3146),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: SelectableText(
-        text,
-        style: const TextStyle(
-          color: Color(0xFFD7E2F4),
-          fontSize: 12,
-          height: 1.55,
-          fontFamily: 'monospace',
-        ),
-      ),
-    );
-  }
-}
-
-class _SheetEmptyOutput extends StatelessWidget {
-  const _SheetEmptyOutput();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0x1A2A3146),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        LegacyTextLocalizer.localize('暂无输出'),
-        style: const TextStyle(
-          color: Color(0xFF8CA0BE),
-          fontSize: 12,
-          height: 1.4,
-        ),
-      ),
     );
   }
 }
