@@ -659,11 +659,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
             decoration: BoxDecoration(
               color: _cardColor,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: _isDarkTheme
-                    ? context.omniPalette.borderSubtle
-                    : const Color(0x1A000000),
-              ),
             ),
             child: Row(
               children: [
