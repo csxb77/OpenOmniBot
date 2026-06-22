@@ -1135,9 +1135,10 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       snapshot: toolActivitySnapshot,
     );
     final toolActivityCanExpand = toolActivityCards.length > 1;
+    // The activity strip sits flush above the composer, so its downward drop
+    // shadow reads as part of the input surface instead of as separate chrome.
     final suppressToolActivitySurfaceShadow =
-        _inputFocusNode.hasFocus &&
-        (MediaQuery.maybeOf(context)?.viewInsets.bottom ?? 0.0) > 0;
+        showToolActivityStrip || showSlashCommandStrip;
     final overlayAnchor = (toolActivityCards.isEmpty && !showSlashCommandStrip)
         ? null
         : _resolveToolActivityAnchorGeometry(
