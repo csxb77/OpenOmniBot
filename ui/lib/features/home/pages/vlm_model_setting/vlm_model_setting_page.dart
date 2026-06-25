@@ -177,6 +177,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
   List<String> _manualModelIds = const [];
   Set<String> _deletingModelIds = <String>{};
   final Map<String, bool> _expandedModelGroups = <String, bool>{};
+  bool _customHeadersExpanded = false;
   final List<_EditableHeaderEntry> _customHeaderEntries =
       <_EditableHeaderEntry>[];
   int _nextCustomHeaderEntryId = 0;
@@ -1337,90 +1338,189 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
 
   Widget _buildCustomHeadersEditor() {
     final readOnly = _currentProfile?.readOnly ?? false;
+    final hasHeaders = _customHeaderEntries.isNotEmpty;
+    final headerCount = _customHeaderEntries
+        .where((e) => e.nameController.text.trim().isNotEmpty)
+        .length;
+    final palette = context.omniPalette;
+    final subtitle = headerCount > 0
+        ? _headerText('已配置 $headerCount 项', '$headerCount configured')
+        : _headerText('点击展开配置', 'Tap to configure');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _headerText('自定义请求头', 'Custom Headers'),
+        // Collapsible header row
+        Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () {
+              setState(() {
+                _customHeadersExpanded = !_customHeadersExpanded;
+              });
+            },
+            splashColor: palette.accentPrimary.withValues(alpha: 0.06),
+            highlightColor: Colors.transparent,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            _headerText('自定义请求头', 'Custom Headers'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _primaryTextColor,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'PingFang SC',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: _tertiaryTextColor,
+                            fontSize: 12,
+                            fontFamily: 'PingFang SC',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _customHeadersExpanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.expand_more_rounded,
+                      size: 20,
+                      color: _tertiaryTextColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // Expandable body
+        TweenAnimationBuilder<double>(
+          tween: Tween<double>(
+            begin: _customHeadersExpanded ? 1 : 0,
+            end: _customHeadersExpanded ? 1 : 0,
+          ),
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeInOutCubicEmphasized,
+          builder: (context, value, child) {
+            return ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: value,
+                child: Opacity(
+                  opacity: value.clamp(0.0, 1.0).toDouble(),
+                  child: IgnorePointer(
+                    ignoring: value < 0.99,
+                    child: child,
+                  ),
+                ),
+              ),
+            );
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 8),
+              Text(
+                _headerText(
+                  '用于对接要求额外请求头的服务商，例如 HTTP-Referer、X-Title、x-api-key。Host、Content-Length、Connection、Transfer-Encoding 会被拦截。',
+                  'Use for providers that require extra headers such as HTTP-Referer, X-Title, or x-api-key. Host, Content-Length, Connection, and Transfer-Encoding are blocked.',
+                ),
                 style: TextStyle(
-                  color: _primaryTextColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+                  color: _tertiaryTextColor,
+                  fontSize: 12,
                   fontFamily: 'PingFang SC',
                 ),
               ),
-            ),
-            TextButton.icon(
-              onPressed: readOnly ? null : _addCustomHeaderEntry,
-              icon: const Icon(Icons.add, size: 16),
-              label: Text(_headerText('新增', 'Add')),
-            ),
-          ],
-        ),
-        Text(
-          _headerText(
-            '用于对接要求额外请求头的服务商，例如 HTTP-Referer、X-Title、x-api-key。Host、Content-Length、Connection、Transfer-Encoding 会被拦截。',
-            'Use for providers that require extra headers such as HTTP-Referer, X-Title, or x-api-key. Host, Content-Length, Connection, and Transfer-Encoding are blocked.',
-          ),
-          style: TextStyle(
-            color: _tertiaryTextColor,
-            fontSize: 12,
-            fontFamily: 'PingFang SC',
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (_customHeaderEntries.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            decoration: BoxDecoration(
-              color: _isDarkTheme
-                  ? context.omniPalette.surfaceSecondary
-                  : const Color(0xFFF7F9FC),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: _isDarkTheme
-                    ? context.omniPalette.borderSubtle
-                    : const Color(0x14000000),
-              ),
-            ),
-            child: Text(
-              _headerText('暂未配置自定义请求头', 'No custom headers configured'),
-              style: TextStyle(
-                color: _secondaryTextColor,
-                fontSize: 12,
-                fontFamily: 'PingFang SC',
-              ),
-            ),
-          )
-        else
-          Column(
-            children: [
-              for (
-                var index = 0;
-                index < _customHeaderEntries.length;
-                index++
-              ) ...[
-                _buildCustomHeaderRow(_customHeaderEntries[index], readOnly),
-                if (index < _customHeaderEntries.length - 1)
-                  const SizedBox(height: 10),
+              const SizedBox(height: 10),
+              if (!readOnly)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _addCustomHeaderEntry,
+                    icon: const Icon(Icons.add, size: 16),
+                    label: Text(_headerText('新增', 'Add')),
+                  ),
+                ),
+              if (!readOnly && hasHeaders) const SizedBox(height: 4),
+              if (_customHeaderEntries.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _isDarkTheme
+                        ? context.omniPalette.surfaceSecondary
+                        : const Color(0xFFF7F9FC),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isDarkTheme
+                          ? context.omniPalette.borderSubtle
+                          : const Color(0x14000000),
+                    ),
+                  ),
+                  child: Text(
+                    _headerText(
+                      '暂未配置自定义请求头',
+                      'No custom headers configured',
+                    ),
+                    style: TextStyle(
+                      color: _secondaryTextColor,
+                      fontSize: 12,
+                      fontFamily: 'PingFang SC',
+                    ),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    for (
+                      var index = 0;
+                      index < _customHeaderEntries.length;
+                      index++
+                    ) ...[
+                      _buildCustomHeaderRow(
+                        _customHeaderEntries[index],
+                        readOnly,
+                      ),
+                      if (index < _customHeaderEntries.length - 1)
+                        const SizedBox(height: 10),
+                    ],
+                  ],
+                ),
+              if (_customHeadersErrorText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _customHeadersErrorText!,
+                  style: const TextStyle(
+                    color: AppColors.alertRed,
+                    fontSize: 12,
+                    fontFamily: 'PingFang SC',
+                  ),
+                ),
               ],
+              const SizedBox(height: 4),
             ],
           ),
-        if (_customHeadersErrorText != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            _customHeadersErrorText!,
-            style: const TextStyle(
-              color: AppColors.alertRed,
-              fontSize: 12,
-              fontFamily: 'PingFang SC',
-            ),
-          ),
-        ],
+        ),
       ],
     );
   }
