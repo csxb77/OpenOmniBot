@@ -364,6 +364,10 @@ class ModelProviderConfigService {
     '/v1/messages',
     '/messages',
   ];
+  static const List<String> _kCanonicalVersionBaseSuffixes = <String>[
+    '/v1',
+    '/compatible-mode/v1',
+  ];
 
   static bool _isBuiltinLocalProfileId(String profileId) {
     final normalized = profileId.trim();
@@ -422,6 +426,7 @@ class ModelProviderConfigService {
     required String baseUrl,
     required String apiKey,
     Map<String, String> customHeaders = const <String, String>{},
+    String sourceType = 'custom',
     String protocolType = 'openai_compatible',
     String? wireApi,
   }) async {
@@ -438,6 +443,7 @@ class ModelProviderConfigService {
           'baseUrl': baseUrl,
           'apiKey': apiKey,
           'customHeaders': normalizedCustomHeaders,
+          'sourceType': sourceType,
           'protocolType': protocolType,
           'wireApi': resolvedWireApi,
         });
@@ -985,6 +991,11 @@ class ModelProviderConfigService {
     return result.replaceAll(RegExp(r'/+$'), '');
   }
 
+  static bool _hasVersionedBasePath(String value) {
+    final normalized = _stripDirectRequestUrlMarker(value).toLowerCase();
+    return _kCanonicalVersionBaseSuffixes.any(normalized.endsWith);
+  }
+
   static String? normalizeApiBase(String value) {
     final normalized = value.trim();
     if (normalized.isEmpty) {
@@ -1070,7 +1081,7 @@ class ModelProviderConfigService {
     if (_hasDirectRequestUrlMarker(normalizedBase)) {
       return base;
     }
-    if (base.toLowerCase().endsWith('/v1')) {
+    if (_hasVersionedBasePath(base)) {
       return '$base$suffixAfterV1';
     }
     return '$base$suffixWithVersion';

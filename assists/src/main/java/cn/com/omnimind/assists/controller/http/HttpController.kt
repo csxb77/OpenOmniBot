@@ -804,7 +804,7 @@ object HttpController {
         if (ModelProviderConfigStore.hasDirectRequestUrlMarker(apiBase)) {
             return base
         }
-        return if (base.endsWith("/v1", ignoreCase = true)) {
+        return if (ModelProviderConfigStore.hasVersionedBasePath(base)) {
             "$base/chat/completions"
         } else {
             "$base/v1/chat/completions"
@@ -816,7 +816,7 @@ object HttpController {
         if (ModelProviderConfigStore.hasDirectRequestUrlMarker(apiBase)) {
             return base
         }
-        return if (base.endsWith("/v1", ignoreCase = true)) {
+        return if (ModelProviderConfigStore.hasVersionedBasePath(base)) {
             "$base/responses"
         } else {
             "$base/v1/responses"
@@ -836,7 +836,7 @@ object HttpController {
         if (ModelProviderConfigStore.hasDirectRequestUrlMarker(apiBase)) {
             return base
         }
-        return if (base.endsWith("/v1", ignoreCase = true)) {
+        return if (ModelProviderConfigStore.hasVersionedBasePath(base)) {
             "$base/models"
         } else {
             "$base/v1/models"
@@ -848,7 +848,7 @@ object HttpController {
         if (ModelProviderConfigStore.hasDirectRequestUrlMarker(apiBase)) {
             return base
         }
-        return if (base.endsWith("/v1", ignoreCase = true)) {
+        return if (ModelProviderConfigStore.hasVersionedBasePath(base)) {
             "$base/models"
         } else {
             "$base/v1/models"

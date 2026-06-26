@@ -2934,6 +2934,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val customHeaders = ProviderCustomHeaderUtils.coerceStringMap(
             call.argument<Map<*, *>>("customHeaders")
         )
+        val sourceType = call.argument<String>("sourceType")?.trim()
         val protocolType = call.argument<String>("protocolType")?.trim() ?: "openai_compatible"
         val wireApi = call.argument<String>("wireApi")?.trim().orEmpty()
 
@@ -2945,6 +2946,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     baseUrl = baseUrl,
                     apiKey = apiKey,
                     customHeaders = customHeaders,
+                    sourceType = sourceType,
                     protocolType = protocolType,
                     wireApi = wireApi
                 )

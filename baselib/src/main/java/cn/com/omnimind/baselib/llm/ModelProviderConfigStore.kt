@@ -14,8 +14,8 @@ object ModelProviderConfigStore {
     internal const val KEY_PROVIDER_API_KEY = "model_provider_openai_api_key"
     private const val KEY_PROVIDER_PROFILES = "model_provider_profiles_v1"
     private const val KEY_EDITING_PROFILE_ID = "model_provider_editing_profile_id"
-    private const val KEY_DEEPSEEK_OFFICIAL_PROFILE_SEEDED =
-        "model_provider_deepseek_official_profile_seeded_v1"
+    private const val KEY_BUILTIN_OFFICIAL_PROFILES_SEEDED =
+        "model_provider_builtin_official_profiles_seeded_v2"
 
     internal const val LEGACY_MODEL_OVERRIDE_KEY = "vlm_operation_model_override"
     internal const val LEGACY_API_BASE_OVERRIDE_KEY = "vlm_operation_api_base_override"
@@ -37,6 +37,10 @@ object ModelProviderConfigStore {
         "/v1/messages",
         "/messages"
     )
+    private val canonicalVersionBaseSuffixes = listOf(
+        "/v1",
+        "/compatible-mode/v1"
+    )
 
     private val gson = Gson()
 
@@ -57,7 +61,7 @@ object ModelProviderConfigStore {
     fun listProfiles(): List<ModelProviderProfile> {
         ModelProviderMigration.ensureMigrated()
         val mmkv = MMKV.defaultMMKV() ?: return withBuiltin(defaultProfiles())
-        val current = ensureOfficialDeepSeekProfileSeeded(mmkv, readProfiles(mmkv))
+        val current = ensureBuiltinOfficialProfilesSeeded(mmkv, readProfiles(mmkv))
         if (current.isNotEmpty()) {
             ensureEditingProfile(mmkv, withBuiltin(current))
             return withBuiltin(current)
@@ -114,22 +118,27 @@ object ModelProviderConfigStore {
                     existing.any { it.id == requestedId } -> generateProfileId(existing)
                     else -> requestedId
                 }
-                add(
-                    ModelProviderProfile(
-                        id = normalizedId,
+                    add(
+                        ModelProviderProfile(
+                            id = normalizedId,
                         name = sanitizeProfileName(
                             raw = profile.name,
                             profiles = existing,
                             existingId = null
                         ),
                         baseUrl = normalizeBaseUrl(profile.baseUrl).orEmpty(),
-                        apiKey = profile.apiKey.trim(),
-                        customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
-                            profile.customHeaders
-                        ),
-                        protocolType = normalizeProtocolType(profile.protocolType),
-                        wireApi = normalizeWireApi(profile.wireApi)
-                    )
+                            apiKey = profile.apiKey.trim(),
+                            customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
+                                profile.customHeaders
+                            ),
+                            sourceType = normalizeSourceType(
+                                sourceType = profile.sourceType,
+                                profileId = normalizedId,
+                                baseUrl = profile.baseUrl
+                            ),
+                            protocolType = normalizeProtocolType(profile.protocolType),
+                            wireApi = normalizeWireApi(profile.wireApi)
+                        )
                 )
             }
         }.ifEmpty { defaultProfiles() }
@@ -158,6 +167,7 @@ object ModelProviderConfigStore {
         baseUrl: String,
         apiKey: String,
         customHeaders: Map<String, String> = emptyMap(),
+        sourceType: String? = null,
         protocolType: String = "openai_compatible",
         wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS
     ): ModelProviderProfile {
@@ -176,6 +186,12 @@ object ModelProviderConfigStore {
             baseUrl = normalizeBaseUrl(baseUrl).orEmpty(),
             apiKey = apiKey.trim(),
             customHeaders = normalizedCustomHeaders,
+            sourceType = resolveSourceTypeForSave(
+                requestedSourceType = sourceType,
+                profileId = id,
+                baseUrl = baseUrl,
+                existingSourceType = null
+            ),
             protocolType = normalizedProtocolType,
             wireApi = normalizedWireApi
         )
@@ -196,6 +212,12 @@ object ModelProviderConfigStore {
             baseUrl = normalizeBaseUrl(baseUrl).orEmpty(),
             apiKey = apiKey.trim(),
             customHeaders = normalizedCustomHeaders,
+            sourceType = resolveSourceTypeForSave(
+                requestedSourceType = sourceType,
+                profileId = normalizedId,
+                baseUrl = baseUrl,
+                existingSourceType = current.getOrNull(currentIndex)?.sourceType
+            ),
             protocolType = normalizedProtocolType,
             wireApi = normalizedWireApi
         )
@@ -266,6 +288,7 @@ object ModelProviderConfigStore {
             baseUrl = baseUrl,
             apiKey = apiKey,
             customHeaders = customHeaders,
+            sourceType = current.sourceType,
             protocolType = current.protocolType,
             wireApi = current.wireApi
         )
@@ -280,6 +303,7 @@ object ModelProviderConfigStore {
             baseUrl = "",
             apiKey = "",
             customHeaders = emptyMap(),
+            sourceType = current.sourceType,
             protocolType = current.protocolType,
             wireApi = current.wireApi
         )
@@ -297,6 +321,11 @@ object ModelProviderConfigStore {
             result = result.dropLast(DIRECT_REQUEST_URL_MARKER.length)
         }
         return result.replace(Regex("/+$"), "")
+    }
+
+    fun hasVersionedBasePath(value: String): Boolean {
+        val normalized = stripDirectRequestUrlMarker(value).lowercase()
+        return canonicalVersionBaseSuffixes.any { normalized.endsWith(it) }
     }
 
     fun normalizeBaseUrl(value: String): String? {
@@ -426,12 +455,26 @@ object ModelProviderConfigStore {
     }
 
     private fun defaultProfiles(): List<ModelProviderProfile> {
-        return listOf(
-            ModelProviderProfile(
-                id = DEFAULT_PROFILE_ID,
-                name = DEFAULT_PROFILE_NAME
-            ),
-            DeepSeekProvider.officialProfile()
+        return buildList {
+            add(
+                ModelProviderProfile(
+                    id = DEFAULT_PROFILE_ID,
+                    name = DEFAULT_PROFILE_NAME
+                )
+            )
+            addAll(OfficialProviderRegistry.officialProfiles())
+        }
+    }
+
+    private fun normalizeSourceType(
+        sourceType: String?,
+        profileId: String?,
+        baseUrl: String?
+    ): String {
+        return OfficialProviderRegistry.normalizeSourceType(
+            sourceType = sourceType,
+            profileId = profileId,
+            baseUrl = baseUrl
         )
     }
 
@@ -468,31 +511,53 @@ object ModelProviderConfigStore {
         }
     }
 
-    private fun ensureOfficialDeepSeekProfileSeeded(
+    private fun resolveSourceTypeForSave(
+        requestedSourceType: String?,
+        profileId: String?,
+        baseUrl: String,
+        existingSourceType: String?
+    ): String {
+        val normalizedRequested = requestedSourceType?.trim()?.lowercase().orEmpty()
+        if (normalizedRequested == "custom") {
+            return "custom"
+        }
+        if (normalizedRequested == "omniinfer") {
+            return normalizedRequested
+        }
+        OfficialProviderRegistry.findByKey(normalizedRequested)?.let { return it.key }
+        OfficialProviderRegistry.findByKey(existingSourceType)?.let { return it.key }
+        OfficialProviderRegistry.findByProfileId(profileId)?.let { return it.key }
+        OfficialProviderRegistry.findByBaseUrl(baseUrl)?.let { return it.key }
+        return "custom"
+    }
+
+    private fun ensureBuiltinOfficialProfilesSeeded(
         mmkv: MMKV,
         profiles: List<ModelProviderProfile>
     ): List<ModelProviderProfile> {
         if (profiles.isEmpty()) {
             return profiles
         }
-        if (mmkv.decodeBool(KEY_DEEPSEEK_OFFICIAL_PROFILE_SEEDED, false)) {
+        val officialProfiles = OfficialProviderRegistry.officialProfiles()
+        val missingProfiles = officialProfiles.filter { official ->
+            profiles.none { it.id == official.id }
+        }
+        if (missingProfiles.isEmpty()) {
+            mmkv.encode(KEY_BUILTIN_OFFICIAL_PROFILES_SEEDED, true)
             return profiles
         }
-        if (
-            profiles.any {
-                it.id == DeepSeekProvider.OFFICIAL_PROFILE_ID ||
-                    DeepSeekProvider.isOfficialBaseUrl(it.baseUrl)
+        if (mmkv.decodeBool(KEY_BUILTIN_OFFICIAL_PROFILES_SEEDED, false)) {
+            val currentIds = profiles.map { it.id }.toSet()
+            if (officialProfiles.all { it.id in currentIds }) {
+                return profiles
             }
-        ) {
-            mmkv.encode(KEY_DEEPSEEK_OFFICIAL_PROFILE_SEEDED, true)
-            return profiles
         }
         val next = buildList {
             profiles.forEach(::add)
-            add(DeepSeekProvider.officialProfile())
+            missingProfiles.forEach(::add)
         }
         writeProfiles(mmkv, next)
-        mmkv.encode(KEY_DEEPSEEK_OFFICIAL_PROFILE_SEEDED, true)
+        mmkv.encode(KEY_BUILTIN_OFFICIAL_PROFILES_SEEDED, true)
         return next
     }
 
@@ -521,22 +586,6 @@ object ModelProviderConfigStore {
         }
     }
 
-    private fun normalizeStoredSourceType(
-        sourceType: String?,
-        profileId: String?,
-        baseUrl: String?
-    ): String {
-        val normalized = sourceType?.trim()?.lowercase().orEmpty()
-        if (normalized.isNotEmpty()) {
-            return normalized
-        }
-        return when {
-            profileId?.trim() == DeepSeekProvider.OFFICIAL_PROFILE_ID -> DeepSeekProvider.PROTOCOL_TYPE
-            DeepSeekProvider.isOfficialBaseUrl(baseUrl) -> DeepSeekProvider.PROTOCOL_TYPE
-            else -> "custom"
-        }
-    }
-
     internal fun decodeProfilesJson(raw: String?): List<ModelProviderProfile> {
         val normalizedRaw = raw
             ?.trim()
@@ -561,7 +610,7 @@ object ModelProviderConfigStore {
                     customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
                         profile.customHeaders
                     ),
-                    sourceType = normalizeStoredSourceType(
+                    sourceType = normalizeSourceType(
                         sourceType = profile.sourceType,
                         profileId = normalizedId,
                         baseUrl = profile.baseUrl
@@ -594,7 +643,7 @@ object ModelProviderConfigStore {
                 customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
                     profile.customHeaders
                 ),
-                sourceType = normalizeStoredSourceType(
+                sourceType = normalizeSourceType(
                     sourceType = profile.sourceType,
                     profileId = id,
                     baseUrl = profile.baseUrl
@@ -649,7 +698,12 @@ object ModelProviderConfigStore {
                             id = LEGACY_DEFAULT_PROFILE_ID,
                             name = DEFAULT_PROFILE_NAME,
                             baseUrl = providerConfig.baseUrl,
-                            apiKey = providerConfig.apiKey
+                            apiKey = providerConfig.apiKey,
+                            sourceType = normalizeSourceType(
+                                sourceType = null,
+                                profileId = LEGACY_DEFAULT_PROFILE_ID,
+                                baseUrl = providerConfig.baseUrl
+                            )
                         )
                     )
                 } else {
