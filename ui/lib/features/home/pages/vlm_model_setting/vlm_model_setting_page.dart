@@ -6,6 +6,7 @@ import 'package:ui/l10n/l10n.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/builtin_official_provider_catalog.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/theme/app_colors.dart';
@@ -58,9 +59,9 @@ const String _kGroupToggleClosedIconAsset =
     'assets/home/chat/mode_menu_closed.svg';
 const String _kGroupToggleOpenIconAsset = 'assets/home/chat/mode_menu_open.svg';
 const double _kProviderSwitchPopupMaxHeight = 320;
-const double _kProtocolTypePopupMinWidth = 200;
-const double _kProtocolTypePopupHorizontalMargin = 16;
-const double _kProtocolTypePopupTextFontSize = 13;
+const double _kProviderTypePopupMinWidth = 200;
+const double _kProviderTypePopupHorizontalMargin = 16;
+const double _kProviderTypePopupTextFontSize = 13;
 
 enum _ProviderModelSource { manual, remote }
 
@@ -68,41 +69,94 @@ class _ProviderTypeOption {
   const _ProviderTypeOption({
     required this.value,
     required this.label,
+    required this.sourceType,
     required this.protocolType,
     required this.wireApi,
+    this.baseUrl = '',
+    this.providerName = '',
   });
 
   final String value;
   final String label;
+  final String sourceType;
+  final String baseUrl;
+  final String providerName;
   final String protocolType;
   final String wireApi;
+}
+
+class _SelectionOption {
+  const _SelectionOption({required this.value, required this.label});
+
+  final String value;
+  final String label;
 }
 
 const List<_ProviderTypeOption> _kProviderTypeOptions = <_ProviderTypeOption>[
   _ProviderTypeOption(
     value: 'deepseek',
     label: 'DeepSeek',
+    sourceType: 'deepseek',
+    baseUrl: 'https://api.deepseek.com',
+    providerName: 'DeepSeek',
     protocolType: 'deepseek',
     wireApi: 'chat_completions',
   ),
   _ProviderTypeOption(
-    value: 'openai_completions',
-    label: 'OpenAI Completions',
+    value: 'mimo',
+    label: 'Mimo',
+    sourceType: 'mimo',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    providerName: 'Mimo',
     protocolType: 'openai_compatible',
     wireApi: 'chat_completions',
   ),
   _ProviderTypeOption(
-    value: 'openai_responses',
-    label: 'OpenAI Responses',
+    value: 'moonshot',
+    label: 'Kimi',
+    sourceType: 'moonshot',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    providerName: 'Kimi',
     protocolType: 'openai_compatible',
-    wireApi: 'responses',
+    wireApi: 'chat_completions',
+  ),
+  _ProviderTypeOption(
+    value: 'minimax',
+    label: 'MiniMax',
+    sourceType: 'minimax',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    providerName: 'MiniMax',
+    protocolType: 'openai_compatible',
+    wireApi: 'chat_completions',
+  ),
+  _ProviderTypeOption(
+    value: 'bailian',
+    label: '阿里百炼',
+    sourceType: 'bailian',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    providerName: '阿里百炼',
+    protocolType: 'openai_compatible',
+    wireApi: 'chat_completions',
+  ),
+  _ProviderTypeOption(
+    value: 'openai_compatible',
+    label: 'OpenAI Compatible',
+    sourceType: 'custom',
+    protocolType: 'openai_compatible',
+    wireApi: 'chat_completions',
   ),
   _ProviderTypeOption(
     value: 'anthropic',
     label: 'Anthropic',
+    sourceType: 'custom',
     protocolType: 'anthropic',
     wireApi: 'chat_completions',
   ),
+];
+
+const List<_SelectionOption> _kOpenAiWireApiOptions = <_SelectionOption>[
+  _SelectionOption(value: 'chat_completions', label: 'Chat Completions'),
+  _SelectionOption(value: 'responses', label: 'Responses'),
 ];
 
 class _ProviderModelItem {
@@ -164,6 +218,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
   bool _isSavingProfile = false;
   bool _saveQueued = false;
   bool _isSwitchingProfile = false;
+  String _selectedSourceType = BuiltinOfficialProviderCatalog.customKey;
   String _selectedProtocolType = 'openai_compatible';
   String _selectedWireApi = 'chat_completions';
 
@@ -214,15 +269,19 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
       _isDarkTheme ? context.omniPalette.textTertiary : AppColors.text50;
 
   String get _selectedProviderValue {
-    if (_selectedProtocolType == 'openai_compatible') {
-      return _selectedWireApi == 'responses'
-          ? 'openai_responses'
-          : 'openai_completions';
+    final officialProvider = BuiltinOfficialProviderCatalog.findByKey(
+      _selectedSourceType,
+    );
+    if (officialProvider != null) {
+      return officialProvider.key;
     }
     if (_selectedProtocolType == 'anthropic') {
       return 'anthropic';
     }
-    return 'deepseek';
+    if (_selectedProtocolType == 'deepseek') {
+      return 'deepseek';
+    }
+    return 'openai_compatible';
   }
 
   String get _selectedProviderLabel {
@@ -232,20 +291,28 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
         return option.label;
       }
     }
-    return 'OpenAI Completions';
+    return 'OpenAI Compatible';
   }
 
-  double _measureProtocolTypePopupWidth(BuildContext context, double maxWidth) {
+  String get _selectedWireApiLabel {
+    return _selectedWireApi == 'responses' ? 'Responses' : 'Chat Completions';
+  }
+
+  double _measurePopupWidth(
+    BuildContext context,
+    Iterable<String> labels,
+    double maxWidth,
+  ) {
     final style = TextStyle(
-      fontSize: _kProtocolTypePopupTextFontSize,
+      fontSize: _kProviderTypePopupTextFontSize,
       fontWeight: FontWeight.w500,
       fontFamily: 'PingFang SC',
     );
     final textDirection = Directionality.of(context);
     var longestLabelWidth = 0.0;
-    for (final option in _kProviderTypeOptions) {
+    for (final label in labels) {
       final painter = TextPainter(
-        text: TextSpan(text: option.label, style: style),
+        text: TextSpan(text: label, style: style),
         maxLines: 1,
         textDirection: textDirection,
       )..layout();
@@ -261,7 +328,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
         tileHorizontalPadding +
         selectedCheckWidth +
         popupSafetyPadding;
-    return contentWidth.clamp(_kProtocolTypePopupMinWidth, maxWidth).toDouble();
+    return contentWidth.clamp(_kProviderTypePopupMinWidth, maxWidth).toDouble();
   }
 
   List<_ProviderModelItem> get _modelItems {
@@ -562,6 +629,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
           baseUrl: _baseUrlController.text.trim(),
           apiKey: nextApiKey,
           customHeaders: nextCustomHeaders,
+          sourceType: _selectedSourceType,
           protocolType: _selectedProtocolType,
           wireApi: _selectedWireApi,
         );
@@ -641,6 +709,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
       _manualModelIds = manualModelIds;
       _manualModels = manualModels;
       _remoteModels = remoteModels;
+      _selectedSourceType = current.sourceType;
       _selectedProtocolType = current.protocolType;
       _selectedWireApi = _normalizeWireApiForProtocol(
         current.protocolType,
@@ -936,6 +1005,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
         baseUrl: '',
         apiKey: '',
         customHeaders: const <String, String>{},
+        sourceType: BuiltinOfficialProviderCatalog.customKey,
       );
       if (!mounted) return;
       final nextProfiles = [..._profiles, saved];
@@ -1201,11 +1271,14 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
       (option) => option.value == value,
       orElse: () => _kProviderTypeOptions[0],
     );
-    final nextWireApi = _normalizeWireApiForProtocol(
-      selected.protocolType,
-      selected.wireApi,
-    );
-    if (_selectedProtocolType == selected.protocolType &&
+    final isOfficialSelection = selected.baseUrl.isNotEmpty;
+    final isGenericOpenAiSelection = selected.value == 'openai_compatible';
+    final nextProtocolType = selected.protocolType;
+    final nextWireApi = isGenericOpenAiSelection
+        ? _normalizeWireApiForProtocol(nextProtocolType, _selectedWireApi)
+        : _normalizeWireApiForProtocol(selected.protocolType, selected.wireApi);
+    if (_selectedProviderValue == selected.value &&
+        _selectedProtocolType == nextProtocolType &&
         _selectedWireApi == nextWireApi) {
       return;
     }
@@ -1213,11 +1286,76 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
     if (current == null || current.readOnly) {
       return;
     }
+    final previousSourceType = _selectedSourceType;
     final previousValue = _selectedProtocolType;
     final previousWireApi = _selectedWireApi;
+    final previousName = _nameController.text;
+    final previousBaseUrl = _baseUrlController.text;
     setState(() {
-      _selectedProtocolType = selected.protocolType;
+      _selectedSourceType = selected.sourceType;
+      _selectedProtocolType = nextProtocolType;
       _selectedWireApi = nextWireApi;
+    });
+    if (isOfficialSelection) {
+      _syncController(_nameController, selected.providerName);
+      _syncController(_baseUrlController, selected.baseUrl);
+    }
+    try {
+      final saved = await ModelProviderConfigService.saveProfile(
+        id: current.id,
+        name: _nameController.text.trim().isEmpty
+            ? current.name
+            : _nameController.text.trim(),
+        baseUrl: _baseUrlController.text.trim(),
+        apiKey: _apiKeyController.text.trim(),
+        customHeaders:
+            _validatedCustomHeadersDraft() ??
+            ModelProviderConfigService.normalizeCustomHeaders(
+              current.customHeaders,
+            ),
+        sourceType: selected.sourceType,
+        protocolType: nextProtocolType,
+        wireApi: nextWireApi,
+      );
+      if (!mounted) return;
+      setState(() {
+        _profiles = _profiles.map((p) => p.id == saved.id ? saved : p).toList();
+        _selectedSourceType = saved.sourceType;
+        _selectedProtocolType = saved.protocolType;
+        _selectedWireApi = _normalizeWireApiForProtocol(
+          saved.protocolType,
+          saved.wireApi,
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _selectedSourceType = previousSourceType;
+        _selectedProtocolType = previousValue;
+        _selectedWireApi = previousWireApi;
+      });
+      _syncController(_nameController, previousName);
+      _syncController(_baseUrlController, previousBaseUrl);
+    }
+  }
+
+  Future<void> _selectWireApi(String value) async {
+    final normalizedWireApi = _normalizeWireApiForProtocol(
+      _selectedProtocolType,
+      value,
+    );
+    if (_selectedWireApi == normalizedWireApi ||
+        _selectedProviderValue != 'openai_compatible' ||
+        _selectedProtocolType != 'openai_compatible') {
+      return;
+    }
+    final current = _currentProfile;
+    if (current == null || current.readOnly) {
+      return;
+    }
+    final previousWireApi = _selectedWireApi;
+    setState(() {
+      _selectedWireApi = normalizedWireApi;
     });
     try {
       final saved = await ModelProviderConfigService.saveProfile(
@@ -1232,12 +1370,15 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
             ModelProviderConfigService.normalizeCustomHeaders(
               current.customHeaders,
             ),
-        protocolType: selected.protocolType,
-        wireApi: nextWireApi,
+        sourceType: BuiltinOfficialProviderCatalog.customKey,
+        protocolType: _selectedProtocolType,
+        wireApi: normalizedWireApi,
       );
       if (!mounted) return;
       setState(() {
         _profiles = _profiles.map((p) => p.id == saved.id ? saved : p).toList();
+        _selectedSourceType = saved.sourceType;
+        _selectedProtocolType = saved.protocolType;
         _selectedWireApi = _normalizeWireApiForProtocol(
           saved.protocolType,
           saved.wireApi,
@@ -1246,13 +1387,12 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _selectedProtocolType = previousValue;
         _selectedWireApi = previousWireApi;
       });
     }
   }
 
-  Future<void> _openProtocolTypeMenu(BuildContext anchorContext) async {
+  Future<void> _openProviderTypeMenu(BuildContext anchorContext) async {
     final current = _currentProfile;
     if (current == null || current.readOnly) {
       return;
@@ -1270,16 +1410,17 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
     );
     final anchorRect = Rect.fromPoints(topLeft, bottomRight);
     final availablePopupWidth = math.max(
-      _kProtocolTypePopupMinWidth,
-      overlay.size.width - _kProtocolTypePopupHorizontalMargin * 2,
+      _kProviderTypePopupMinWidth,
+      overlay.size.width - _kProviderTypePopupHorizontalMargin * 2,
     );
-    final measuredPopupWidth = _measureProtocolTypePopupWidth(
+    final measuredPopupWidth = _measurePopupWidth(
       context,
+      _kProviderTypeOptions.map((option) => option.label),
       availablePopupWidth,
     );
     final popupWidth = math
         .max(anchorRect.width, measuredPopupWidth)
-        .clamp(_kProtocolTypePopupMinWidth, availablePopupWidth)
+        .clamp(_kProviderTypePopupMinWidth, availablePopupWidth)
         .toDouble();
     final estimatedHeight = (_kProviderTypeOptions.length * 48 + 24)
         .clamp(120.0, _kProviderSwitchPopupMaxHeight)
@@ -1318,6 +1459,90 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
       return;
     }
     await _selectProviderType(selected);
+  }
+
+  Future<void> _openWireApiMenu(BuildContext anchorContext) async {
+    final selected = await _showSelectionMenu(
+      anchorContext: anchorContext,
+      options: _kOpenAiWireApiOptions,
+      selectedValue: _selectedWireApi,
+      menuKey: const Key('provider-wire-api-menu'),
+    );
+    if (selected == null) {
+      return;
+    }
+    await _selectWireApi(selected);
+  }
+
+  Future<String?> _showSelectionMenu({
+    required BuildContext anchorContext,
+    required List<_SelectionOption> options,
+    required String selectedValue,
+    required Key menuKey,
+  }) async {
+    final current = _currentProfile;
+    if (current == null || current.readOnly) {
+      return null;
+    }
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+    if (overlay == null || anchorBox == null || !anchorBox.hasSize) {
+      return null;
+    }
+    final topLeft = anchorBox.localToGlobal(Offset.zero, ancestor: overlay);
+    final bottomRight = anchorBox.localToGlobal(
+      anchorBox.size.bottomRight(Offset.zero),
+      ancestor: overlay,
+    );
+    final anchorRect = Rect.fromPoints(topLeft, bottomRight);
+    final availablePopupWidth = math.max(
+      _kProviderTypePopupMinWidth,
+      overlay.size.width - _kProviderTypePopupHorizontalMargin * 2,
+    );
+    final measuredPopupWidth = _measurePopupWidth(
+      context,
+      options.map((option) => option.label),
+      availablePopupWidth,
+    );
+    final popupWidth = math
+        .max(anchorRect.width, measuredPopupWidth)
+        .clamp(_kProviderTypePopupMinWidth, availablePopupWidth)
+        .toDouble();
+    final estimatedHeight = (options.length * 48 + 24)
+        .clamp(120.0, _kProviderSwitchPopupMaxHeight)
+        .toDouble();
+    final position = PopupMenuAnchorPosition.fromAnchorRect(
+      anchorRect: anchorRect,
+      overlaySize: overlay.size,
+      estimatedMenuHeight: estimatedHeight,
+      reservedBottom: MediaQuery.of(context).viewInsets.bottom,
+      verticalGap: 6,
+    );
+    return showMenu<String>(
+      context: context,
+      color: _cardColor,
+      elevation: _isDarkTheme ? 0 : 8,
+      shadowColor: _isDarkTheme ? context.omniPalette.shadowColor : null,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: _isDarkTheme
+            ? BorderSide(color: context.omniPalette.borderSubtle)
+            : BorderSide.none,
+      ),
+      constraints: BoxConstraints(minWidth: popupWidth, maxWidth: popupWidth),
+      position: position,
+      items: [
+        _SelectionPopupEntry(
+          width: popupWidth,
+          estimatedHeight: estimatedHeight,
+          options: options,
+          selectedValue: selectedValue,
+          menuKey: menuKey,
+        ),
+      ],
+    );
   }
 
   Widget _buildCard({required Widget child}) {
@@ -1425,10 +1650,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
                 heightFactor: value,
                 child: Opacity(
                   opacity: value.clamp(0.0, 1.0).toDouble(),
-                  child: IgnorePointer(
-                    ignoring: value < 0.99,
-                    child: child,
-                  ),
+                  child: IgnorePointer(ignoring: value < 0.99, child: child),
                 ),
               ),
             );
@@ -1478,10 +1700,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
                     ),
                   ),
                   child: Text(
-                    _headerText(
-                      '暂未配置自定义请求头',
-                      'No custom headers configured',
-                    ),
+                    _headerText('暂未配置自定义请求头', 'No custom headers configured'),
                     style: TextStyle(
                       color: _secondaryTextColor,
                       fontSize: 12,
@@ -2352,7 +2571,7 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
               key: const Key('provider-protocol-type-button'),
               onTap: enabled
                   ? () {
-                      unawaited(_openProtocolTypeMenu(anchorContext));
+                      unawaited(_openProviderTypeMenu(anchorContext));
                     }
                   : null,
               borderRadius: BorderRadius.circular(8),
@@ -2379,6 +2598,56 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
                     Icon(
                       Icons.keyboard_arrow_down_rounded,
                       size: 18,
+                      color: _secondaryTextColor,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildWireApiField() {
+    final enabled = !(_currentProfile?.readOnly ?? false);
+    return Builder(
+      builder: (anchorContext) {
+        return Opacity(
+          opacity: enabled ? 1 : 0.68,
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              key: const Key('provider-wire-api-button'),
+              onTap: enabled
+                  ? () {
+                      unawaited(_openWireApiMenu(anchorContext));
+                    }
+                  : null,
+              borderRadius: BorderRadius.circular(12),
+              child: InputDecorator(
+                decoration: _buildInputDecoration(
+                  label: _headerText('接口方式', 'Wire API'),
+                ),
+                isEmpty: false,
+                isFocused: false,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _selectedWireApiLabel,
+                        key: const Key('provider-wire-api-text'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.omniInputTextStyle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 20,
                       color: _secondaryTextColor,
                     ),
                   ],
@@ -2528,6 +2797,10 @@ class _VlmModelSettingPageState extends State<VlmModelSettingPage> {
                             );
                           },
                         ),
+                        if (_selectedProviderValue == 'openai_compatible') ...[
+                          const SizedBox(height: 12),
+                          _buildWireApiField(),
+                        ],
                         const SizedBox(height: 14),
                         TextField(
                           controller: _apiKeyController,
@@ -2811,6 +3084,105 @@ class _ProviderTypePopupEntry extends PopupMenuEntry<String> {
   @override
   State<_ProviderTypePopupEntry> createState() =>
       _ProviderTypePopupEntryState();
+}
+
+class _SelectionPopupEntry extends PopupMenuEntry<String> {
+  const _SelectionPopupEntry({
+    required this.width,
+    required this.estimatedHeight,
+    required this.options,
+    required this.selectedValue,
+    required this.menuKey,
+  });
+
+  final double width;
+  final double estimatedHeight;
+  final List<_SelectionOption> options;
+  final String selectedValue;
+  final Key menuKey;
+
+  @override
+  double get height => estimatedHeight;
+
+  @override
+  bool represents(String? value) => value == selectedValue;
+
+  @override
+  State<_SelectionPopupEntry> createState() => _SelectionPopupEntryState();
+}
+
+class _SelectionPopupEntryState extends State<_SelectionPopupEntry> {
+  Widget _buildTile(_SelectionOption option) {
+    final palette = context.omniPalette;
+    final isDark = context.isDarkTheme;
+    final selected = option.value == widget.selectedValue;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
+      child: InkWell(
+        onTap: () => Navigator.of(context).pop(option.value),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: selected
+                ? (isDark ? palette.segmentThumb : const Color(0xFFEAF3FF))
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? palette.textPrimary : AppColors.text,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'PingFang SC',
+                  ),
+                ),
+              ),
+              if (selected)
+                Icon(
+                  Icons.check_rounded,
+                  size: 16,
+                  color: isDark
+                      ? palette.accentPrimary
+                      : const Color(0xFF2C7FEB),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final dynamicMaxHeight =
+        (mediaQuery.size.height - mediaQuery.viewInsets.bottom - 96)
+            .clamp(120.0, widget.estimatedHeight)
+            .toDouble();
+    return SizedBox(
+      key: widget.menuKey,
+      width: widget.width,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: dynamicMaxHeight),
+        child: Scrollbar(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: widget.options.length,
+            itemBuilder: (context, index) {
+              return _buildTile(widget.options[index]);
+            },
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ProviderTypePopupEntryState extends State<_ProviderTypePopupEntry> {
