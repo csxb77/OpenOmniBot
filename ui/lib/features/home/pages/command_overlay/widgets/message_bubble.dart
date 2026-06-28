@@ -61,6 +61,7 @@ class MessageBubble extends StatelessWidget {
   final void Function(ChatMessageModel message, LongPressStartDetails details)?
   onUserMessageLongPressStart;
   final VoidCallback? onRetryAgentMessage;
+  final VoidCallback? onContinueAgentMessage;
   final bool isUserMessageEditing;
   final TextEditingController? userMessageEditController;
   final VoidCallback? onCancelUserEdit;
@@ -82,6 +83,7 @@ class MessageBubble extends StatelessWidget {
     this.onRequestAuthorize,
     this.onUserMessageLongPressStart,
     this.onRetryAgentMessage,
+    this.onContinueAgentMessage,
     this.isUserMessageEditing = false,
     this.userMessageEditController,
     this.onCancelUserEdit,
@@ -279,14 +281,16 @@ class MessageBubble extends StatelessWidget {
 
     if (attachments.isEmpty && linkPreviews.isEmpty) {
       // AI消息：简单文本样式，无背景
-      return _buildAiTextWithSpeed(context, text);
+      return _buildAiTextWithSpeed(context, text, includeTurnUsageFooter: true);
     }
 
     // AI 消息按“正文 -> 附件 -> 链接预览”顺序分块展示。
+    final turnUsageFooter = _buildTurnUsageFooter(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (text.isNotEmpty) _buildAiTextWithSpeed(context, text),
+        if (text.isNotEmpty)
+          _buildAiTextWithSpeed(context, text, includeTurnUsageFooter: false),
         if (attachments.isNotEmpty) ...[
           if (text.isNotEmpty) const SizedBox(height: 8),
           _buildUserAttachmentList(context, attachments),
@@ -300,6 +304,13 @@ class MessageBubble extends StatelessWidget {
             compactStyle: true,
             isUserMessage: false,
           ),
+        ],
+        if (turnUsageFooter != null) ...[
+          if (text.isNotEmpty ||
+              attachments.isNotEmpty ||
+              linkPreviews.isNotEmpty)
+            const SizedBox(height: 8),
+          turnUsageFooter,
         ],
       ],
     );
@@ -1116,7 +1127,11 @@ class MessageBubble extends StatelessWidget {
   }
 
   /// AI text with optional inference speed label
-  Widget _buildAiTextWithSpeed(BuildContext context, String text) {
+  Widget _buildAiTextWithSpeed(
+    BuildContext context,
+    String text, {
+    required bool includeTurnUsageFooter,
+  }) {
     final speed = _decodeTokensPerSecond;
     final showVoiceButton = VoicePlaybackCoordinator.instance
         .shouldShowVoiceButton(
@@ -1129,9 +1144,14 @@ class MessageBubble extends StatelessWidget {
       text,
       trailing: showVoiceButton ? _buildVoiceAction(context, text) : null,
     );
+    final continueStatus = _buildAgentContinueStatus(context);
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
-    final showPrimaryText = text.isNotEmpty || message.isLoading || message.isSummarizing;
+    final turnUsageFooter = includeTurnUsageFooter
+        ? _buildTurnUsageFooter(context)
+        : null;
+    final showPrimaryText =
+        text.isNotEmpty || message.isLoading || message.isSummarizing;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1150,14 +1170,31 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
         ],
-        if (retryingStatus != null) ...[
+        if (continueStatus != null) ...[
           if (showPrimaryText || speed != null) const SizedBox(height: 8),
+          continueStatus,
+        ],
+        if (retryingStatus != null) ...[
+          if (showPrimaryText || speed != null || continueStatus != null)
+            const SizedBox(height: 8),
           retryingStatus,
         ],
         if (errorFooter != null) ...[
-          if (showPrimaryText || speed != null || retryingStatus != null)
+          if (showPrimaryText ||
+              speed != null ||
+              continueStatus != null ||
+              retryingStatus != null)
             const SizedBox(height: 8),
           errorFooter,
+        ],
+        if (turnUsageFooter != null) ...[
+          if (showPrimaryText ||
+              speed != null ||
+              continueStatus != null ||
+              retryingStatus != null ||
+              errorFooter != null)
+            const SizedBox(height: 8),
+          turnUsageFooter,
         ],
       ],
     );
@@ -1167,8 +1204,46 @@ class MessageBubble extends StatelessWidget {
     if (message.content?['agentRetrying'] != true) {
       return null;
     }
-    final statusText =
-        (message.content?['agentRetryStatusText'] ?? '').toString().trim();
+    final statusText = (message.content?['agentRetryStatusText'] ?? '')
+        .toString()
+        .trim();
+    if (statusText.isEmpty) {
+      return null;
+    }
+    final secondaryColor = _resolvedAiSecondaryTextColor(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 14,
+          height: 14,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.8,
+            valueColor: AlwaysStoppedAnimation<Color>(secondaryColor),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            statusText,
+            style: TextStyle(
+              fontSize: 12 * _chatTextScale,
+              color: secondaryColor,
+              height: 1.4,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget? _buildAgentContinueStatus(BuildContext context) {
+    if (message.content?['agentContinuing'] != true) {
+      return null;
+    }
+    final statusText = (message.content?['agentContinueStatusText'] ?? '')
+        .toString()
+        .trim();
     if (statusText.isEmpty) {
       return null;
     }
@@ -1200,15 +1275,19 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget? _buildAgentErrorFooter(BuildContext context, String text) {
-    final errorText =
-        (message.content?['agentErrorText'] ?? '').toString().trim();
+    final errorText = (message.content?['agentErrorText'] ?? '')
+        .toString()
+        .trim();
     final retryable = message.content?['agentRetryable'] == true;
+    final continueable = message.content?['agentContinueable'] == true;
     final showRetryButton = retryable && onRetryAgentMessage != null;
+    final showContinueButton = continueable && onContinueAgentMessage != null;
     final showErrorText = errorText.isNotEmpty && errorText != text.trim();
-    if (!showErrorText && !showRetryButton) {
+    if (!showErrorText && !showRetryButton && !showContinueButton) {
       return null;
     }
     final warningColor = Theme.of(context).colorScheme.error;
+    final continueColor = const Color(0xFFFF9F1A);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1228,15 +1307,57 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
+        if (showContinueButton) ...[
+          if (showErrorText) const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: continueColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    LegacyTextLocalizer.isEnglish
+                        ? 'Interrupted. Continue from this turn.'
+                        : '已中断，点击「继续」从当前轮恢复',
+                    style: TextStyle(
+                      fontSize: 12 * _chatTextScale,
+                      color: continueColor.withValues(alpha: 0.96),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.tonalIcon(
+                  onPressed: onContinueAgentMessage,
+                  icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                  label: Text(
+                    LegacyTextLocalizer.isEnglish ? 'Continue' : '继续',
+                  ),
+                  style: FilledButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: continueColor,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         if (showRetryButton)
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
               onPressed: onRetryAgentMessage,
               icon: const Icon(Icons.refresh_rounded, size: 16),
-              label: Text(
-                LegacyTextLocalizer.isEnglish ? 'Retry' : '重试本轮',
-              ),
+              label: Text(LegacyTextLocalizer.isEnglish ? 'Retry' : '重试本轮'),
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 visualDensity: VisualDensity.compact,
@@ -1246,6 +1367,76 @@ class MessageBubble extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  Widget? _buildTurnUsageFooter(BuildContext context) {
+    final usage = message.turnUsage;
+    if (usage == null || usage.isEmpty) {
+      return null;
+    }
+    final ctx = _readIntValue(usage['ctx']);
+    final input = _readIntValue(usage['in']);
+    final output = _readIntValue(usage['out']);
+    final cache = _readIntValue(usage['cache']);
+    if (ctx == null && input == null && output == null && cache == null) {
+      return null;
+    }
+    final textColor = _resolvedAiSecondaryTextColor(
+      context,
+    ).withValues(alpha: 0.72);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.av_timer_rounded, size: 12, color: textColor),
+          const SizedBox(width: 6),
+          Text(
+            'ctx:${_formatUsageValue(ctx)}  '
+            'in:${_formatUsageValue(input)}  '
+            'out:${_formatUsageValue(output)}  '
+            'cache:${_formatUsageValue(cache)}',
+            style: TextStyle(
+              fontSize: 11 * _chatTextScale,
+              color: textColor,
+              height: 1.1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int? _readIntValue(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw.trim());
+    return null;
+  }
+
+  String _formatUsageValue(int? value) {
+    if (value == null || value <= 0) {
+      return '0';
+    }
+    if (value >= 1000000) {
+      final formatted = (value / 1000000).toStringAsFixed(
+        value % 1000000 == 0 ? 0 : 1,
+      );
+      return '${formatted.replaceAll(RegExp(r'\.0$'), '')}m';
+    }
+    if (value >= 1000) {
+      final formatted = (value / 1000).toStringAsFixed(
+        value % 1000 == 0 ? 0 : 1,
+      );
+      return '${formatted.replaceAll(RegExp(r'\.0$'), '')}k';
+    }
+    return value.toString();
   }
 
   Widget _buildVoiceAction(BuildContext context, String text) {

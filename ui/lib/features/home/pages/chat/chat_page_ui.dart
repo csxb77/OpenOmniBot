@@ -17,6 +17,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   static const double _kHdPadPaneCollapseWidthRatio = 0.12;
   static const double _kHdPadPaneCollapseMinWidthFactor = 0.72;
   final Set<String> _pendingManualAgentRetryTaskIds = <String>{};
+  final Set<String> _pendingManualAgentContinueTaskIds = <String>{};
 
   ChatPageMode get _primaryChatMessagePageMode =>
       _activeMode == ChatPageMode.codex
@@ -871,6 +872,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       messages: resolvedMessages,
       activeAgentTaskIds: activeAgentTaskIds,
       onRetryAgentMessage: _retryFailedAgentTurn,
+      onContinueAgentMessage: _continueFailedAgentTurn,
       expandedAgentRunTaskIds: _expandedAgentRunTaskIdsForMode(mode),
       onExpandedAgentRunTaskIdsChanged: (taskIds) {
         _updateExpandedAgentRunTaskIds(mode, taskIds);
@@ -2360,6 +2362,71 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     }
   }
 
+  Future<void> _continueFailedAgentTurn(ChatMessageModel message) async {
+    final taskId = _resolveContinueableAgentTaskId(message);
+    if (taskId == null) {
+      showToast(
+        LegacyTextLocalizer.isEnglish
+            ? 'This reply can no longer continue from the current turn'
+            : '这条回复当前无法从本轮继续',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (_pendingManualAgentContinueTaskIds.contains(taskId) ||
+        message.content?['agentContinuing'] == true) {
+      return;
+    }
+    if (_isAiResponding) {
+      showToast(
+        LegacyTextLocalizer.isEnglish
+            ? 'Wait for the current response to finish first'
+            : '请先等待当前回复结束',
+        type: ToastType.warning,
+      );
+      return;
+    }
+
+    final messageIndex = _messages.indexWhere((item) => item.id == message.id);
+    final previousMessage = messageIndex == -1 ? null : _messages[messageIndex];
+    _pendingManualAgentContinueTaskIds.add(taskId);
+    if (previousMessage != null && mounted) {
+      setState(() {
+        _messages[messageIndex] = _buildPendingManualContinueMessage(
+          previousMessage,
+          taskId: taskId,
+        );
+      });
+    }
+
+    final success = await AssistsMessageService.continueAgentTask(
+      taskId: taskId,
+    );
+    _pendingManualAgentContinueTaskIds.remove(taskId);
+    if (!mounted) {
+      return;
+    }
+    if (!success) {
+      if (previousMessage != null) {
+        final restoreIndex = _messages.indexWhere(
+          (item) => item.id == previousMessage.id,
+        );
+        if (restoreIndex != -1) {
+          setState(() {
+            _messages[restoreIndex] = previousMessage;
+          });
+        }
+      }
+      showToast(
+        LegacyTextLocalizer.isEnglish
+            ? 'Continue failed. Please try again.'
+            : '继续失败，请稍后再试',
+        type: ToastType.error,
+      );
+      return;
+    }
+  }
+
   List<Map<String, dynamic>> _extractRetryAttachments(
     ChatMessageModel message,
   ) {
@@ -2372,6 +2439,20 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   }
 
   String? _resolveRetryableAgentTaskId(ChatMessageModel message) {
+    if (message.content?['agentRetryable'] != true) {
+      return null;
+    }
+    return _resolveAgentTaskId(message);
+  }
+
+  String? _resolveContinueableAgentTaskId(ChatMessageModel message) {
+    if (message.content?['agentContinueable'] != true) {
+      return null;
+    }
+    return _resolveAgentTaskId(message);
+  }
+
+  String? _resolveAgentTaskId(ChatMessageModel message) {
     final contentTaskId = (message.content?['agentTaskId'] ?? '')
         .toString()
         .trim();
@@ -2394,6 +2475,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final content = Map<String, dynamic>.from(message.content ?? const {});
     content['agentTaskId'] = taskId;
     content['agentRetrying'] = true;
+    content['agentContinuing'] = false;
     content['agentRetryStatusText'] = LegacyTextLocalizer.isEnglish
         ? 'Retrying connection...'
         : '连接中断，正在重试…';
@@ -2403,6 +2485,32 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     content['agentRetryDelayMs'] = 0;
     content.remove('agentRetryReason');
     content.remove('agentRetryable');
+    content.remove('agentContinueable');
+    content.remove('agentContinueResumeMode');
+    content.remove('agentContinueStatusText');
+    content.remove('agentErrorText');
+    return message.copyWith(content: content, isError: false);
+  }
+
+  ChatMessageModel _buildPendingManualContinueMessage(
+    ChatMessageModel message, {
+    required String taskId,
+  }) {
+    final content = Map<String, dynamic>.from(message.content ?? const {});
+    content['agentTaskId'] = taskId;
+    content['agentRetrying'] = false;
+    content['agentContinuing'] = true;
+    content['agentContinueStatusText'] = LegacyTextLocalizer.isEnglish
+        ? 'Continuing from current turn...'
+        : '正在从当前轮继续…';
+    content.remove('agentRetryStatusText');
+    content.remove('agentRetryCount');
+    content.remove('agentMaxRetries');
+    content.remove('agentRetryDelayMs');
+    content.remove('agentRetryReason');
+    content.remove('agentRetryable');
+    content.remove('agentContinueable');
+    content.remove('agentContinueResumeMode');
     content.remove('agentErrorText');
     return message.copyWith(content: content, isError: false);
   }

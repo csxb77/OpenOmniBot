@@ -47,6 +47,7 @@ class AgentConversationHistoryRepository(
         entryId: String,
         text: String,
         attachments: List<Map<String, Any?>> = emptyList(),
+        turnUsage: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
         val payload = AgentConversationHistorySupport.buildTextMessagePayload(
@@ -56,6 +57,7 @@ class AgentConversationHistoryRepository(
             attachments = attachments,
             isError = false,
             streamMeta = null,
+            turnUsage = turnUsage,
             createdAt = createdAt
         )
         upsertMessageEntry(
@@ -79,6 +81,7 @@ class AgentConversationHistoryRepository(
         isError: Boolean = false,
         attachments: List<Map<String, Any?>> = emptyList(),
         streamMeta: Map<String, Any?>? = null,
+        turnUsage: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
         val payload = AgentConversationHistorySupport.buildTextMessagePayload(
@@ -89,6 +92,7 @@ class AgentConversationHistoryRepository(
             reasoningContent = reasoningContent,
             isError = isError,
             streamMeta = streamMeta,
+            turnUsage = turnUsage,
             createdAt = createdAt
         )
         upsertMessageEntry(
