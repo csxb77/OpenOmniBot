@@ -335,7 +335,9 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
           lockCompleted: false,
         );
       } else {
-        final messageId = entryId.isNotEmpty ? entryId : _nextAgentTextMessageId(event.taskId);
+        final messageId = entryId.isNotEmpty
+            ? entryId
+            : _nextAgentTextMessageId(event.taskId);
         final index = messages.indexWhere((msg) => msg.id == messageId);
         if (index == -1) {
           final content = <String, dynamic>{'text': '', 'id': messageId};
@@ -473,7 +475,9 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
   }) {
     final entryId = (event.entryId ?? '').trim();
     final shouldMarkError = event.raw['persistAsError'] == true;
-    final errorText = (event.raw['errorText'] ?? event.errorMessage).toString().trim();
+    final errorText = (event.raw['errorText'] ?? event.errorMessage)
+        .toString()
+        .trim();
     setState(() {
       currentThinkingStage = ThinkingStage.complete.value;
       isDeepThinking = false;
@@ -492,6 +496,7 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
               entryId: entryId,
               isFinal: true,
             ),
+            turnUsage: event.turnUsage ?? existing.turnUsage,
           );
         }
       }
@@ -620,6 +625,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     content['agentMaxRetries'] = event.maxRetries;
     content['agentRetryDelayMs'] = event.retryDelayMs;
     content['agentRetryReason'] = event.retryReason;
+    content['agentContinuing'] = false;
+    content.remove('agentContinueStatusText');
+    content.remove('agentContinueable');
+    content.remove('agentContinueResumeMode');
     content.remove('agentErrorText');
     content.remove('agentRetryable');
   }
@@ -636,7 +645,11 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     content['agentMaxRetries'] = event.maxRetries;
     content['agentRetryDelayMs'] = 0;
     content['agentRetryReason'] = event.retryReason;
+    content['agentContinuing'] = false;
+    content['agentContinueStatusText'] = '';
     content['agentRetryable'] = event.retryable;
+    content['agentContinueable'] = event.continueable;
+    content['agentContinueResumeMode'] = event.continueResumeMode;
     content['agentErrorText'] = errorText;
   }
 
@@ -648,6 +661,10 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     content.remove('agentRetryDelayMs');
     content.remove('agentRetryReason');
     content.remove('agentRetryable');
+    content.remove('agentContinuing');
+    content.remove('agentContinueStatusText');
+    content.remove('agentContinueable');
+    content.remove('agentContinueResumeMode');
     content.remove('agentErrorText');
   }
 

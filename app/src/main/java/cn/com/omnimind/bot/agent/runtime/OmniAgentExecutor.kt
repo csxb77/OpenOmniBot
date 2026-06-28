@@ -130,7 +130,8 @@ class OmniAgentExecutor(
         reasoningEffort: String?,
         terminalEnvironment: Map<String, String>,
         callback: AgentCallback,
-        runControl: AgentRunControl = NoOpAgentRunControl
+        runControl: AgentRunControl = NoOpAgentRunControl,
+        continueMode: Boolean = false
     ): AgentResult {
         var toolRouter: AgentToolRouter? = null
         return try {
@@ -191,6 +192,7 @@ class OmniAgentExecutor(
                 ),
                 userMessage = userMessage,
                 attachments = attachments,
+                continueMode = continueMode,
                 workspaceDescriptor = workspaceDescriptor,
                 installedSkills = installedSkills,
                 skillsRootShellPath = workspaceManager.shellPathForAndroid(workspaceManager.skillsRoot())
@@ -300,6 +302,7 @@ class OmniAgentExecutor(
         promptSeed: AgentConversationHistoryRepository.PromptSeed,
         userMessage: String,
         attachments: List<Map<String, Any?>>,
+        continueMode: Boolean,
         workspaceDescriptor: AgentWorkspaceDescriptor,
         installedSkills: List<SkillIndexEntry>,
         skillsRootShellPath: String,
@@ -331,7 +334,9 @@ class OmniAgentExecutor(
         messages.add(buildCachedTimeContextMessage(AppLocaleManager.resolvePromptLocale(context)))
         messages.addAll(historyMessages)
         buildPrefetchedMemoryAttachment(prefetchedMemoryHits)?.let { messages.add(it) }
-        messages.add(buildCurrentUserMessage(userMessage, attachments))
+        if (!continueMode) {
+            messages.add(buildCurrentUserMessage(userMessage, attachments))
+        }
         return messages
     }
 

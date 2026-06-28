@@ -72,6 +72,7 @@ internal object AgentConversationHistorySupport {
         reasoningContent: String? = null,
         isError: Boolean,
         streamMeta: Map<String, Any?>?,
+        turnUsage: Map<String, Any?>? = null,
         createdAt: Long
     ): Map<String, Any?> {
         val safeText = AgentTextSanitizer.sanitizeUtf16(text)
@@ -98,6 +99,7 @@ internal object AgentConversationHistorySupport {
             "isError" to isError,
             "isSummarizing" to false,
             "streamMeta" to streamMeta,
+            "turnUsage" to turnUsage,
             "createAt" to Instant.ofEpochMilli(createdAt).toString()
         ).apply {
             if (user == 2 && safeReasoning != null) {
