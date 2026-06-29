@@ -79,6 +79,7 @@ class AgentConversationHistoryRepository(
         text: String,
         reasoningContent: String? = null,
         isError: Boolean = false,
+        interruptedTurn: Boolean = false,
         attachments: List<Map<String, Any?>> = emptyList(),
         streamMeta: Map<String, Any?>? = null,
         turnUsage: Map<String, Any?>? = null,
@@ -91,6 +92,7 @@ class AgentConversationHistoryRepository(
             attachments = attachments,
             reasoningContent = reasoningContent,
             isError = isError,
+            interruptedTurn = interruptedTurn,
             streamMeta = streamMeta,
             turnUsage = turnUsage,
             createdAt = createdAt

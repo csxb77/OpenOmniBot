@@ -1239,43 +1239,17 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget? _buildAgentContinueStatus(BuildContext context) {
-    if (message.content?['agentContinuing'] != true) {
-      return null;
-    }
-    final statusText = (message.content?['agentContinueStatusText'] ?? '')
-        .toString()
-        .trim();
-    if (statusText.isEmpty) {
-      return null;
-    }
-    final secondaryColor = _resolvedAiSecondaryTextColor(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 14,
-          height: 14,
-          child: CircularProgressIndicator(
-            strokeWidth: 1.8,
-            valueColor: AlwaysStoppedAnimation<Color>(secondaryColor),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            statusText,
-            style: TextStyle(
-              fontSize: 12 * _chatTextScale,
-              color: secondaryColor,
-              height: 1.4,
-            ),
-          ),
-        ),
-      ],
-    );
+    // 续跑期间不再单独显示"正在从当前轮继续…"+转圈,
+    // 让旧 bubble 看起来就像一条普通的待更新消息,等首帧新内容到达整体替换。
+    return null;
   }
 
   Widget? _buildAgentErrorFooter(BuildContext context, String text) {
+    // 续跑期间隐藏整个错误页脚(报错文字 + Continue 提示框 + Retry 按钮),
+    // 不让用户在新内容到达前看到任何残留的失败状态。
+    if (message.content?['agentContinuing'] == true) {
+      return null;
+    }
     final errorText = (message.content?['agentErrorText'] ?? '')
         .toString()
         .trim();

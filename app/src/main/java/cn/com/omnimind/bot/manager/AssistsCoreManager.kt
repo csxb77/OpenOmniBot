@@ -1772,6 +1772,17 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     ?.toString()
                     ?.trim()
                     .orEmpty()
+                // 进程重启或 context 被清等场景下走到这里:in-memory 的
+                // FailedAgentContinueContext 丢了,只能从 DB 反查"已经续跑过几代"。
+                // 看 thinking entry id 后缀里的 -c$N 取最大值;新一代 = max + 1。
+                // 没找到任何带后缀的 → max=0 → 新一代=1。
+                val continueSuffixRegex = Regex("-c(\\d+)$")
+                val maxExistingGeneration = messages.asSequence()
+                    .mapNotNull { it["id"]?.toString() }
+                    .filter { it.startsWith("$taskId-thinking") || it.startsWith("$taskId-tool") }
+                    .mapNotNull { continueSuffixRegex.find(it)?.groupValues?.getOrNull(1)?.toIntOrNull() }
+                    .maxOrNull()
+                    ?: 0
                 val continueArgs = linkedMapOf<String, Any?>(
                     "taskId" to taskId,
                     "userMessage" to userMessage,
@@ -1783,7 +1794,9 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     "continueFromAssistantText" to (lastAssistant["content"] as? Map<*, *>)?.get("text")
                         ?.toString()
                         .orEmpty(),
-                    "continueTurnUsage" to (lastAssistant["turnUsage"] as? Map<*, *>)?.let(::sanitizeInteropValue)
+                    "continueTurnUsage" to (lastAssistant["turnUsage"] as? Map<*, *>)?.let(::sanitizeInteropValue),
+                    // 写入 parent generation;handleCreateOrContinueAgentTask 会 +1 得到新一代。
+                    "continueGeneration" to maxExistingGeneration
                 )
                 registerFailedAgentContinueContext(
                     taskId,
@@ -4383,6 +4396,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             ?.ifEmpty { null }
         val continueTurnUsage = call.argument<Map<String, Any?>>("continueTurnUsage")
             ?.let(::sanitizeInteropMap)
+        // 续跑代数:每次点 Continue 触发的新 run 都 +1,用来给 thinking 和 tool entry id
+        // 加 -c$gen 后缀,避免与上一次 run 的卡片碰撞导致前端"被替代"。
+        // 0 = 首次任务(非续跑),无后缀,保持向后兼容。
+        val parentContinueGeneration =
+            call.argument<Number>("continueGeneration")?.toInt() ?: 0
+        val continueGeneration = if (isContinue || continueMode) {
+            (parentContinueGeneration + 1).coerceAtLeast(1)
+        } else {
+            0
+        }
         if (taskId.isBlank()) {
             result.error("INVALID_ARGUMENTS", "taskId is empty", null)
             return
@@ -4409,7 +4432,8 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 "continueResumeMode" to continueResumeMode,
                 "continueFromAssistantEntryId" to continueFromAssistantEntryId,
                 "continueFromAssistantText" to continueFromAssistantText,
-                "continueTurnUsage" to continueTurnUsage
+                "continueTurnUsage" to continueTurnUsage,
+                "continueGeneration" to continueGeneration
             )
         )
         val agentRunJob = SupervisorJob()
@@ -4493,6 +4517,36 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 var latestAssistantVisibleText = ""
                 var shouldStartNewAssistantRound = false
 
+                fun parseRoundFromAssistantEntryId(entryId: String): Int? {
+                    val baseId = "$taskId-text"
+                    return when {
+                        entryId == baseId -> 1
+                        entryId.startsWith("$baseId-") ->
+                            entryId.removePrefix("$baseId-").toIntOrNull()
+                        else -> null
+                    }
+                }
+
+                // 续跑:只复用失败那一轮的 assistant entry id / round,让第一帧新内容直接落
+                // 进旧 bubble。pending 标志在 ensureAssistantEntry 首次命中后清零,
+                // 避免后续轮次被误锁。
+                //
+                // 注意几个故意不 preset 的状态:
+                // - thinkingRound 留 0:新 run 自己起算,resolveThinkingEntryId 再叠上
+                //   continueGeneration 的 -c 后缀,确保不和旧 thinking 卡碰撞。
+                // - latestAssistantVisibleText 留空:onComplete 的 finalText fallback 不
+                //   应该回退到旧错误文案("Failed to connect..."),否则续跑万一啥都没
+                //   流出来时,DB 还会被旧错误文案重新覆盖。
+                var continueEntryPending = false
+                if (continueMode && continueFromAssistantEntryId != null) {
+                    val parsedRound = parseRoundFromAssistantEntryId(continueFromAssistantEntryId)
+                    if (parsedRound != null && parsedRound >= 1) {
+                        activeAssistantEntryId = continueFromAssistantEntryId
+                        assistantRound = parsedRound
+                        continueEntryPending = true
+                    }
+                }
+
                 fun pushToolValue(
                     store: MutableMap<String, ArrayDeque<String>>,
                     toolName: String,
@@ -4571,12 +4625,20 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     }
                 }
 
+                // 续跑代数后缀,用于隔离 thinking / tool entry id,避免新 run 的卡片
+                // 用 entryId 命中失败 run 已有的卡片导致前端"被替代"。
+                // assistant 文本 entry id 故意不加这个后缀:那条 bubble 我们要主动复用旧 id,
+                // 让新内容原地落入失败那条 bubble。
+                val continueGenerationSuffix =
+                    if (continueGeneration > 0) "-c$continueGeneration" else ""
+
                 fun resolveThinkingEntryId(round: Int): String {
-                    return if (round <= 1) {
+                    val base = if (round <= 1) {
                         "$taskId-thinking"
                     } else {
                         "$taskId-thinking-$round"
                     }
+                    return base + continueGenerationSuffix
                 }
 
                 fun resolveAssistantEntryId(round: Int): String {
@@ -4621,6 +4683,15 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
 
                 fun ensureAssistantEntry(forceNewRound: Boolean = false): Pair<Int, String> {
+                    // 续跑首次复用旧 entryId,忽略 forceNewRound (调用方常按 assistantRound>0 触发新轮,
+                    // 但续跑时 assistantRound>0 是从失败那一轮还原下来的,不是真的"已经走完一轮"。)
+                    if (continueEntryPending && activeAssistantEntryId != null) {
+                        continueEntryPending = false
+                        shouldStartNewAssistantRound = false
+                        val entryId = activeAssistantEntryId!!
+                        entryCreatedAtTimes.putIfAbsent(entryId, System.currentTimeMillis())
+                        return assistantRound to entryId
+                    }
                     if (activeAssistantEntryId == null || shouldStartNewAssistantRound || forceNewRound) {
                         assistantRound = (assistantRound + 1).coerceAtLeast(1)
                         activeAssistantEntryId = resolveAssistantEntryId(assistantRound)
@@ -4728,6 +4799,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     roundIndex: Int,
                     text: String,
                     isError: Boolean,
+                    interruptedTurn: Boolean = false,
                     streamKind: String = "text_snapshot",
                     usageSnapshot: AgentTurnUsageSnapshot? = null
                 ) {
@@ -4744,6 +4816,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                             entryId = entryId,
                             text = normalizedText,
                             isError = isError,
+                            interruptedTurn = interruptedTurn,
                             reasoningContent = latestThinkingContent
                                 .takeIf { it.isNotBlank() }
                                 ?.let(AgentTextSanitizer::sanitizeUtf16),
@@ -5042,7 +5115,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     ) {
                         val argsJson = arguments.toString()
                         pushToolValue(activeToolArgs, toolName, argsJson)
-                        val entryId = "$taskId-tool-${++toolSequence}"
+                        val entryId = "$taskId-tool$continueGenerationSuffix-${++toolSequence}"
                         val roundIndex = currentToolRoundIndex()
                         pushToolValue(activeToolEntryIds, toolName, entryId)
                         agentRunContext.bindActiveToolCardId(entryId)
@@ -5123,7 +5196,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     ) {
                         val argsJson = popToolValue(activeToolArgs, toolName)
                         val entryId = popToolValue(activeToolEntryIds, toolName).ifBlank {
-                            "$taskId-tool-${++toolSequence}"
+                            "$taskId-tool$continueGenerationSuffix-${++toolSequence}"
                         }
                         val roundIndex = currentToolRoundIndex()
                         activeThinkingEntryId?.let { thinkingEntryId ->
@@ -5445,6 +5518,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                                     roundIndex = roundIndex,
                                     text = finalText,
                                     isError = resolution.persistAsError,
+                                    interruptedTurn = true,
                                     streamKind = "text_snapshot",
                                     usageSnapshot = errorTurnUsageSnapshot
                                 )
@@ -5652,7 +5726,8 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     reasoningEffort,
                     terminalEnvironment,
                     callback,
-                    runControl = agentRunContext
+                    runControl = agentRunContext,
+                    continueMode = continueMode
                 )
             } catch (e: CancellationException) {
                 OmniLog.i(TAG, "createAgentTask cancelled: ${e.message}")

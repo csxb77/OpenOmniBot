@@ -2498,6 +2498,22 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required String taskId,
   }) {
     final content = Map<String, dynamic>.from(message.content ?? const {});
+    // 失败时如果整条 bubble 的正文就是错误文案(无半截输出场景,
+    // resolveAgentFinalErrorResolution 设了 persistAsError=true → isError=true),
+    // 续跑前清掉它,避免在新流到达前残留 "Failed to connect..." 一类文字。
+    // 若 isError=false,说明 text 是真实的半截输出,保留待新流首帧整体替换。
+    final errorTextSnapshot = (content['agentErrorText'] ?? '').toString().trim();
+    final bubbleText = (content['text'] ?? '').toString().trim();
+    final textIsErrorOnly = message.isError == true ||
+        (errorTextSnapshot.isNotEmpty && errorTextSnapshot == bubbleText);
+    if (textIsErrorOnly) {
+      content['text'] = '';
+      // 解析机制是按文本里出现的 URL 同步进 content.linkPreviews 的(详见
+      // chat_conversation_runtime_coordinator 的 syncLinkPreviewsForAssistantText)。
+      // 文本被清空后,linkPreviews 不会自动清,会一直渲染 "xxx.com" 这张卡片。
+      // 续跑前直接抹掉,新流的首帧文本会触发重新解析。
+      content.remove('linkPreviews');
+    }
     content['agentTaskId'] = taskId;
     content['agentRetrying'] = false;
     content['agentContinuing'] = true;
