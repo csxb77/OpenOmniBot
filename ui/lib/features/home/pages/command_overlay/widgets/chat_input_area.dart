@@ -234,7 +234,7 @@ class _ContextUsageRing extends StatelessWidget {
   }
 }
 
-class _ContextUsageRingButton extends StatelessWidget {
+class _ContextUsageRingButton extends StatefulWidget {
   const _ContextUsageRingButton({
     required this.ratio,
     this.tooltipMessage,
@@ -246,15 +246,129 @@ class _ContextUsageRingButton extends StatelessWidget {
   final VoidCallback? onLongPress;
 
   @override
+  State<_ContextUsageRingButton> createState() =>
+      _ContextUsageRingButtonState();
+}
+
+class _ContextUsageRingButtonState extends State<_ContextUsageRingButton> {
+  // 不能用 showGlassPopup —— 它走 Navigator.push,ModalRoute.didPush 会调
+  // setFirstFocus 把焦点从 TextField 抢到 popup 的 FocusScope,TextField 失焦 →
+  // 软键盘塌陷 → 输入栏下沉 → 已经算好的 popup 锚点还停在"键盘弹起时的高位置",
+  // 视觉上就是 tooltip 飘在原地、输入栏掉到底。详见 glass_popup.dart 头部注释,
+  // 以及 chat_page_model_context.dart 里 _openConversationModelSelector 的同款修法。
+  // 直接挂 OverlayEntry + GlassPopupOverlayContent 跳过 Navigator 即可保焦点。
+  OverlayEntry? _entry;
+  Timer? _autoDismissTimer;
+  GlobalKey<GlassPopupOverlayContentState>? _wrapperKey;
+  bool _dismissing = false;
+
+  @override
+  void dispose() {
+    _autoDismissTimer?.cancel();
+    final entry = _entry;
+    _entry = null;
+    _wrapperKey = null;
+    if (entry != null && entry.mounted) {
+      entry.remove();
+    }
+    super.dispose();
+  }
+
+  Future<void> _dismiss() async {
+    if (_dismissing) return;
+    _dismissing = true;
+    _autoDismissTimer?.cancel();
+    _autoDismissTimer = null;
+    final wrapper = _wrapperKey?.currentState;
+    if (wrapper != null) {
+      await wrapper.playReverse();
+    }
+    final entry = _entry;
+    _entry = null;
+    _wrapperKey = null;
+    if (entry != null && entry.mounted) {
+      entry.remove();
+    }
+    _dismissing = false;
+  }
+
+  void _showTooltip(BuildContext anchorContext, String message) {
+    if (_entry != null) {
+      // 二次点击当 toggle 关掉,免得键盘开着时反复点击堆叠多个 entry。
+      unawaited(_dismiss());
+      return;
+    }
+    final anchor = glassPopupAnchorFromContext(anchorContext);
+    if (anchor == null) return;
+    final overlayState = Overlay.of(anchorContext, rootOverlay: true);
+    final wrapperKey = GlobalKey<GlassPopupOverlayContentState>();
+    _wrapperKey = wrapperKey;
+
+    final entry = OverlayEntry(
+      builder: (overlayContext) {
+        // Material 包一层是必需的:OverlayEntry 直接挂 root overlay,默认没有
+        // Material 祖先,Text 会回落到 debug fallback 样式(底部黄色下划线
+        // + 红色波浪,Flutter 没找到 DefaultTextStyle 的标志性提示),宽度也
+        // 会被 fallback 字号撑大。透明 Material 提供 DefaultTextStyle/字号/
+        // softWrap,把渲染拉回正常。参照 chat_page_model_context.dart 同款做法。
+        return BackButtonListener(
+          onBackButtonPressed: () async {
+            unawaited(_dismiss());
+            return true;
+          },
+          // Android 系统返回在键盘弹起时被平台层吃一击只关键盘,Flutter 收不到
+          // back —— BackButtonListener 在这一击里不会触发。tooltip 锚点是开
+          // popup 那一刻按按钮屏幕坐标算的固定 Rect,键盘塌陷后输入栏下沉、
+          // tooltip 还停在原地。DismissOverlayOnKeyboardHide 观察 viewInsets
+          // 从 peak 跌落的瞬间,把 tooltip 一起收掉,从用户视角一次返回就把
+          // 键盘和 tooltip 同时收走。
+          child: DismissOverlayOnKeyboardHide(
+            onKeyboardHide: () => unawaited(_dismiss()),
+            child: Material(
+              type: MaterialType.transparency,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => unawaited(_dismiss()),
+                    ),
+                  ),
+                  GlassPopupOverlayContent(
+                    key: wrapperKey,
+                    anchor: anchor,
+                    preferBelow: false,
+                    verticalGap: 8,
+                    horizontalPlacement:
+                        GlassPopupHorizontalPlacement.centerOnAnchor,
+                    child: _ContextUsageGlassTooltipBody(message: message),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    _entry = entry;
+    overlayState.insert(entry);
+
+    _autoDismissTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      unawaited(_dismiss());
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final ring = SizedBox(
       width: 22,
       height: 22,
-      child: Center(child: _ContextUsageRing(ratio: ratio)),
+      child: Center(child: _ContextUsageRing(ratio: widget.ratio)),
     );
-    final tooltip = tooltipMessage?.trim() ?? '';
+    final tooltip = widget.tooltipMessage?.trim() ?? '';
     final hasTooltip = tooltip.isEmpty == false;
-    if (!hasTooltip && onLongPress == null) {
+    if (!hasTooltip && widget.onLongPress == null) {
       return ring;
     }
     return Builder(
@@ -262,63 +376,20 @@ class _ContextUsageRingButton extends StatelessWidget {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: hasTooltip
-              ? () => _showGlassTooltip(anchorContext, tooltip)
+              ? () => _showTooltip(anchorContext, tooltip)
               : null,
-          onLongPress: onLongPress,
+          onLongPress: widget.onLongPress,
           child: ring,
         );
       },
     );
   }
-
-  void _showGlassTooltip(BuildContext anchorContext, String message) {
-    final anchor = glassPopupAnchorFromContext(anchorContext);
-    if (anchor == null) {
-      return;
-    }
-    showGlassPopup<void>(
-      context: anchorContext,
-      anchor: anchor,
-      preferBelow: false,
-      verticalGap: 8,
-      horizontalPlacement: GlassPopupHorizontalPlacement.centerOnAnchor,
-      barrierColor: Colors.transparent,
-      child: _ContextUsageGlassTooltipBody(message: message),
-    );
-  }
 }
 
-class _ContextUsageGlassTooltipBody extends StatefulWidget {
+class _ContextUsageGlassTooltipBody extends StatelessWidget {
   const _ContextUsageGlassTooltipBody({required this.message});
 
   final String message;
-
-  @override
-  State<_ContextUsageGlassTooltipBody> createState() =>
-      _ContextUsageGlassTooltipBodyState();
-}
-
-class _ContextUsageGlassTooltipBodyState
-    extends State<_ContextUsageGlassTooltipBody> {
-  Timer? _autoDismissTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _autoDismissTimer = Timer(const Duration(seconds: 3), () {
-      if (!mounted) return;
-      final navigator = Navigator.of(context);
-      if (navigator.canPop()) {
-        navigator.pop();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _autoDismissTimer?.cancel();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -331,7 +402,7 @@ class _ContextUsageGlassTooltipBodyState
         borderRadius: const BorderRadius.all(Radius.circular(14)),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Text(
-          widget.message,
+          message,
           style: TextStyle(
             color: textColor,
             fontSize: 12,

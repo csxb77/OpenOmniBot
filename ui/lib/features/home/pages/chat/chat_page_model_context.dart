@@ -518,7 +518,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           // 平台吃掉变成"只关键盘",popup 留在原地。这里用一个 listener
           // 观察 MediaQuery.viewInsets.bottom,从 >0 跳到 0 就主动关掉 popup,
           // 这样从用户视角一次返回就把键盘和 popup 一起收掉。
-          child: _DismissOverlayOnKeyboardHide(
+          child: DismissOverlayOnKeyboardHide(
             onKeyboardHide: () => unawaited(finish(null)),
             child: Material(
               color: Colors.transparent,
@@ -1823,65 +1823,5 @@ class _ConversationModelSelectorContentState
   }
 }
 
-/// 监听 [MediaQuery.viewInsetsOf] 的底部 inset。键盘从可见变成不可见时 (典型场景:
-/// Android 系统返回手势在键盘弹起状态下先被平台吃掉一击,只关键盘不传到 Flutter,
-/// popup 留在原地;还有 home/外部应用切走) 调一次 [onKeyboardHide]。
-///
-/// 用法:挂在 OverlayEntry 里包住 popup 内容。这样一次系统返回就能把键盘和
-/// popup 一起收掉,符合"输入框聚焦+popup 打开→返回→什么都没了"的直觉。
-class _DismissOverlayOnKeyboardHide extends StatefulWidget {
-  const _DismissOverlayOnKeyboardHide({
-    required this.onKeyboardHide,
-    required this.child,
-  });
-
-  final VoidCallback onKeyboardHide;
-  final Widget child;
-
-  @override
-  State<_DismissOverlayOnKeyboardHide> createState() =>
-      _DismissOverlayOnKeyboardHideState();
-}
-
-class _DismissOverlayOnKeyboardHideState
-    extends State<_DismissOverlayOnKeyboardHide> {
-  /// 要把 peak 视作"键盘是真的弹起过",最小高度;<50dp 通常是 nav bar / 手势
-  /// gutter 之类的固定 inset,不算键盘。
-  static const double _kKeyboardPeakMinimum = 50.0;
-
-  /// 已经看到的最大 viewInsets.bottom。键盘高度可能随键盘类型(文本/表情/语音)
-  /// 变化,我们只把"曾经达到过的最高值"当作 peak,避免切换布局时误触发收起。
-  double _peakInset = 0;
-  bool _firedOnce = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    if (bottomInset > _peakInset) {
-      _peakInset = bottomInset;
-    }
-    // 关键时序:Android 的 IME hide 是动画的(~250ms),如果等 viewInsets.bottom
-    // 全部跌到 0 再触发收起 popup,popup 的反向动画(220ms)就要排在 IME 动画
-    // 之后跑,用户看到的延迟 ≈ 250+220 ms,popup 卡顿明显。改为检测"开始下落"
-    // 的瞬间(从 peak 跌掉 ≥ 10%),触发 popup 反向动画并行跑——这样 IME 动画
-    // 跑完时 popup 也几乎同时消失。
-    //
-    // 阈值 10% 而不是固定像素,是因为 PJD110/ColorOS 的 viewPadding 在静稳态
-    // 也会有亚像素抖动(见 composer-keyboard-debug-rig 笔记),百分比阈值
-    // 对噪声更稳健;peak 必须 ≥ 50dp 进一步保证是真键盘弹起过。
-    if (!_firedOnce &&
-        _peakInset > _kKeyboardPeakMinimum &&
-        bottomInset < _peakInset * 0.9) {
-      _firedOnce = true;
-      // 不能在 didChangeDependencies 同步调 callback——callback 可能 setState,
-      // 而本帧正在 build。延到下一帧。
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.onKeyboardHide();
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
-}
+// DismissOverlayOnKeyboardHide 已提取到 lib/widgets/glass_popup.dart,
+// 给 chat_input_area.dart 里的 context-usage tooltip 一起复用。
