@@ -2390,6 +2390,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
 
     final messageIndex = _messages.indexWhere((item) => item.id == message.id);
     final previousMessage = messageIndex == -1 ? null : _messages[messageIndex];
+    final removedBlankThinkingCards = <ChatMessageModel>[];
     _pendingManualAgentContinueTaskIds.add(taskId);
     if (previousMessage != null && mounted) {
       setState(() {
@@ -2397,6 +2398,28 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           previousMessage,
           taskId: taskId,
         );
+        // 失败 run 如果是卡在 thinking 阶段(还没出 tool 调用 / assistant 文本),
+        // 会留一张空内容的 "Thought for xx s" 卡。续跑后这张卡没有任何信息价值,
+        // 而且新 run 的 thinking 用了 -c$gen 后缀 id,不会原地覆盖它,
+        // 所以这里在续跑前先把它从消息流里移除。
+        //
+        // 注意:thinking 卡的 type / thinkingContent 都在 content.cardData 嵌套层里,
+        // 不是顶层 content,所以走 ChatMessageModel.cardData getter 读。
+        _messages.removeWhere((item) {
+          if (item.id == previousMessage.id) return false;
+          if (item.type != 2) return false;
+          if (agentRunParentTaskId(item) != taskId) return false;
+          final cardData = item.cardData;
+          if (cardData == null) return false;
+          final cardType = (cardData['type'] ?? '').toString().trim();
+          if (cardType != 'deep_thinking') return false;
+          final thinkingContent = (cardData['thinkingContent'] ?? '')
+              .toString()
+              .trim();
+          final shouldRemove = thinkingContent.isEmpty;
+          if (shouldRemove) removedBlankThinkingCards.add(item);
+          return shouldRemove;
+        });
       });
     }
 
@@ -2415,6 +2438,13 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         if (restoreIndex != -1) {
           setState(() {
             _messages[restoreIndex] = previousMessage;
+            // 一并恢复因乐观更新被移除的空白 thinking 卡,
+            // 避免续跑请求本身失败时静默吞掉历史状态。
+            for (final card in removedBlankThinkingCards) {
+              if (_messages.indexWhere((item) => item.id == card.id) == -1) {
+                _messages.add(card);
+              }
+            }
           });
         }
       }
