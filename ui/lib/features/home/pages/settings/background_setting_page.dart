@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/l10n/app_locale_controller.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -96,7 +96,6 @@ class BackgroundSettingPage extends StatefulWidget {
 }
 
 class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
-  final ImagePicker _imagePicker = ImagePicker();
   final TextEditingController _remoteUrlController = TextEditingController();
   final TextEditingController _textColorController = TextEditingController();
 
@@ -258,13 +257,19 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
   Future<void> _pickLocalImage() async {
     try {
-      final file = await _imagePicker.pickImage(source: ImageSource.gallery);
-      if (file == null) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      if (result == null || result.files.isEmpty) {
         return;
       }
-      final importedPath = await AppBackgroundService.importLocalImage(
-        file.path,
-      );
+      final path = result.files.single.path;
+      if (path == null || path.isEmpty) {
+        showToast('选择图片失败：无法读取图片路径', type: ToastType.error);
+        return;
+      }
+      final importedPath = await AppBackgroundService.importLocalImage(path);
       final previousImported = _sessionImportedLocalPath;
       if (previousImported != null &&
           previousImported != _savedConfig.localImagePath &&
