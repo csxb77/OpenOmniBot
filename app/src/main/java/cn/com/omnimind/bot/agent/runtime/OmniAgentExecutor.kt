@@ -86,13 +86,13 @@ class OmniAgentExecutor(
             return when (locale) {
                 cn.com.omnimind.baselib.i18n.PromptLocale.ZH_CN -> """
                     [time_context]
-                    褰撳墠鏈湴鏃堕棿: ${now.format(isoFormatter)}
-                    鏈湴鏃ユ湡: ${now.toLocalDate()}
-                    鏈湴鏃堕棿: ${now.toLocalTime().format(DateTimeFormatter.ISO_LOCAL_TIME)}
-                    鏃跺尯: ${zoneId.id}
+                    当前本地时间: ${now.format(isoFormatter)}
+                    本地日期: ${now.toLocalDate()}
+                    本地时间: ${now.toLocalTime().format(DateTimeFormatter.ISO_LOCAL_TIME)}
+                    时区: ${zoneId.id}
                     UTC: ${utcNow.format(isoFormatter)}
-                    鏄熸湡: ${now.dayOfWeek.name}
-                    杩欐潯涓婁笅鏂囩敱杩愯鏃朵负鏈疆璇锋眰鑷姩鐢熸垚锛岀敤浜庤В閲娾€滀粖澶┾€濃€滄槑澶┾€濃€滅幇鍦ㄢ€濈瓑鐩稿鏃堕棿锛涗笉瑕佹妸瀹冨綋浣滅敤鎴峰師鏂囨垨闀挎湡璁板繂銆?
+                    星期: ${now.dayOfWeek.name}
+                    这条上下文由运行时为本轮请求自动生成，用于解释“今天”“明天”“现在”等相对时间；不要把它当作用户原文或长期记忆。
                 """.trimIndent()
 
                 cn.com.omnimind.baselib.i18n.PromptLocale.EN_US -> """

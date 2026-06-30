@@ -31,3 +31,7 @@ testbot/build
 log.txt
 
 output/
+
+# PC desktop port (Rust backend + Flutter macOS/Windows runner) lives on
+# its own feature branch; keep it out of main's `git status`.
+/desktop/

@@ -1314,7 +1314,9 @@ class CodexEventReducer {
         ? ''
         : (runtime.messages[index].cardData?['thinkingContent'] ?? '')
               .toString();
-    final cachedThinking = runtime.currentThinkingMessages[parentTaskId];
+    final cachedThinking = runtime.activeThinkingCardId == cardId
+        ? runtime.currentThinkingMessages[parentTaskId]
+        : null;
     final baseContent = cachedThinking ?? existingContent;
     final effectiveDelta = _deduplicateReplayDelta(
       runtime,
@@ -1329,6 +1331,7 @@ class CodexEventReducer {
     _touchActiveTurn(runtime, parentTaskId);
     runtime.isDeepThinking = true;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
+    runtime.activeThinkingCardId = cardId;
     final nextContent = baseContent + effectiveDelta;
     runtime.codexReplayDeltaOffsets.remove(cardId);
     runtime.currentThinkingMessages[parentTaskId] = nextContent;
@@ -1359,6 +1362,14 @@ class CodexEventReducer {
     required int stage,
     required Map<String, dynamic> streamMeta,
   }) {
+    if (isLoading) {
+      _finalizeOtherLoadingThinkingCardsForTask(
+        runtime,
+        parentTaskId: taskId,
+        activeCardId: cardId,
+      );
+      runtime.activeThinkingCardId = cardId;
+    }
     final index = runtime.messages.indexWhere(
       (message) => message.id == cardId,
     );
@@ -1983,6 +1994,7 @@ class CodexEventReducer {
     runtime.currentThinkingMessages.remove(taskId);
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
+    runtime.activeThinkingCardId = null;
     runtime.currentThinkingStage = ThinkingStage.complete.value;
     _markAssistantMessagesFinalForTask(runtime, taskId);
     _finalizeThinkingCardsForTask(runtime, taskId);
@@ -2157,6 +2169,33 @@ class CodexEventReducer {
         .where((message) {
           final cardData = message.cardData;
           if (cardData?['type'] != 'deep_thinking') {
+            return false;
+          }
+          final cardTaskId =
+              _string(cardData?['taskID']) ??
+              _string(message.streamMeta?['parentTaskId']);
+          return cardTaskId == parentTaskId;
+        })
+        .map((message) => message.id)
+        .toList(growable: false);
+    for (final cardId in cardIds) {
+      _finalizeThinkingCard(runtime, parentTaskId, cardId);
+    }
+  }
+
+  void _finalizeOtherLoadingThinkingCardsForTask(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String activeCardId,
+  }) {
+    final cardIds = runtime.messages
+        .where((message) {
+          if (message.id == activeCardId) {
+            return false;
+          }
+          final cardData = message.cardData;
+          if (cardData?['type'] != 'deep_thinking' ||
+              cardData?['isLoading'] != true) {
             return false;
           }
           final cardTaskId =

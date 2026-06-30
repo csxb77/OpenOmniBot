@@ -2137,9 +2137,13 @@ class _ChatMessageListState extends State<ChatMessageList> {
       ),
     );
 
-    final paddedContent = AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
+    // Plain Padding (no implicit tween): reservedBottomInset is already
+    // driven per-frame by the live keyboard inset via the parent's
+    // ComposerKeyboardMetricsTracker, and the composer above this list rides
+    // the keyboard with a plain Padding. Wrapping this in AnimatedPadding
+    // makes the chat content tween toward a target that's already moving,
+    // so the content visibly trails the composer by ~half the tween length.
+    final paddedContent = Padding(
       padding: EdgeInsets.only(bottom: reservedBottomInset),
       child: content,
     );
