@@ -7,6 +7,17 @@ import org.junit.Test
 
 class AgentRuntimeManagerConfigTest {
     @Test
+    fun `persisted model remains usable when provider catalog is offline`() {
+        assertEquals(
+            "glm-5.1",
+            resolveAcpLaunchModelWithBindingFallback(
+                providerModelIds = emptyList(),
+                boundModel = "glm-5.1",
+            )
+        )
+    }
+
+    @Test
     fun `OpenCode provider sync preserves user MCP configuration`() {
         val config = buildOpenCodeConfigJson(
             model = "omnibot/gpt-5",
@@ -36,6 +47,38 @@ class AgentRuntimeManagerConfigTest {
             "https://provider.example/v1",
             root.getAsJsonObject("provider").getAsJsonObject("omnibot")
                 .getAsJsonObject("options").get("baseURL").asString,
+        )
+    }
+
+    @Test
+    fun `stale explicit ACP session is not reused after conversation switch`() {
+        assertEquals(
+            false,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "old-session",
+                requestedConversationId = 41L,
+                boundConversationId = 40L,
+            )
+        )
+    }
+
+    @Test
+    fun `current conversation keeps its ACP session and session-only calls stay compatible`() {
+        assertEquals(
+            true,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "current-session",
+                requestedConversationId = 41L,
+                boundConversationId = 41L,
+            )
+        )
+        assertEquals(
+            true,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "session-only",
+                requestedConversationId = null,
+                boundConversationId = null,
+            )
         )
     }
 }

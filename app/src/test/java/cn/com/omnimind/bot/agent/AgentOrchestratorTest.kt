@@ -1311,6 +1311,32 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun `surfaces a provider stream failure without retrying`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = emptyList(),
+            failures = listOf(
+                IllegalStateException(
+                    "provider stream failed"
+                )
+            )
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment("hello")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertEquals("provider stream failed", callback.errors.single())
+    }
+
+    @Test
     fun `detects provider context overflow without confusing throttling`() {
         assertTrue(
             isContextOverflowTurnFailure(
